@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { VT_STATUS } from '@shared/constants/status';
 import type { AuthUser } from '@shared/types/auth';
+import { rt, rtFallback } from '@renderer/utils/i18n-text';
 import { useAppStore } from './app';
 
 const AUTH_TOKEN_KEY = 'token';
@@ -58,10 +59,6 @@ function clearStoredAuth(): void {
   window.localStorage.removeItem(AUTH_USER_ID_KEY);
 }
 
-function getUnknownErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
 function getAuthApi() {
   return window.vtStudio?.auth ?? null;
 }
@@ -99,7 +96,7 @@ export const useAuthStore = defineStore('auth', {
       try {
         const authApi = getAuthApi();
         if (!authApi?.login) {
-          this.error = '登录服务未加载，请重启应用后重试';
+          this.error = rt('auth.serviceUnavailable');
           return false;
         }
 
@@ -112,7 +109,7 @@ export const useAuthStore = defineStore('auth', {
         this.setAuth(response.data.token, response.data.user);
         return true;
       } catch (error) {
-        this.error = getUnknownErrorMessage(error, '登录失败');
+        this.error = rtFallback(error, 'auth.loginFailed');
         return false;
       } finally {
         this.loading = false;
@@ -136,7 +133,7 @@ export const useAuthStore = defineStore('auth', {
         const authApi = getAuthApi();
         if (!authApi?.validateSession) {
           this.clearAuth();
-          this.error = '登录服务未加载，请重启应用后重试';
+          this.error = rt('auth.serviceUnavailable');
           return false;
         }
 
@@ -151,7 +148,7 @@ export const useAuthStore = defineStore('auth', {
         return true;
       } catch (error) {
         this.clearAuth();
-        this.error = getUnknownErrorMessage(error, '登录状态恢复失败');
+        this.error = rtFallback(error, 'auth.restoreFailed');
         return false;
       }
     },
@@ -168,7 +165,7 @@ export const useAuthStore = defineStore('auth', {
         const authApi = getAuthApi();
         if (!authApi?.getCurrentUser) {
           this.clearAuth();
-          this.error = '登录服务未加载，请重启应用后重试';
+          this.error = rt('auth.serviceUnavailable');
           return false;
         }
 
@@ -183,13 +180,13 @@ export const useAuthStore = defineStore('auth', {
         return true;
       } catch (error) {
         this.clearAuth();
-        this.error = getUnknownErrorMessage(error, '读取当前用户失败');
+        this.error = rtFallback(error, 'auth.loadUserFailed');
         return false;
       }
     },
     async updateLocalUser(name: string, password: string): Promise<boolean> {
       if (!this.user) {
-        this.error = '登录已失效，请重新登录';
+        this.error = rt('auth.sessionExpired');
         return false;
       }
 
@@ -199,7 +196,7 @@ export const useAuthStore = defineStore('auth', {
       try {
         const authApi = getAuthApi();
         if (!authApi?.updateLocalUser) {
-          this.error = '登录服务未加载，请重启应用后重试';
+          this.error = rt('auth.serviceUnavailable');
           return false;
         }
 
@@ -218,7 +215,7 @@ export const useAuthStore = defineStore('auth', {
         }
         return true;
       } catch (error) {
-        this.error = getUnknownErrorMessage(error, '保存用户配置失败');
+        this.error = rtFallback(error, 'auth.saveUserFailed');
         return false;
       } finally {
         this.loading = false;

@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { normalizeUnknownError } from '@shared/errors';
 import type { MediaMode, MediaThumbnailSize } from '@shared/types/media';
 import { logger } from '../logger';
+import { recordLocalRequestFailure } from '../local-request-diagnostics';
 import { getMediaMimeInfo } from './mime';
 import { resolveMediaPath } from './path';
 import { verifySignedMediaUrl } from './security';
@@ -17,6 +18,18 @@ function writeJson(res: ServerResponse, statusCode: number, msg: string): void {
   res.statusCode = statusCode;
   res.setHeader('content-type', 'application/json; charset=utf-8');
   res.end(JSON.stringify({ code: statusCode, msg }));
+}
+
+function recordMediaFailure(req: IncomingMessage, statusCode: number, reason: string, msg: string, startedAt: number): void {
+  recordLocalRequestFailure({
+    kind: 'media',
+    method: req.method,
+    path: req.url ?? '/media/',
+    statusCode,
+    reason,
+    msg,
+    startedAt,
+  });
 }
 
 function parseMode(value: string | null): MediaMode {
@@ -69,10 +82,11 @@ function parseRangeHeader(rangeHeader: string, fileSize: number): ParsedRange | 
   return { start, end: Math.min(end, fileSize - 1) };
 }
 
-function streamFile(req: IncomingMessage, res: ServerResponse, filePath: string, contentType: string): void {
+function streamFile(req: IncomingMessage, res: ServerResponse, filePath: string, contentType: string, startedAt: number): void {
   const stat = statSync(filePath);
 
   if (!stat.isFile()) {
+    recordMediaFailure(req, 400, 'notFile', '目标不是文件', startedAt);
     writeJson(res, 400, '目标不是文件');
     return;
   }
@@ -88,6 +102,7 @@ function streamFile(req: IncomingMessage, res: ServerResponse, filePath: string,
     const range = parseRangeHeader(rangeHeader, fileSize);
 
     if (!range) {
+      recordMediaFailure(req, 416, 'invalidRange', 'Range 不合法', startedAt);
       res.statusCode = 416;
       res.setHeader('content-range', `bytes */${fileSize}`);
       res.end();
@@ -119,6 +134,7 @@ function streamFile(req: IncomingMessage, res: ServerResponse, filePath: string,
 }
 
 export async function handleMediaRequest(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const startedAt = Date.now();
   const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
 
   if (!requestUrl.pathname.startsWith('/media/')) {
@@ -126,6 +142,7 @@ export async function handleMediaRequest(req: IncomingMessage, res: ServerRespon
   }
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
+    recordMediaFailure(req, 405, 'methodNotAllowed', 'Method Not Allowed', startedAt);
     writeJson(res, 405, 'Method Not Allowed');
     return true;
   }
@@ -146,11 +163,12 @@ export async function handleMediaRequest(req: IncomingMessage, res: ServerRespon
 
     const mime = getMediaMimeInfo(responsePath);
     if (!mime) {
+      recordMediaFailure(req, 415, 'unsupportedType', '不支持的媒体类型', startedAt);
       writeJson(res, 415, '不支持的媒体类型');
       return true;
     }
 
-    streamFile(req, res, responsePath, mime.contentType);
+    streamFile(req, res, responsePath, mime.contentType, startedAt);
     return true;
   } catch (error) {
     const normalized = normalizeUnknownError(error);
@@ -158,20 +176,24 @@ export async function handleMediaRequest(req: IncomingMessage, res: ServerRespon
     logger.detail('媒体服务', '媒体请求失败详情', normalized);
 
     if (normalized.message.includes('签名') || normalized.message.includes('过期')) {
+      recordMediaFailure(req, 401, 'invalidSignature', '媒体 URL 无效或已过期', startedAt);
       writeJson(res, 401, '媒体 URL 无效或已过期');
       return true;
     }
 
     if (normalized.message.includes('ENOENT')) {
+      recordMediaFailure(req, 404, 'fileMissing', '文件不存在', startedAt);
       writeJson(res, 404, '文件不存在');
       return true;
     }
 
     if (normalized.message.includes('Range')) {
+      recordMediaFailure(req, 416, 'invalidRange', 'Range 不合法', startedAt);
       writeJson(res, 416, 'Range 不合法');
       return true;
     }
 
+    recordMediaFailure(req, 400, 'invalidMediaRequest', '媒体请求无效', startedAt);
     writeJson(res, 400, '媒体请求无效');
     return true;
   }

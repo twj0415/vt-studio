@@ -1,11 +1,12 @@
 import { VT_STATUS } from '@shared/constants/status';
-import { getDatabase } from '../database';
+import { getDatabase } from '../database/connection';
 import { createError } from '../result';
 import { parseJsonObject, parseModelList, readVendorCode, upsertVendorRecord, writeVendorCode, type VendorRow } from './storage';
 import type { VendorManifest, VendorModelConfig, VendorRecord, VendorRuntime } from './types';
 import { assertVendorRequiredInputs, normalizeVendorManifest } from './validation';
-import { runVendorCode, validateVendorRuntime } from './vendor-runner';
-import { createBuiltinConnectionRuntime, createBuiltinVendorRuntime, getBuiltinVendorDefinition, isBuiltinVendor } from './builtin-vendors';
+import { runVendorCode, validateVendorRuntime, type VendorRunnerPolicy } from './vendor-runner';
+import { createBuiltinVendorRuntime, getBuiltinVendorDefinition, isBuiltinVendor } from './builtin-vendors';
+import { CONNECTION_PROJECTION_ADAPTER_KEY, CONNECTION_PROJECTION_NAME_KEY } from './connection-projection';
 
 function mergeModels(baseModels: VendorModelConfig[], customModels: VendorModelConfig[]): VendorModelConfig[] {
   const map = new Map<string, VendorModelConfig>();
@@ -17,22 +18,145 @@ function mergeModels(baseModels: VendorModelConfig[], customModels: VendorModelC
   return [...map.values()];
 }
 
+function applyRuntimeVendorManifest(runtime: VendorRuntime, manifest: VendorManifest): VendorRuntime {
+  const normalized = normalizeVendorManifest(manifest);
+
+  if (runtime.vendor) {
+    Object.assign(runtime.vendor, normalized);
+  } else {
+    runtime.vendor = normalized;
+  }
+
+  return runtime;
+}
+
+function normalizeConnectionBaseUrl(baseUrl: string | undefined): string {
+  return (baseUrl ?? '').trim().replace(/\/+$/, '');
+}
+
+function toAtlasCloudChatBaseUrl(baseUrl: string | undefined): string {
+  const normalized = normalizeConnectionBaseUrl(baseUrl);
+  if (!normalized) {
+    return 'https://api.atlascloud.ai/v1';
+  }
+
+  if (/\/api\/v1$/i.test(normalized)) {
+    return normalized.replace(/\/api\/v1$/i, '/v1');
+  }
+
+  return normalized;
+}
+
+function toAtlasCloudMediaBaseUrl(baseUrl: string | undefined): string {
+  const normalized = normalizeConnectionBaseUrl(baseUrl);
+  if (!normalized) {
+    return 'https://api.atlascloud.ai/api/v1';
+  }
+
+  if (/\/api\/v1$/i.test(normalized)) {
+    return normalized;
+  }
+
+  if (/\/v1$/i.test(normalized)) {
+    return normalized.replace(/\/v1$/i, '/api/v1');
+  }
+
+  return `${normalized}/api/v1`;
+}
+
+function enrichConnectionInputValues(adapterVendorId: string, inputValues: Record<string, string>): Record<string, string> {
+  if (adapterVendorId !== 'atlascloud') {
+    return inputValues;
+  }
+
+  const baseUrl = inputValues.baseUrl || inputValues.endpoint;
+  return {
+    ...inputValues,
+    chatBaseUrl: inputValues.chatBaseUrl || toAtlasCloudChatBaseUrl(baseUrl),
+    mediaBaseUrl: inputValues.mediaBaseUrl || toAtlasCloudMediaBaseUrl(baseUrl),
+  };
+}
+
+function parseAllowedHosts(inputValues: Record<string, string>): string[] {
+  const raw = inputValues.allowHosts || inputValues.__allowHosts || '';
+  return raw
+    .split(/[\s,;]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      try {
+        return new URL(value).hostname;
+      } catch {
+        return value;
+      }
+    });
+}
+
+function createVendorRunnerPolicy(inputValues: Record<string, string>): VendorRunnerPolicy {
+  return {
+    allowedHosts: parseAllowedHosts(inputValues),
+  };
+}
+
+function createConnectionRuntimeFromAdapter(input: {
+  connectionId: string;
+  connectionName: string;
+  adapterVendorId: string;
+  inputValues: Record<string, string>;
+  models: VendorManifest['models'];
+}): { runtime: VendorRuntime; codeReady: boolean } | null {
+  const inputValues = enrichConnectionInputValues(input.adapterVendorId, input.inputValues);
+  const adapterRow = getDatabase().prepare<[string], VendorRow>('SELECT * FROM model_vendors WHERE id = ? LIMIT 1').get(input.adapterVendorId);
+  const adapterRuntime = adapterRow
+    ? getVendorRuntimeFromRow(adapterRow)
+    : {
+        code: '',
+        codeReady: false,
+        runtime: createBuiltinVendorRuntime(input.adapterVendorId, inputValues, getBuiltinVendorDefinition(input.adapterVendorId)?.manifest.models ?? []),
+      };
+  const builtin = getBuiltinVendorDefinition(input.adapterVendorId);
+
+  if (builtin && !adapterRuntime.codeReady) {
+    adapterRuntime.runtime = createBuiltinVendorRuntime(
+      input.adapterVendorId,
+      inputValues,
+      mergeModels(builtin.manifest.models, adapterRow ? parseModelList(adapterRow.models) : []),
+    )!;
+  }
+
+  if (!adapterRuntime.runtime?.vendor) {
+    return null;
+  }
+
+  return {
+    runtime: applyRuntimeVendorManifest(adapterRuntime.runtime, {
+      ...adapterRuntime.runtime.vendor,
+      id: input.connectionId,
+      name: input.connectionName,
+      inputValues,
+      models: input.models,
+    }),
+    codeReady: adapterRuntime.codeReady,
+  };
+}
+
 function getVendorRuntimeFromRow(row: VendorRow): { code: string; runtime: VendorRuntime; codeReady: boolean } {
+  const inputValues = parseJsonObject(row.input_values);
+
   try {
     const code = readVendorCode(row.id);
     return {
       code,
       codeReady: true,
-      runtime: validateVendorRuntime(runVendorCode(code)),
+      runtime: validateVendorRuntime(runVendorCode(code, createVendorRunnerPolicy(inputValues))),
     };
   } catch (error) {
     const builtin = getBuiltinVendorDefinition(row.id);
     if (!builtin) {
-      const inputValues = parseJsonObject(row.input_values);
-      const adapterVendorId = inputValues.__adapterVendorId;
-      const connectionName = inputValues.__connectionName || row.id;
+      const adapterVendorId = inputValues[CONNECTION_PROJECTION_ADAPTER_KEY];
+      const connectionName = inputValues[CONNECTION_PROJECTION_NAME_KEY] || row.id;
       const connectionRuntime = adapterVendorId
-        ? createBuiltinConnectionRuntime({
+        ? createConnectionRuntimeFromAdapter({
             connectionId: row.id,
             connectionName,
             adapterVendorId,
@@ -45,7 +169,7 @@ function getVendorRuntimeFromRow(row: VendorRow): { code: string; runtime: Vendo
         return {
           code: '',
           codeReady: false,
-          runtime: connectionRuntime,
+          runtime: connectionRuntime.runtime,
         };
       }
 
@@ -136,27 +260,23 @@ export function getVendor(vendorId: string): VendorRecord {
 }
 
 export function getVendorRuntime(vendorId: string): VendorRuntime {
-  const vendor = getVendor(vendorId);
-  const runtime = vendor.codeReady
-    ? validateVendorRuntime(runVendorCode(vendor.code))
-    : createBuiltinVendorRuntime(vendor.id, vendor.inputValues, vendor.models) ??
-      createBuiltinConnectionRuntime({
-        connectionId: vendor.id,
-        connectionName: vendor.inputValues.__connectionName || vendor.manifest.name,
-        adapterVendorId: vendor.inputValues.__adapterVendorId,
-        inputValues: vendor.inputValues,
-        models: vendor.models,
-      });
+  const row = getVendorRowRequired(vendorId);
+  const vendor = rowToVendorRecord(row);
+  const runtime = getVendorRuntimeFromRow(row).runtime;
 
   if (!runtime) {
     throw createError(VT_STATUS.MODEL_VENDOR_NOT_FOUND);
   }
 
-  runtime.vendor = {
+  applyRuntimeVendorManifest(runtime, {
     ...vendor.manifest,
     inputValues: vendor.inputValues,
     models: vendor.models,
-  };
+  });
+
+  if (!runtime.vendor) {
+    throw createError(VT_STATUS.MODEL_VENDOR_INVALID, '供应商运行时缺少 vendor 配置');
+  }
 
   assertVendorRequiredInputs(runtime.vendor, vendor.inputValues);
 

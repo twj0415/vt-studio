@@ -12,6 +12,7 @@ export {
   validateVendorCode,
 } from './vendor-service';
 export { getAgentModelDetail, getEnabledModelList, getModelDetail, resolveModelKey, splitModelId } from './resolver';
+export { createModelRequestId } from './gateway';
 export { invokeText, streamModelText } from './text';
 export { generateAudioByModel, generateImageByModel, generateVideoByModel } from './media';
 export { testImageModel, testTextModel, testVideoModel } from './test';

@@ -8,6 +8,7 @@ import type {
 import type {
   SkillManagementGetContentPayload,
   SkillManagementListPayload,
+  SkillManagementRebuildEmbeddingsPayload,
   SkillManagementSaveContentPayload,
 } from '@shared/types/skill-management';
 import type {
@@ -33,8 +34,15 @@ import type {
   DatabaseClearTablePayload,
   DatabaseImportPayload,
 } from '@shared/types/database-management';
-import type { FileManagementOpenPayload } from '@shared/types/file-management';
+import type { FileLifecycleCleanupPayload, FileManagementOpenPayload } from '@shared/types/file-management';
 import type { BusinessSettingsSavePayload } from '@shared/types/business-settings';
+import type {
+  AboutCheckUpdatePayload,
+  AboutDownloadPayload,
+  AboutOpenLinkPayload,
+} from '@shared/types/about-settings';
+import { getRequestDiagnostics, refreshRequestDiagnostics } from '../services/settings/request-diagnostics';
+import type { DevSettingsSavePayload } from '@shared/types/dev-settings';
 import type {
   VendorAddCodePayload,
   VendorCodePayload,
@@ -94,7 +102,7 @@ import {
   saveMemorySettings,
   validateMemoryModelPath,
 } from '../services/settings/memory-settings';
-import { listOpenableDirectories, openDirectory } from '../services/settings/file-management';
+import { cleanupManagedFiles, diagnoseManagedFiles, listOpenableDirectories, openDirectory } from '../services/settings/file-management';
 import { getBusinessSettings, restoreDefaultBusinessChapterReg, saveBusinessSettings } from '../services/settings/business-settings';
 import {
   checkDatabaseRunningTasks,
@@ -109,8 +117,11 @@ import {
 import {
   getSkillContent,
   getSkillManagementList,
+  rebuildSkillEmbeddingsForManagement,
   saveSkillContent,
 } from '../services/settings/skill-management';
+import { checkAboutUpdate, downloadAboutUpdate, getAboutInfo, openAboutLink } from '../services/settings/about-settings';
+import { getDevSettings, openRendererDevTools, saveDevSettings } from '../services/settings/dev-settings';
 import { handleIpc } from './handle';
 
 function readObjectArg<T extends object>(value: unknown): T {
@@ -144,8 +155,19 @@ export function registerSettingsIpc(): void {
   handleIpc('settings:business:get', () => getBusinessSettings());
   handleIpc('settings:business:save', (_event, payload) => saveBusinessSettings(readObjectArg<BusinessSettingsSavePayload>(payload)));
   handleIpc('settings:business:restore-default-chapter-reg', () => restoreDefaultBusinessChapterReg());
+  handleIpc('settings:request:get', () => getRequestDiagnostics());
+  handleIpc('settings:request:refresh-local-url', () => refreshRequestDiagnostics());
+  handleIpc('settings:dev:get', () => getDevSettings());
+  handleIpc('settings:dev:save', (_event, payload) => saveDevSettings(readObjectArg<DevSettingsSavePayload>(payload)));
+  handleIpc('settings:dev:open-devtools', () => openRendererDevTools());
+  handleIpc('settings:about:get', () => getAboutInfo());
+  handleIpc('settings:about:check-update', (_event, payload) => checkAboutUpdate(readObjectArg<AboutCheckUpdatePayload>(payload)));
+  handleIpc('settings:about:download', (_event, payload) => downloadAboutUpdate(readObjectArg<AboutDownloadPayload>(payload)));
+  handleIpc('settings:about:open-link', (_event, payload) => openAboutLink(readObjectArg<AboutOpenLinkPayload>(payload)));
   handleIpc('settings:files:list-openable-dirs', () => listOpenableDirectories());
   handleIpc('settings:files:open-dir', (_event, payload) => openDirectory(readObjectArg<FileManagementOpenPayload>(payload)));
+  handleIpc('settings:files:diagnose-lifecycle', () => diagnoseManagedFiles());
+  handleIpc('settings:files:cleanup-lifecycle', (_event, payload) => cleanupManagedFiles(readObjectArg<FileLifecycleCleanupPayload>(payload)));
   handleIpc('settings:database:info', () => getDatabaseManagementInfo());
   handleIpc('settings:database:list-backups', () => listDatabaseBackups());
   handleIpc('settings:database:export', () => exportDatabaseBackup());
@@ -157,6 +179,7 @@ export function registerSettingsIpc(): void {
   handleIpc('settings:skill:list', (_event, payload) => getSkillManagementList(readObjectArg<SkillManagementListPayload>(payload)));
   handleIpc('settings:skill:get-content', (_event, payload) => getSkillContent(readObjectArg<SkillManagementGetContentPayload>(payload)));
   handleIpc('settings:skill:save-content', (_event, payload) => saveSkillContent(readObjectArg<SkillManagementSaveContentPayload>(payload)));
+  handleIpc('settings:skill:rebuild-embeddings', (_event, payload) => rebuildSkillEmbeddingsForManagement(readObjectArg<SkillManagementRebuildEmbeddingsPayload>(payload)));
   handleIpc('settings:vendor:list', () => getVendorList());
   handleIpc('settings:vendor:update-inputs', (_event, payload) => saveVendorInputs(readObjectArg<VendorUpdateInputsPayload>(payload)));
   handleIpc('settings:vendor:set-enabled', (_event, payload) => saveVendorEnabled(readObjectArg<VendorSetEnabledPayload>(payload)));

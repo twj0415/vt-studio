@@ -1,16 +1,17 @@
 import { VT_STATUS } from '@shared/constants/status';
+import {
+  IMAGE_GENERATION_MODE_VALUES,
+  VENDOR_INPUT_TYPE_VALUES,
+  VIDEO_REFERENCE_MODE_PREFIX_VALUES,
+  VIDEO_SIMPLE_MODE_VALUES,
+} from '@shared/constants/dictionaries';
 import { createError } from '../result';
-import type { ImageMode, VendorInput, VendorManifest, VendorModelConfig, VideoMode } from './types';
+import type { ImageMode, VendorInput, VendorManifest, VendorModelConfig, VideoMode, VideoReferenceMode } from './types';
 
-const inputTypes = new Set(['text', 'password', 'url']);
-const imageModes = new Set(['text', 'singleImage', 'multiReference']);
-const videoSimpleModes = new Set([
-  'singleImage',
-  'startEndRequired',
-  'endFrameOptional',
-  'startFrameOptional',
-  'text',
-]);
+const inputTypes = new Set<string>(VENDOR_INPUT_TYPE_VALUES);
+const imageModes = new Set<string>(IMAGE_GENERATION_MODE_VALUES);
+const videoSimpleModes = new Set<string>(VIDEO_SIMPLE_MODE_VALUES);
+const videoReferenceModePrefixes = new Set<string>(VIDEO_REFERENCE_MODE_PREFIX_VALUES);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -56,11 +57,12 @@ function normalizeVideoMode(value: unknown): VideoMode {
   if (Array.isArray(value)) {
     return value.map((item) => {
       const mode = assertString(item, 'video.referenceMode');
-      if (!/^(videoReference|imageReference|audioReference):\d+$/.test(mode)) {
+      const [prefix, count] = mode.split(':');
+      if (!prefix || !count || !videoReferenceModePrefixes.has(prefix) || !/^\d+$/.test(count)) {
         throw createError(VT_STATUS.MODEL_VENDOR_INVALID, `不支持的视频参考模式：${mode}`);
       }
 
-      return mode as `${'videoReference' | 'imageReference' | 'audioReference'}:${number}`;
+      return mode as VideoReferenceMode;
     });
   }
 

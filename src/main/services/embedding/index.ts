@@ -3,12 +3,13 @@ import { dirname } from 'node:path';
 import { env as transformersEnv, pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import { VT_STATUS } from '@shared/constants/status';
 import { normalizeUnknownError } from '@shared/errors';
-import { getDatabase } from '../database';
-import { getRuntimeDirectories, safeJoin } from '../file-system';
+import { getDatabase } from '../database/connection';
+import { DEFAULT_MODEL_ONNX_FILE } from '../default-assets/registry';
+import { getRuntimeDirectories } from '../file-system/paths';
+import { safeJoin } from '../file-system/safe-path';
 import { logger } from '../logger';
 import { createError } from '../result';
 
-const DEFAULT_MODEL_ONNX_FILE = ['all-MiniLM-L6-v2', 'onnx', 'model_fp16.onnx'];
 const DEFAULT_MODEL_DTYPE = 'fp16';
 const MAX_EMBED_TEXT_LENGTH = 8000;
 
@@ -29,7 +30,7 @@ function readSettingValue(key: string): string | null {
 
 function parseModelOnnxFile(rawValue: string | null): string[] {
   if (!rawValue) {
-    return DEFAULT_MODEL_ONNX_FILE;
+    return [...DEFAULT_MODEL_ONNX_FILE];
   }
 
   let parsed: unknown;

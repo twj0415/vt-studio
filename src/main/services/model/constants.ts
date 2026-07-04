@@ -1,10 +1,9 @@
-export const MODEL_TYPES = {
-  TEXT: 'text',
-  IMAGE: 'image',
-  VIDEO: 'video',
-  TTS: 'tts',
-  ALL: 'all',
-} as const;
+export {
+  MODEL_CAPABILITIES,
+  MODEL_CAPABILITY_VALUES,
+  MODEL_TYPES,
+  MODEL_TYPE_VALUES,
+} from '@shared/constants/dictionaries';
 
 export const AGENT_USE_MODE = {
   SIMPLE: '0',
@@ -43,4 +42,4 @@ export const AGENT_MODEL_KEYS = [
 ] as const;
 
 export type AgentModelKey = (typeof AGENT_MODEL_KEYS)[number];
-export type ModelType = (typeof MODEL_TYPES)[keyof typeof MODEL_TYPES];
+export type { ModelType } from '@shared/constants/dictionaries';

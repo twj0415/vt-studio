@@ -45,7 +45,7 @@ const entrySource = `
     const openai = initial.vendors.find((vendor) => vendor.id === 'openai');
     if (!openai) throw new Error('默认 OpenAI 供应商未初始化');
     if (openai.status !== 'ready') throw new Error('OpenAI 内置供应商未进入 ready 状态');
-    if (openai.codeReady) throw new Error('OpenAI 缺用户 adapter 时应使用内置 adapter');
+    if (!openai.codeReady) throw new Error('OpenAI 默认 adapter 未从默认资源同步到 runtime');
     if (!openai.models.some((model) => model.type === 'text')) throw new Error('OpenAI 缺默认文本模型');
 
     const anthropic = initial.vendors.find((vendor) => vendor.id === 'anthropic');
@@ -81,6 +81,8 @@ const entrySource = `
     deleteVendorModel({ vendorId: 'openai', modelName: 'verify-text-model' });
     const afterDelete = getVendorList().vendors.find((vendor) => vendor.id === 'openai');
     if (afterDelete?.models.some((model) => model.modelName === 'verify-text-model')) throw new Error('解除引用后模型未删除');
+    const compatibleModelName = afterDelete?.models.find((model) => model.type === 'text')?.modelName;
+    if (!compatibleModelName) throw new Error('OpenAI 缺可用于兼容协议验证的文本模型');
 
     let compatibleRequestUrl = '';
     const compatibleServer = createServer((req, res) => {
@@ -114,16 +116,16 @@ const entrySource = `
     if (!compatibleAddress || typeof compatibleAddress === 'string') throw new Error('OpenAI Compatible mock 服务端口获取失败');
     try {
       saveVendorInputs({ vendorId: 'openai', inputValues: { apiKey: 'test-key', baseUrl: \`http://127.0.0.1:\${compatibleAddress.port}/v1\` } });
-      const compatibleResult = await runVendorTextTest({ vendorId: 'openai', modelName: 'gpt-5.5', prompt: 'hello' });
+      const compatibleResult = await runVendorTextTest({ vendorId: 'openai', modelName: compatibleModelName, prompt: 'hello' });
       if (compatibleResult.content !== 'compatible ok') throw new Error('OpenAI Compatible 文本测试结果不正确');
       if (compatibleRequestUrl !== '/v1/chat/completions') throw new Error(\`OpenAI 自定义 Base URL 未走 chat/completions：\${compatibleRequestUrl}\`);
 
       saveVendorInputs({ vendorId: 'openai', inputValues: { apiKey: 'test-key', baseUrl: \`http://127.0.0.1:\${compatibleAddress.port}/v1/chat/completions\` } });
-      await runVendorTextTest({ vendorId: 'openai', modelName: 'gpt-5.5', prompt: 'hello' });
+      await runVendorTextTest({ vendorId: 'openai', modelName: compatibleModelName, prompt: 'hello' });
       if (compatibleRequestUrl !== '/v1/chat/completions') throw new Error(\`OpenAI 完整接口地址未被归一化：\${compatibleRequestUrl}\`);
 
       saveVendorInputs({ vendorId: 'openai', inputValues: { apiKey: 'test-key', baseUrl: \`http://127.0.0.1:\${compatibleAddress.port}\` } });
-      await runVendorTextTest({ vendorId: 'openai', modelName: 'gpt-5.5', prompt: 'hello' });
+      await runVendorTextTest({ vendorId: 'openai', modelName: compatibleModelName, prompt: 'hello' });
       if (compatibleRequestUrl !== '/v1/chat/completions') throw new Error(\`OpenAI 根地址未自动补到 /v1：\${compatibleRequestUrl}\`);
     } finally {
       await new Promise((resolve) => compatibleServer.close(resolve));

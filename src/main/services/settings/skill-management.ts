@@ -10,13 +10,16 @@ import type {
   SkillManagementItem,
   SkillManagementListPayload,
   SkillManagementListResult,
+  SkillManagementRebuildEmbeddingsPayload,
+  SkillManagementRebuildEmbeddingsResult,
   SkillManagementSaveContentPayload,
   SkillManagementSaveContentResult,
   SkillManagementValidationWarning,
   SkillType,
 } from '@shared/types/skill-management';
-import { getDatabase } from '../database';
-import { getRuntimeDirectories, safeJoin } from '../file-system';
+import { getDatabase } from '../database/connection';
+import { getRuntimeDirectories } from '../file-system/paths';
+import { safeJoin } from '../file-system/safe-path';
 import { createError } from '../result';
 
 interface SkillRow {
@@ -90,6 +93,10 @@ function getFileStatus(path: string): SkillFileStatus {
 function getEmbeddingStatus(row: SkillRow): SkillEmbeddingStatus {
   if (row.type !== 'references') {
     return 'not-applicable';
+  }
+
+  if (row.state === 0) {
+    return 'failed';
   }
 
   return row.state === 1 && row.embedding.trim() ? 'ready' : 'expired';
@@ -247,4 +254,9 @@ export async function saveSkillContent(payload: SkillManagementSaveContentPayloa
     skill: mapSkill({ ...row, md5: nextMd5, name: nextName, description: nextDescription, updated_at: now, state: nextState }, getAttributions()),
     content,
   };
+}
+
+export async function rebuildSkillEmbeddingsForManagement(payload: SkillManagementRebuildEmbeddingsPayload = {}): Promise<SkillManagementRebuildEmbeddingsResult> {
+  const { rebuildSkillEmbeddings } = await import('../skill-retrieval');
+  return rebuildSkillEmbeddings(payload.id?.trim() || undefined);
 }

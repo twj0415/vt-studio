@@ -5,10 +5,29 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "build": {
+    "extraResources": [
+      {
+        "from": "resources/default-data",
+        "to": "default-data"
+      }
+    ]
+  },
   "scripts": {
     "dev": "chcp 65001 > nul && electron-vite dev",
-    "build": "pnpm run typecheck && electron-vite build",
+    "build": "vue-tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json && electron-vite build",
     "typecheck": "vue-tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
+    "verify": "node scripts/verify.mjs all",
+    "verify:all": "node scripts/verify.mjs all",
+    "verify:core": "node scripts/verify.mjs core",
+    "verify:settings": "node scripts/verify.mjs settings",
+    "verify:project": "node scripts/verify.mjs project",
+    "verify:content": "node scripts/verify.mjs content",
+    "verify:assets": "node scripts/verify.mjs assets",
+    "verify:production": "node scripts/verify.mjs production",
+    "verify:export": "node scripts/verify.mjs export",
+    "verify:acceptance": "node scripts/verify.mjs acceptance",
+    "verify:docs": "node scripts/verify.mjs docs",
     "preview": "electron-vite preview"
   },
   "dependencies": {
@@ -21,9 +40,14 @@
     "@ai-sdk/xai": "3.0.47",
     "@electron-toolkit/utils": "^3.0.0",
     "@huggingface/transformers": "^4.2.0",
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/controls": "^1.1.3",
+    "@vue-flow/core": "^1.48.2",
+    "@vue-flow/minimap": "^1.5.4",
     "ai": "^6.0.67",
     "axios": "^1.18.1",
     "better-sqlite3": "^12.11.1",
+    "dagre": "^0.8.5",
     "form-data": "^4.0.6",
     "jsonwebtoken": "^9.0.3",
     "onnxruntime-web": "^1.27.0",

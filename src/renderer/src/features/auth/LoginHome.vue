@@ -2,7 +2,7 @@
 import { reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { LockOnIcon, UserIcon } from 'tdesign-icons-vue-next';
+import { LockOnIcon, RefreshIcon, UserIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { useAuthStore } from '@renderer/stores/auth';
 import { useLanguageStore } from '@renderer/stores/language';
@@ -21,6 +21,10 @@ function updateLocale(value: string): void {
   if (value === 'zh-CN' || value === 'en') {
     languageStore.setLocale(value);
   }
+}
+
+function reloadLogin(): void {
+  window.location.reload();
 }
 
 async function submitLogin(): Promise<void> {
@@ -56,7 +60,7 @@ async function submitLogin(): Promise<void> {
 
       <t-form class="login-form" :data="form" layout="vertical">
         <t-form-item :label="t('login.username')">
-          <t-input v-model="form.username" autocomplete="username" clearable :placeholder="t('login.usernamePlaceholder')">
+          <t-input v-model="form.username" autocomplete="username" clearable :placeholder="t('login.usernamePlaceholder')" @enter="submitLogin">
             <template #prefix-icon>
               <UserIcon />
             </template>
@@ -71,7 +75,20 @@ async function submitLogin(): Promise<void> {
           </t-input>
         </t-form-item>
 
-        <t-button block theme="primary" size="large" :loading="authStore.loading" @click="submitLogin">{{ t('login.submit') }}</t-button>
+        <div v-if="authStore.error" class="login-error" role="alert">
+          <strong>{{ t('login.recoveryTitle') }}</strong>
+          <span>{{ authStore.error }}</span>
+          <small>{{ t('login.recoveryHint') }}</small>
+          <div class="login-error-actions">
+            <t-button size="small" variant="outline" theme="danger" :loading="authStore.loading" @click="submitLogin">{{ t('login.retry') }}</t-button>
+            <t-button size="small" variant="outline" @click="reloadLogin">
+              <template #icon><RefreshIcon /></template>
+              {{ t('login.reload') }}
+            </t-button>
+          </div>
+        </div>
+
+        <t-button block theme="primary" size="large" :loading="authStore.loading" :disabled="authStore.loading" @click="submitLogin">{{ t('login.submit') }}</t-button>
       </t-form>
 
       <p class="login-note">{{ t('login.note') }}</p>

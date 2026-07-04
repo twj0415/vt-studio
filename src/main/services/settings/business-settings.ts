@@ -7,7 +7,8 @@ import type {
   BusinessSettingsSavePayload,
   BusinessSettingsSaveResult,
 } from '@shared/types/business-settings';
-import { getDatabase, withTransaction } from '../database';
+import { getDatabase } from '../database/connection';
+import { withTransaction } from '../database/transaction';
 import { createError } from '../result';
 
 const DEFAULT_BUSINESS_SETTINGS: BusinessSettingsConfig = {
@@ -116,6 +117,10 @@ function normalizeScriptEpisodeLength(value: number): number {
 
 function readNumberSetting(key: 'requestTimeoutMs' | 'assetsBatchGenerateSize' | 'scriptEpisodeLength'): number {
   const raw = readSetting(key);
+  if (raw === null) {
+    return DEFAULT_BUSINESS_SETTINGS[key];
+  }
+
   const value = Number(raw);
   if (!Number.isFinite(value)) {
     return DEFAULT_BUSINESS_SETTINGS[key];

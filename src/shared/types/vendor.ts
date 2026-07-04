@@ -1,6 +1,13 @@
-export type VendorModelType = 'text' | 'image' | 'video' | 'tts';
-export type VendorInputType = 'text' | 'password' | 'url';
-export type VendorCapability = 'text' | 'image' | 'video' | 'tts' | 'workflow';
+import type {
+  ImageGenerationMode,
+  ModelCapability,
+  VendorCapability,
+  VendorInputType,
+  VideoGenerationMode,
+} from '../constants/dictionaries';
+
+export type VendorModelType = ModelCapability;
+export type { VendorCapability, VendorInputType };
 
 export interface VendorInputDefinition {
   key: string;
@@ -21,7 +28,7 @@ export interface VendorImageModel {
   name: string;
   modelName: string;
   type: 'image';
-  mode: Array<'text' | 'singleImage' | 'multiReference'>;
+  mode: ImageGenerationMode[];
   associationSkills?: string;
 }
 
@@ -29,7 +36,7 @@ export interface VendorVideoModel {
   name: string;
   modelName: string;
   type: 'video';
-  mode: Array<string | string[]>;
+  mode: VideoGenerationMode[];
   associationSkills?: string;
   audio: 'optional' | boolean;
   durationResolutionMap: Array<{
@@ -59,13 +66,20 @@ export interface VendorListItem {
   version?: string;
   enabled: boolean;
   builtin: boolean;
+  managedBy: 'model-service' | null;
+  readOnly: boolean;
   codeEditable: boolean;
   codeReady: boolean;
   status: 'ready' | 'missing-code' | 'invalid';
   statusText: string;
+  adapterMd5: string | null;
+  adapterUpdatedAt: number;
+  lastError: string | null;
   capabilities: VendorCapability[];
   inputs: VendorInputDefinition[];
   inputValues: Record<string, string>;
+  inputConfigured?: Record<string, boolean>;
+  inputMasked?: Record<string, string>;
   models: VendorModel[];
 }
 

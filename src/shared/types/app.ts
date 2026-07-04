@@ -8,9 +8,10 @@ export interface AppInfo {
 
 export interface MenuModule {
   id: string;
-  title: string;
+  titleKey: string;
   routeName: string;
   scope: 'global' | 'project';
-  description: string;
+  descriptionKey: string;
   status: 'ready' | 'planned';
+  novelOnly?: boolean;
 }

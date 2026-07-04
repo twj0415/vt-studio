@@ -1,10 +1,34 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { RefreshIcon, RollbackIcon, SaveIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import type { AgentNamespace } from '@shared/types/socket';
 import type { MemoryClearType } from '@shared/types/memory';
 import type { MemorySettingsConfig, MemoryStatsResult } from '@shared/types/memory-settings';
+
+const { t } = useI18n();
+const CLEAR_ALL_CONFIRM_TEXT = '\u6e05\u7a7a\u5168\u90e8\u8bb0\u5fc6';
+
+const NUMBER_FIELD_LABEL_KEYS: Record<Exclude<keyof MemorySettingsConfig, 'modelOnnxFile' | 'modelDtype'>, string> = {
+  messagesPerSummary: 'settings.memoryConfig.field.messagesPerSummary',
+  shortTermLimit: 'settings.memoryConfig.field.shortTermLimit',
+  summaryMaxLength: 'settings.memoryConfig.field.summaryMaxLength',
+  summaryLimit: 'settings.memoryConfig.field.summaryLimit',
+  ragLimit: 'settings.memoryConfig.field.ragLimit',
+  deepRetrieveSummaryLimit: 'settings.memoryConfig.field.deepRetrieveSummaryLimit',
+};
+
+const CLEAR_TYPE_OPTIONS: Array<{ value: MemoryClearType; labelKey: string }> = [
+  { value: 'all', labelKey: 'settings.memoryConfig.clear.type.all' },
+  { value: 'message', labelKey: 'settings.memoryConfig.clear.type.message' },
+  { value: 'summary', labelKey: 'settings.memoryConfig.clear.type.summary' },
+];
+
+const AGENT_TYPE_OPTIONS: Array<{ value: AgentNamespace; labelKey: string }> = [
+  { value: 'scriptAgent', labelKey: 'settings.memoryConfig.agent.scriptAgent' },
+  { value: 'productionAgent', labelKey: 'settings.memoryConfig.agent.productionAgent' },
+];
 
 const loading = ref(false);
 const saving = ref(false);
@@ -35,7 +59,7 @@ const clearForm = reactive({
   confirmText: '',
 });
 
-const modelStatusText = computed(() => (modelAvailable.value ? '模型文件可用' : '模型文件不存在'));
+const modelStatusText = computed(() => (modelAvailable.value ? t('settings.memoryConfig.modelStatus.available') : t('settings.memoryConfig.modelStatus.missing')));
 
 function isOk(response: { code: number; msg: string }): boolean {
   return response.code === 200;
@@ -56,10 +80,10 @@ function parsePathText(): string[] {
   return form.modelPathText.split('/').map((item) => item.trim()).filter(Boolean);
 }
 
-function parseNumber(value: string, label: string): number {
+function parseNumber(value: string, labelKey: string): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    throw new Error(`${label} 必须是数字`);
+    throw new Error(t('settings.memoryConfig.validation.numberRequired', { label: t(labelKey) }));
   }
 
   return Math.floor(parsed);
@@ -69,13 +93,43 @@ function buildPayload(): MemorySettingsConfig {
   return {
     modelOnnxFile: parsePathText(),
     modelDtype: form.modelDtype as MemorySettingsConfig['modelDtype'],
-    messagesPerSummary: parseNumber(form.messagesPerSummary, '消息摘要阈值'),
-    shortTermLimit: parseNumber(form.shortTermLimit, '短期记忆限制'),
-    summaryMaxLength: parseNumber(form.summaryMaxLength, '摘要长度'),
-    summaryLimit: parseNumber(form.summaryLimit, '摘要数量'),
-    ragLimit: parseNumber(form.ragLimit, 'RAG 数量'),
-    deepRetrieveSummaryLimit: parseNumber(form.deepRetrieveSummaryLimit, '深度检索摘要数量'),
+    messagesPerSummary: parseNumber(form.messagesPerSummary, NUMBER_FIELD_LABEL_KEYS.messagesPerSummary),
+    shortTermLimit: parseNumber(form.shortTermLimit, NUMBER_FIELD_LABEL_KEYS.shortTermLimit),
+    summaryMaxLength: parseNumber(form.summaryMaxLength, NUMBER_FIELD_LABEL_KEYS.summaryMaxLength),
+    summaryLimit: parseNumber(form.summaryLimit, NUMBER_FIELD_LABEL_KEYS.summaryLimit),
+    ragLimit: parseNumber(form.ragLimit, NUMBER_FIELD_LABEL_KEYS.ragLimit),
+    deepRetrieveSummaryLimit: parseNumber(form.deepRetrieveSummaryLimit, NUMBER_FIELD_LABEL_KEYS.deepRetrieveSummaryLimit),
   };
+}
+
+function getClearAllConfirmPhrase(): string {
+  return t('settings.memoryConfig.clear.confirmPhrase');
+}
+
+function getClearAllConfirmPayloadText(): string {
+  return clearForm.confirmText === getClearAllConfirmPhrase() ? CLEAR_ALL_CONFIRM_TEXT : clearForm.confirmText;
+}
+
+function validateClearForm(): boolean {
+  if (clearForm.scope === 'all' && clearForm.confirmText !== getClearAllConfirmPhrase()) {
+    MessagePlugin.warning(t('settings.memoryConfig.message.confirmPhraseRequired', { phrase: getClearAllConfirmPhrase() }));
+    return false;
+  }
+
+  if (clearForm.scope === 'isolation' && clearForm.projectId.trim() === '') {
+    MessagePlugin.warning(t('settings.memoryConfig.message.projectRequired'));
+    return false;
+  }
+
+  return true;
+}
+
+function getClearDialogTitle(): string {
+  return clearForm.scope === 'all' ? t('settings.memoryConfig.clear.allTitle') : t('settings.memoryConfig.clear.isolationTitle');
+}
+
+function getClearDialogBody(): string {
+  return clearForm.scope === 'all' ? t('settings.memoryConfig.clear.allBody') : t('settings.memoryConfig.clear.isolationBody');
 }
 
 async function loadConfig(): Promise<void> {
@@ -107,9 +161,9 @@ async function validateModelPath(): Promise<void> {
 
     modelAvailable.value = response.data.available;
     modelRelativePath.value = response.data.relativePath;
-    MessagePlugin.info(response.data.available ? '模型文件可用' : '模型文件不存在');
+    MessagePlugin.info(response.data.available ? t('settings.memoryConfig.modelStatus.available') : t('settings.memoryConfig.modelStatus.missing'));
   } catch (error) {
-    MessagePlugin.error(error instanceof Error ? error.message : '模型路径校验失败');
+    MessagePlugin.error(error instanceof Error ? error.message : t('settings.memoryConfig.message.modelPathValidateFailed'));
   } finally {
     validating.value = false;
   }
@@ -128,9 +182,9 @@ async function saveConfig(): Promise<void> {
     modelAvailable.value = response.data.modelStatus.available;
     modelRelativePath.value = response.data.modelStatus.relativePath;
     stats.value = response.data.stats;
-    MessagePlugin.success('记忆配置已保存');
+    MessagePlugin.success(t('settings.memoryConfig.message.saved'));
   } catch (error) {
-    MessagePlugin.error(error instanceof Error ? error.message : '保存失败');
+    MessagePlugin.error(error instanceof Error ? error.message : t('settings.memoryConfig.message.saveFailed'));
   } finally {
     saving.value = false;
   }
@@ -138,10 +192,10 @@ async function saveConfig(): Promise<void> {
 
 async function restoreDefault(): Promise<void> {
   const dialog = DialogPlugin.confirm({
-    header: '恢复默认记忆配置',
-    body: '恢复默认只重置配置，不清空已有记忆。',
-    confirmBtn: '恢复默认',
-    cancelBtn: '取消',
+    header: t('settings.memoryConfig.restoreDialog.title'),
+    body: t('settings.memoryConfig.restoreDialog.body'),
+    confirmBtn: t('settings.memoryConfig.restoreDialog.confirm'),
+    cancelBtn: t('settings.memoryConfig.restoreDialog.cancel'),
     theme: 'warning',
     async onConfirm() {
       restoring.value = true;
@@ -156,7 +210,7 @@ async function restoreDefault(): Promise<void> {
         modelAvailable.value = response.data.modelStatus.available;
         modelRelativePath.value = response.data.modelStatus.relativePath;
         stats.value = response.data.stats;
-        MessagePlugin.success('已恢复默认');
+        MessagePlugin.success(t('settings.memoryConfig.message.restored'));
         dialog.destroy();
       } finally {
         restoring.value = false;
@@ -166,11 +220,15 @@ async function restoreDefault(): Promise<void> {
 }
 
 async function clearMemory(): Promise<void> {
+  if (!validateClearForm()) {
+    return;
+  }
+
   const dialog = DialogPlugin.confirm({
-    header: clearForm.scope === 'all' ? '清空全部记忆' : '清空指定记忆',
-    body: clearForm.scope === 'all' ? '该操作会删除全部 Agent 记忆。' : '该操作会删除指定隔离范围内的记忆。',
-    confirmBtn: '确认清空',
-    cancelBtn: '取消',
+    header: getClearDialogTitle(),
+    body: getClearDialogBody(),
+    confirmBtn: t('settings.memoryConfig.clear.confirm'),
+    cancelBtn: t('settings.memoryConfig.clear.cancel'),
     theme: 'danger',
     async onConfirm() {
       clearing.value = true;
@@ -181,7 +239,7 @@ async function clearMemory(): Promise<void> {
           projectId: clearForm.projectId,
           agentType: clearForm.agentType,
           episodesId: clearForm.episodesId,
-          confirmText: clearForm.confirmText,
+          confirmText: getClearAllConfirmPayloadText(),
         });
         if (!isOk(response)) {
           MessagePlugin.error(response.msg);
@@ -189,7 +247,7 @@ async function clearMemory(): Promise<void> {
         }
 
         stats.value = response.data.stats;
-        MessagePlugin.success(`已清理 ${response.data.deleted} 条记忆`);
+        MessagePlugin.success(t('settings.memoryConfig.message.cleared', { count: response.data.deleted }));
         dialog.destroy();
       } finally {
         clearing.value = false;
@@ -206,38 +264,38 @@ onMounted(loadConfig);
   <section class="memory-config-section">
     <div class="memory-config-head">
       <div>
-        <strong>记忆配置</strong>
-        <p>配置本地 embedding、摘要和 RAG 参数；清空操作只处理 memories 表。</p>
+        <strong>{{ t('settings.memoryConfig.title') }}</strong>
+        <p>{{ t('settings.memoryConfig.hint') }}</p>
       </div>
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadConfig">
           <template #icon><RefreshIcon /></template>
-          刷新
+          {{ t('settings.memoryConfig.refresh') }}
         </t-button>
         <t-button variant="outline" theme="warning" :loading="restoring" @click="restoreDefault">
           <template #icon><RollbackIcon /></template>
-          恢复默认
+          {{ t('settings.memoryConfig.restoreDefault') }}
         </t-button>
         <t-button theme="primary" :loading="saving" @click="saveConfig">
           <template #icon><SaveIcon /></template>
-          保存
+          {{ t('settings.memoryConfig.save') }}
         </t-button>
       </div>
     </div>
 
     <div class="memory-status-row">
       <div>
-        <span>ONNX 模型</span>
+        <span>{{ t('settings.memoryConfig.onnxModel') }}</span>
         <b>{{ modelRelativePath || form.modelPathText }}</b>
       </div>
       <t-tag :theme="modelAvailable ? 'success' : 'warning'" variant="light">{{ modelStatusText }}</t-tag>
     </div>
 
     <t-form class="memory-config-form" layout="vertical">
-      <t-form-item label="ONNX 相对路径">
+      <t-form-item :label="t('settings.memoryConfig.modelPath')">
         <div class="memory-path-row">
           <t-input v-model="form.modelPathText" placeholder="all-MiniLM-L6-v2/onnx/model_fp16.onnx" />
-          <t-button variant="outline" :loading="validating" @click="validateModelPath">校验</t-button>
+          <t-button variant="outline" :loading="validating" @click="validateModelPath">{{ t('settings.memoryConfig.validate') }}</t-button>
         </div>
       </t-form-item>
       <t-form-item label="dtype">
@@ -248,22 +306,22 @@ onMounted(loadConfig);
         </t-select>
       </t-form-item>
       <div class="memory-number-grid">
-        <t-form-item label="消息摘要阈值">
+        <t-form-item :label="t('settings.memoryConfig.field.messagesPerSummary')">
           <t-input v-model="form.messagesPerSummary" />
         </t-form-item>
-        <t-form-item label="短期记忆限制">
+        <t-form-item :label="t('settings.memoryConfig.field.shortTermLimit')">
           <t-input v-model="form.shortTermLimit" />
         </t-form-item>
-        <t-form-item label="摘要长度">
+        <t-form-item :label="t('settings.memoryConfig.field.summaryMaxLength')">
           <t-input v-model="form.summaryMaxLength" />
         </t-form-item>
-        <t-form-item label="摘要数量">
+        <t-form-item :label="t('settings.memoryConfig.field.summaryLimit')">
           <t-input v-model="form.summaryLimit" />
         </t-form-item>
-        <t-form-item label="RAG 数量">
+        <t-form-item :label="t('settings.memoryConfig.field.ragLimit')">
           <t-input v-model="form.ragLimit" />
         </t-form-item>
-        <t-form-item label="深度检索摘要数量">
+        <t-form-item :label="t('settings.memoryConfig.field.deepRetrieveSummaryLimit')">
           <t-input v-model="form.deepRetrieveSummaryLimit" />
         </t-form-item>
       </div>
@@ -271,48 +329,45 @@ onMounted(loadConfig);
 
     <div class="memory-stats-grid">
       <div>
-        <span>总记忆</span>
+        <span>{{ t('settings.memoryConfig.stats.total') }}</span>
         <b>{{ stats.total }}</b>
       </div>
       <div>
-        <span>消息</span>
+        <span>{{ t('settings.memoryConfig.stats.messages') }}</span>
         <b>{{ stats.messages }}</b>
       </div>
       <div>
-        <span>摘要</span>
+        <span>{{ t('settings.memoryConfig.stats.summaries') }}</span>
         <b>{{ stats.summaries }}</b>
       </div>
       <div>
-        <span>隔离范围</span>
+        <span>{{ t('settings.memoryConfig.stats.isolations') }}</span>
         <b>{{ stats.isolations.length }}</b>
       </div>
     </div>
 
     <div class="memory-clear-panel">
       <div>
-        <strong>清空记忆</strong>
-        <p>指定范围清理；全部清空必须输入确认短语。</p>
+        <strong>{{ t('settings.memoryConfig.clear.title') }}</strong>
+        <p>{{ t('settings.memoryConfig.clear.hint') }}</p>
       </div>
       <div class="memory-clear-grid">
         <t-radio-group v-model="clearForm.scope">
-          <t-radio-button value="isolation">指定范围</t-radio-button>
-          <t-radio-button value="all">全部</t-radio-button>
+          <t-radio-button value="isolation">{{ t('settings.memoryConfig.clear.scope.isolation') }}</t-radio-button>
+          <t-radio-button value="all">{{ t('settings.memoryConfig.clear.scope.all') }}</t-radio-button>
         </t-radio-group>
         <t-select v-model="clearForm.type">
-          <t-option value="all" label="全部类型" />
-          <t-option value="message" label="消息" />
-          <t-option value="summary" label="摘要" />
+          <t-option v-for="option in CLEAR_TYPE_OPTIONS" :key="option.value" :value="option.value" :label="t(option.labelKey)" />
         </t-select>
         <template v-if="clearForm.scope === 'isolation'">
-          <t-input v-model="clearForm.projectId" placeholder="项目 ID" />
+          <t-input v-model="clearForm.projectId" :placeholder="t('settings.memoryConfig.clear.projectPlaceholder')" />
           <t-select v-model="clearForm.agentType">
-            <t-option value="scriptAgent" label="剧本 Agent" />
-            <t-option value="productionAgent" label="生产 Agent" />
+            <t-option v-for="option in AGENT_TYPE_OPTIONS" :key="option.value" :value="option.value" :label="t(option.labelKey)" />
           </t-select>
-          <t-input v-if="clearForm.agentType === 'productionAgent'" v-model="clearForm.episodesId" placeholder="分集 ID" />
+          <t-input v-if="clearForm.agentType === 'productionAgent'" v-model="clearForm.episodesId" :placeholder="t('settings.memoryConfig.clear.episodePlaceholder')" />
         </template>
-        <t-input v-if="clearForm.scope === 'all'" v-model="clearForm.confirmText" placeholder="输入：清空全部记忆" />
-        <t-button theme="danger" variant="outline" :loading="clearing" @click="clearMemory">清空</t-button>
+        <t-input v-if="clearForm.scope === 'all'" v-model="clearForm.confirmText" :placeholder="t('settings.memoryConfig.clear.confirmPlaceholder', { phrase: getClearAllConfirmPhrase() })" />
+        <t-button theme="danger" variant="outline" :loading="clearing" @click="clearMemory">{{ t('settings.memoryConfig.clear.clear') }}</t-button>
       </div>
     </div>
   </section>

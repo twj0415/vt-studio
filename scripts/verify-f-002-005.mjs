@@ -23,8 +23,10 @@ const staticChecks = [
   ['src/main/services/model/resolver.ts', 'resolveTextAgentModel'],
   ['src/main/services/model/text.ts', 'agentConfig?.temperature !== null'],
   ['src/main/services/model/text.ts', 'agentConfig.maxOutputTokens > 0'],
-  ['src/renderer/src/features/settings/components/ModelServiceConfig.vue', '<AgentConfig'],
-  ['src/renderer/src/features/settings/components/AgentConfig.vue', 'Agent 高级设置'],
+  ['src/renderer/src/features/settings/SettingsHome.vue', '<AgentConfig'],
+  ['src/renderer/src/features/settings/SettingsHome.vue', '@model-service-updated="handleModelServiceUpdated"'],
+  ['src/renderer/src/features/settings/SettingsHome.vue', 'agentConfigRef.value?.loadConfig()'],
+  ['src/renderer/src/features/settings/components/AgentConfig.vue', 'settings.agentConfig.title'],
 ];
 
 for (const [relativePath, needle] of staticChecks) {

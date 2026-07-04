@@ -2,7 +2,11 @@ import { statSync } from 'node:fs';
 import type { MediaRoot } from '@shared/types/media';
 import { getRuntimeDirectories, safeJoin } from '../file-system';
 
-const MEDIA_ROOTS: MediaRoot[] = ['project', 'cache', 'temp', 'exports'];
+const MEDIA_ROOTS: MediaRoot[] = ['project', 'cache', 'temp', 'exports', 'skills', 'assets'];
+
+export function listMediaRoots(): MediaRoot[] {
+  return [...MEDIA_ROOTS];
+}
 
 export function isMediaRoot(value: unknown): value is MediaRoot {
   return typeof value === 'string' && (MEDIA_ROOTS as string[]).includes(value);
@@ -20,6 +24,10 @@ export function getMediaRootPath(root: MediaRoot): string {
       return directories.temp;
     case 'exports':
       return directories.exports;
+    case 'skills':
+      return directories.skills;
+    case 'assets':
+      return directories.assets;
     default:
       throw new Error('不支持的媒体根目录');
   }

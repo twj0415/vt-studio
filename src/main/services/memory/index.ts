@@ -17,7 +17,8 @@ import type {
 } from '@shared/types/memory';
 import type { AgentNamespace } from '@shared/types/socket';
 import { cosineSimilarity, embedText } from '../embedding';
-import { getDatabase, withTransaction } from '../database';
+import { getDatabase } from '../database/connection';
+import { withTransaction } from '../database/transaction';
 import { logger } from '../logger';
 import { createError } from '../result';
 

@@ -1,8 +1,15 @@
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
+import { agentMigrations } from '../agent/migrations';
+import { assetMigrations } from '../assets/migrations';
+import { exportMigrations } from '../export/migrations';
 import { memoryMigrations } from '../memory/migrations';
 import { modelMigrations } from '../model/migrations';
+import { projectMigrations } from '../project/migrations';
+import { scriptMigrations } from '../script/migrations';
+import { sourceMigrations } from '../source/migrations';
 import { modelPromptMigrations } from '../settings/model-prompt-migrations';
+import { productionMigrations } from '../production/migrations';
 import { taskMigrations } from '../task/migrations';
 import { getDatabase } from './connection';
 import { seedMigrations } from './seed-migrations';
@@ -34,6 +41,13 @@ const migrations: Migration[] = [
   ...seedMigrations,
   ...memoryMigrations,
   ...modelPromptMigrations,
+  ...projectMigrations,
+  ...sourceMigrations,
+  ...agentMigrations,
+  ...scriptMigrations,
+  ...assetMigrations,
+  ...productionMigrations,
+  ...exportMigrations,
 ];
 
 function createChecksum(migration: Migration): string {

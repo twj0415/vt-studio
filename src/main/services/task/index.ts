@@ -4,12 +4,33 @@ export {
   cancelTask,
   createTask,
   failTask,
+  getTaskCategoryOptions,
   getTaskCategories,
   getTaskDetail,
+  getTaskProjectOptions,
   isTaskCancelled,
   listTasks,
   recoverRunningTasks,
   succeedTask,
   updateTaskMeta,
 } from './service';
-export type { CreateTaskInput, CreateTaskResult, ListTasksInput, TaskListResult, TaskRecord, UpdateTaskMetaInput } from './types';
+export {
+  assertNoBusinessLocks,
+  countBusinessLocks,
+  countRunningTaskRecords,
+  formatBusinessLockSummary,
+  listBusinessLocks,
+} from './locks';
+export type {
+  CreateTaskInput,
+  CreateTaskResult,
+  ListTasksInput,
+  TaskCategoryOptionsPayload,
+  TaskCategoryOptionsResult,
+  TaskListItem,
+  TaskListResult,
+  TaskProjectOption,
+  TaskProjectOptionsResult,
+  TaskRecord,
+  UpdateTaskMetaInput,
+} from './types';

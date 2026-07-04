@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { normalizeUnknownError } from '@shared/errors';
+import { redactSensitiveValue } from '@shared/security/secrets';
 import { getUserDataPath } from '../app/runtime';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
@@ -10,7 +11,6 @@ export interface LogMeta {
   terminal?: boolean;
 }
 
-const SENSITIVE_KEYS = ['apikey', 'api_key', 'authorization', 'password', 'secret', 'token'];
 const SCOPE_WIDTH = 12;
 const TERMINAL_SPACING = true;
 const LEVEL_LABEL: Record<LogLevel, string> = {
@@ -36,30 +36,12 @@ function getLogFilePath(): string {
   return join(logsDirectory, 'main.log');
 }
 
-function shouldMaskKey(key: string): boolean {
-  const normalized = key.toLowerCase();
-  return SENSITIVE_KEYS.some((sensitiveKey) => normalized.includes(sensitiveKey));
-}
-
 function maskSensitive(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(maskSensitive);
-  }
-
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
-
   if (value instanceof Error) {
-    return normalizeUnknownError(value);
+    return redactSensitiveValue(normalizeUnknownError(value));
   }
 
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    result[key] = shouldMaskKey(key) ? '[已隐藏]' : maskSensitive(item);
-  }
-
-  return result;
+  return redactSensitiveValue(value);
 }
 
 function supportsColor(): boolean {

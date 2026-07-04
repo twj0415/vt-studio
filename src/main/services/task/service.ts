@@ -1,10 +1,21 @@
 import { VT_STATUS } from '@shared/constants/status';
 import { normalizeUnknownError, VtError } from '@shared/errors';
+import { sanitizeSensitiveText } from '@shared/security/secrets';
 import { getDatabase } from '../database';
 import { createError } from '../result';
 import { DEFAULT_TASK_CANCEL_REASON, DEFAULT_TASK_RECOVER_REASON, TASK_STATUS, type TaskStatus } from './constants';
-import { isTaskStatus, mapTaskRow, type TaskRow } from './mapper';
-import type { CreateTaskInput, CreateTaskResult, ListTasksInput, TaskListResult, TaskRecord, UpdateTaskMetaInput } from './types';
+import { isTaskStatus, mapTaskListRow, mapTaskRow, type TaskListRow, type TaskRow } from './mapper';
+import type {
+  CreateTaskInput,
+  CreateTaskResult,
+  ListTasksInput,
+  TaskCategoryOptionsPayload,
+  TaskCategoryOptionsResult,
+  TaskListResult,
+  TaskProjectOptionsResult,
+  TaskRecord,
+  UpdateTaskMetaInput,
+} from './types';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -42,6 +53,14 @@ function serializeRelatedObjects(value: unknown): string | null {
   } catch {
     return String(value);
   }
+}
+
+function tableExists(tableName: string): boolean {
+  const row = getDatabase()
+    .prepare<[string], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+    .get(tableName);
+
+  return Boolean(row);
 }
 
 function getTaskRow(taskId: number): TaskRow {
@@ -86,7 +105,7 @@ function normalizeLimit(value: number | undefined): number {
 
 function normalizeErrorReason(error: unknown): string {
   const normalized = normalizeUnknownError(error);
-  return normalized.message || '任务处理失败';
+  return sanitizeSensitiveText(normalized.message || '任务处理失败');
 }
 
 function toNullableText(value: string | null | undefined): string | null {
@@ -185,18 +204,19 @@ export function listTasks(input: ListTasksInput = {}): TaskListResult {
   const limit = normalizeLimit(input.limit);
   const where: string[] = [];
   const params: Array<string | number> = [];
+  const hasProjectsTable = tableExists('projects');
 
   if (input.projectId !== undefined && input.projectId !== null) {
     if (!Number.isInteger(input.projectId) || input.projectId <= 0) {
       throw createError(VT_STATUS.INVALID_PARAMS, '项目 ID 无效');
     }
 
-    where.push('project_id = ?');
+    where.push('t.project_id = ?');
     params.push(input.projectId);
   }
 
   if (input.category) {
-    where.push('category = ?');
+    where.push('t.category = ?');
     params.push(normalizeCategory(input.category));
   }
 
@@ -205,30 +225,92 @@ export function listTasks(input: ListTasksInput = {}): TaskListResult {
       throw createError(VT_STATUS.INVALID_PARAMS, '任务状态无效');
     }
 
-    where.push('status = ?');
+    where.push('t.status = ?');
     params.push(input.status);
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-  const totalRow = getDatabase().prepare<Array<string | number>, { total: number }>(`SELECT COUNT(*) AS total FROM tasks ${whereSql}`).get(...params);
+  const joinSql = hasProjectsTable ? 'LEFT JOIN projects p ON p.id = t.project_id' : '';
+  const projectNameSelect = hasProjectsTable ? 'p.name AS project_name' : 'NULL AS project_name';
+  const totalRow = getDatabase().prepare<Array<string | number>, { total: number }>(`SELECT COUNT(*) AS total FROM tasks t ${joinSql} ${whereSql}`).get(...params);
   const rows = getDatabase()
-    .prepare<Array<string | number>, TaskRow>(`SELECT * FROM tasks ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`)
+    .prepare<Array<string | number>, TaskListRow>(
+      `
+      SELECT
+        t.id,
+        t.project_id,
+        t.category,
+        t.related_objects,
+        t.model_name,
+        t.description,
+        t.status,
+        t.started_at,
+        t.finished_at,
+        t.error_reason,
+        t.created_at,
+        t.updated_at,
+        ${projectNameSelect}
+      FROM tasks t
+      ${joinSql}
+      ${whereSql}
+      ORDER BY t.id DESC
+      LIMIT ? OFFSET ?
+      `,
+    )
     .all(...params, limit, (page - 1) * limit);
 
   return {
-    data: rows.map(mapTaskRow),
+    data: rows.map(mapTaskListRow),
     total: totalRow?.total ?? 0,
     page,
     limit,
   };
 }
 
-export function getTaskCategories(): string[] {
+function normalizeProjectFilter(projectId: number | null | undefined): number | null {
+  if (projectId === undefined || projectId === null) {
+    return null;
+  }
+
+  if (!Number.isInteger(projectId) || projectId <= 0) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '项目 ID 无效');
+  }
+
+  return projectId;
+}
+
+export function getTaskCategories(input: TaskCategoryOptionsPayload = {}): string[] {
+  const projectId = normalizeProjectFilter(input.projectId);
+  const whereSql = projectId === null ? 'category != ""' : 'category != "" AND project_id = ?';
+  const params = projectId === null ? [] : [projectId];
   const rows = getDatabase()
-    .prepare<[], { category: string }>('SELECT category FROM tasks WHERE category != "" GROUP BY category ORDER BY category ASC')
-    .all();
+    .prepare<number[], { category: string }>(`SELECT category FROM tasks WHERE ${whereSql} GROUP BY category ORDER BY category ASC`)
+    .all(...params);
 
   return rows.map((row) => row.category);
+}
+
+export function getTaskCategoryOptions(input: TaskCategoryOptionsPayload = {}): TaskCategoryOptionsResult {
+  return {
+    categories: getTaskCategories(input),
+  };
+}
+
+export function getTaskProjectOptions(): TaskProjectOptionsResult {
+  if (!tableExists('projects')) {
+    return { projects: [] };
+  }
+
+  const rows = getDatabase()
+    .prepare<[], { id: number; name: string }>('SELECT id, name FROM projects WHERE name != "" ORDER BY updated_at DESC, id DESC')
+    .all();
+
+  return {
+    projects: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+    })),
+  };
 }
 
 export function updateTaskMeta(input: UpdateTaskMetaInput): TaskRecord {

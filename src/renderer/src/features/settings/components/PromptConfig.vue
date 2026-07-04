@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { EditIcon, RefreshIcon, RollbackIcon, SaveIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
-import type { PromptItem, PromptValidationWarning } from '@shared/types/prompt';
+import type { BuiltinPromptType, PromptItem, PromptValidationWarning } from '@shared/types/prompt';
+
+const { t, locale } = useI18n();
+
+const PROMPT_NAME_KEYS: Record<BuiltinPromptType, string> = {
+  eventExtraction: 'settings.promptConfig.promptName.eventExtraction',
+  scriptAssetExtraction: 'settings.promptConfig.promptName.scriptAssetExtraction',
+  videoPromptGeneration: 'settings.promptConfig.promptName.videoPromptGeneration',
+  audioBindPrompt: 'settings.promptConfig.promptName.audioBindPrompt',
+};
 
 const loading = ref(false);
 const saving = ref(false);
@@ -12,7 +22,7 @@ const editorVisible = ref(false);
 const activePrompt = ref<PromptItem | null>(null);
 const editorText = ref('');
 
-const activeStatusText = computed(() => (activePrompt.value?.isCustomized ? '已自定义' : '默认提示词'));
+const activeStatusText = computed(() => (activePrompt.value?.isCustomized ? t('settings.promptConfig.status.customized') : t('settings.promptConfig.status.defaultPrompt')));
 const activeDataLength = computed(() => editorText.value.trim().length);
 
 function isOk(response: { code: number; msg: string }): boolean {
@@ -29,12 +39,20 @@ function getPromptTheme(prompt: PromptItem): 'success' | 'default' {
   return prompt.isCustomized ? 'success' : 'default';
 }
 
+function getPromptName(prompt: PromptItem): string {
+  return t(PROMPT_NAME_KEYS[prompt.type as BuiltinPromptType] ?? prompt.type);
+}
+
+function getPromptCardStatusText(prompt: PromptItem): string {
+  return prompt.isCustomized ? t('settings.promptConfig.status.customized') : t('settings.promptConfig.status.default');
+}
+
 function formatUpdatedAt(value: number): string {
   if (!value) {
-    return '未记录';
+    return t('settings.promptConfig.notRecorded');
   }
 
-  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  return new Date(value).toLocaleString(locale.value, { hour12: false });
 }
 
 function formatWarnings(warnings: PromptValidationWarning[]): string {
@@ -74,7 +92,7 @@ async function savePrompt(force = false): Promise<void> {
   }
 
   if (!editorText.value.trim()) {
-    MessagePlugin.warning('提示词内容不能为空');
+    MessagePlugin.warning(t('settings.promptConfig.message.contentRequired'));
     return;
   }
 
@@ -93,10 +111,10 @@ async function savePrompt(force = false): Promise<void> {
 
     if (!response.data.saved) {
       const dialog = DialogPlugin.confirm({
-        header: '提示词结构风险',
-        body: `检测到这些风险，继续保存可能影响后续生成：\n\n${formatWarnings(response.data.warnings)}`,
-        confirmBtn: '仍然保存',
-        cancelBtn: '返回修改',
+        header: t('settings.promptConfig.riskDialog.title'),
+        body: t('settings.promptConfig.riskDialog.body', { warnings: formatWarnings(response.data.warnings) }),
+        confirmBtn: t('settings.promptConfig.riskDialog.confirm'),
+        cancelBtn: t('settings.promptConfig.riskDialog.cancel'),
         theme: 'warning',
         async onConfirm() {
           dialog.destroy();
@@ -110,7 +128,7 @@ async function savePrompt(force = false): Promise<void> {
       syncActivePrompt(response.data.prompt);
     }
     editorVisible.value = false;
-    MessagePlugin.success('提示词已保存');
+    MessagePlugin.success(t('settings.promptConfig.message.saved'));
     await loadPrompts();
   } finally {
     saving.value = false;
@@ -124,10 +142,10 @@ async function restoreDefault(): Promise<void> {
 
   const prompt = activePrompt.value;
   const dialog = DialogPlugin.confirm({
-    header: '恢复默认提示词',
-    body: `恢复后会清空“${prompt.name}”的自定义内容，并重新使用内置默认提示词。`,
-    confirmBtn: '恢复默认',
-    cancelBtn: '取消',
+    header: t('settings.promptConfig.restoreDialog.title'),
+    body: t('settings.promptConfig.restoreDialog.body', { name: getPromptName(prompt) }),
+    confirmBtn: t('settings.promptConfig.restoreDialog.confirm'),
+    cancelBtn: t('settings.promptConfig.restoreDialog.cancel'),
     theme: 'warning',
     async onConfirm() {
       restoring.value = true;
@@ -139,7 +157,7 @@ async function restoreDefault(): Promise<void> {
         }
 
         syncActivePrompt(response.data.prompt);
-        MessagePlugin.success('已恢复默认');
+        MessagePlugin.success(t('settings.promptConfig.message.restored'));
         await loadPrompts();
         dialog.destroy();
       } finally {
@@ -158,70 +176,70 @@ onMounted(loadPrompts);
     <div class="settings-section-head">
       <div>
         <p class="eyebrow">F-002-006</p>
-        <h3>提示词管理</h3>
+        <h3>{{ t('settings.promptConfig.title') }}</h3>
       </div>
       <t-button variant="outline" :loading="loading" @click="loadPrompts">
         <template #icon><RefreshIcon /></template>
-        刷新
+        {{ t('settings.promptConfig.refresh') }}
       </t-button>
     </div>
-    <p class="settings-hint">只管理内置核心提示词；保存写入自定义内容，恢复默认会回到内置默认值。</p>
+    <p class="settings-hint">{{ t('settings.promptConfig.hint') }}</p>
 
     <div v-if="prompts.length > 0" class="prompt-grid">
       <article v-for="prompt in prompts" :key="prompt.id" class="prompt-card">
         <div class="prompt-card-head">
           <div>
-            <strong>{{ prompt.name }}</strong>
+            <strong>{{ getPromptName(prompt) }}</strong>
             <small>{{ prompt.type }}</small>
           </div>
-          <t-tag :theme="getPromptTheme(prompt)" variant="light">{{ prompt.isCustomized ? '已自定义' : '默认' }}</t-tag>
+          <t-tag :theme="getPromptTheme(prompt)" variant="light">{{ getPromptCardStatusText(prompt) }}</t-tag>
         </div>
         <p>{{ getPromptSummary(prompt) }}</p>
         <div class="prompt-card-foot">
           <span>{{ formatUpdatedAt(prompt.updatedAt) }}</span>
           <t-button size="small" variant="outline" @click="openEditor(prompt)">
             <template #icon><EditIcon /></template>
-            编辑
+            {{ t('settings.promptConfig.edit') }}
           </t-button>
         </div>
       </article>
     </div>
-    <p v-else class="model-empty">{{ loading ? '正在读取提示词...' : '没有读取到内置提示词，请检查默认数据初始化。' }}</p>
+    <p v-else class="model-empty">{{ loading ? t('settings.promptConfig.loading') : t('settings.promptConfig.empty') }}</p>
 
-    <t-dialog v-model:visible="editorVisible" :header="activePrompt ? `编辑 ${activePrompt.name}` : '编辑提示词'" width="860px" confirm-btn="保存" :confirm-loading="saving" @confirm="() => savePrompt(false)">
+    <t-dialog v-model:visible="editorVisible" :header="activePrompt ? t('settings.promptConfig.editorTitleWithName', { name: getPromptName(activePrompt) }) : t('settings.promptConfig.editorTitle')" width="860px" :confirm-btn="t('settings.promptConfig.save')" :confirm-loading="saving" @confirm="() => savePrompt(false)">
       <div v-if="activePrompt" class="prompt-editor">
         <div class="prompt-editor-meta">
           <div>
-            <span>类型</span>
+            <span>{{ t('settings.promptConfig.meta.type') }}</span>
             <b>{{ activePrompt.type }}</b>
           </div>
           <div>
-            <span>状态</span>
+            <span>{{ t('settings.promptConfig.meta.status') }}</span>
             <b>{{ activeStatusText }}</b>
           </div>
           <div>
-            <span>字符数</span>
+            <span>{{ t('settings.promptConfig.meta.chars') }}</span>
             <b>{{ activeDataLength }}</b>
           </div>
         </div>
 
         <div class="prompt-editor-toolbar">
-          <p>保存前会阻止空内容；关键结构缺失时会要求二次确认。</p>
+          <p>{{ t('settings.promptConfig.editorHint') }}</p>
           <t-button variant="outline" theme="warning" :loading="restoring" :disabled="!activePrompt.isCustomized" @click="restoreDefault">
             <template #icon><RollbackIcon /></template>
-            恢复默认
+            {{ t('settings.promptConfig.restoreDefault') }}
           </t-button>
         </div>
 
-        <t-textarea v-model="editorText" class="code-editor prompt-textarea" placeholder="请输入提示词内容" :autosize="{ minRows: 18, maxRows: 28 }" />
+        <t-textarea v-model="editorText" class="code-editor prompt-textarea" :placeholder="t('settings.promptConfig.editorPlaceholder')" :autosize="{ minRows: 18, maxRows: 28 }" />
       </div>
 
       <template #footer>
         <div class="prompt-dialog-footer">
-          <t-button variant="outline" @click="editorVisible = false">取消</t-button>
+          <t-button variant="outline" @click="editorVisible = false">{{ t('settings.promptConfig.cancel') }}</t-button>
           <t-button theme="primary" :loading="saving" @click="savePrompt(false)">
             <template #icon><SaveIcon /></template>
-            保存
+            {{ t('settings.promptConfig.save') }}
           </t-button>
         </div>
       </template>

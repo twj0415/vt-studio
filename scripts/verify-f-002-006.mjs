@@ -21,7 +21,7 @@ const staticChecks = [
   ['src/main/ipc/settings.ts', 'settings:prompt:restore-default'],
   ['src/main/services/settings/prompt.ts', 'UPDATE prompts SET use_data'],
   ['src/renderer/src/features/settings/SettingsHome.vue', '<PromptConfig'],
-  ['src/renderer/src/features/settings/components/PromptConfig.vue', '恢复默认'],
+  ['src/renderer/src/features/settings/components/PromptConfig.vue', 'settings.promptConfig.restoreDefault'],
 ];
 
 for (const [relativePath, needle] of staticChecks) {

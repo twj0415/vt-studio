@@ -6,6 +6,7 @@ import { i18n } from './i18n';
 import { router } from './router';
 import { useAppearanceStore } from './stores/appearance';
 import { useLanguageStore } from './stores/language';
+import { registerRendererErrorBoundary } from './utils/renderer-error-boundary';
 import './styles/index.scss';
 import 'tdesign-vue-next/es/style/index.css';
 
@@ -16,6 +17,7 @@ app.use(pinia);
 app.use(router);
 app.use(i18n);
 app.use(TDesign);
+registerRendererErrorBoundary(app, router);
 useLanguageStore(pinia).init();
 useAppearanceStore(pinia).init();
 app.mount('#app');

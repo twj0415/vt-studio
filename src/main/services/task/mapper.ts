@@ -1,5 +1,5 @@
 import { TASK_STATUS_VALUES, type TaskStatus } from './constants';
-import type { TaskRecord } from './types';
+import type { TaskListItem, TaskRecord } from './types';
 
 export interface TaskRow {
   id: number;
@@ -14,6 +14,10 @@ export interface TaskRow {
   error_reason: string | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface TaskListRow extends TaskRow {
+  project_name: string | null;
 }
 
 export function isTaskStatus(value: unknown): value is TaskStatus {
@@ -34,5 +38,12 @@ export function mapTaskRow(row: TaskRow): TaskRecord {
     errorReason: row.error_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+export function mapTaskListRow(row: TaskListRow): TaskListItem {
+  return {
+    ...mapTaskRow(row),
+    projectName: row.project_name,
   };
 }

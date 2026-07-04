@@ -5,6 +5,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { VT_STATUS } from '@shared/constants/status';
 import { createError } from '../result';
+import { executeComfyUiImageWorkflow } from './comfyui-workflow';
 import type {
   ImageGenerateInput,
   ImageModelConfig,
@@ -382,13 +383,13 @@ export const BUILTIN_VENDOR_DEFINITIONS: Record<string, BuiltinVendorDefinition>
       name: 'ComfyUI',
       author: 'VT Studio',
       version: '1.0.0',
-      description: '本地 ComfyUI 工作流增强 adapter，后续接 workflow、节点映射、队列和历史轮询。',
+      description: '本地 ComfyUI 工作流，支持图片 workflow manifest、节点映射、队列和历史轮询。',
       icon: 'comfyui',
       inputs: [
         { key: 'endpoint', label: 'Endpoint', type: 'url', required: true, placeholder: 'http://127.0.0.1:8188' },
-        { key: 'workflow', label: 'Workflow JSON', type: 'text', required: false },
+        { key: 'workflowManifest', label: 'Workflow Manifest JSON', type: 'text', required: true },
       ],
-      inputValues: { endpoint: '', workflow: '' },
+      inputValues: { endpoint: '', workflowManifest: '' },
       models: [{ name: 'ComfyUI Workflow', modelName: 'comfyui-workflow', type: 'image', mode: ['text', 'singleImage', 'multiReference'] }],
     },
   },
@@ -421,7 +422,13 @@ export function createBuiltinVendorRuntime(vendorId: string, inputValues: Record
 
       return definition.createTextProvider(inputValues)(model.modelName);
     },
-    imageRequest: async (_config: ImageGenerateInput, _model: ImageModelConfig) => missingAdapter('图片'),
+    imageRequest: async (config: ImageGenerateInput, model: ImageModelConfig) => {
+      if (vendorId === 'comfyui') {
+        return executeComfyUiImageWorkflow(config, model, inputValues);
+      }
+
+      return missingAdapter('图片');
+    },
     videoRequest: async (_config: VideoGenerateInput, _model: VideoModelConfig) => missingAdapter('视频'),
     ttsRequest: async (_config: TtsGenerateInput, _model: TtsModelConfig) => missingAdapter('TTS'),
   };

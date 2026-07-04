@@ -27,11 +27,12 @@ const transformersStubSource = `
 `;
 
 const entrySource = `
-  import { existsSync } from 'node:fs';
+  import { existsSync, rmSync } from 'node:fs';
   import { app } from 'electron';
   import { configureRuntime } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/app/runtime.ts')))};
   import { initializeFileSystem, getRuntimeDirectories } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/file-system/index.ts')))};
   import { getDatabase, closeDatabase, runMigrations } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/database/index.ts')))};
+  import { syncDefaultAssets } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/default-assets/index.ts')))};
   import { getEmbeddingModelStatus, embedText } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/embedding/index.ts')))};
   import { clearMemory, createMemoryIsolationKey, getMemoryContext } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/memory/index.ts')))};
   import { readSkillFile, resolveSkillsForAgent } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/skill-retrieval/index.ts')))};
@@ -40,7 +41,10 @@ const entrySource = `
     process.env.VT_STUDIO_USER_DATA = ${JSON.stringify(tempRoot.replace(/\\/g, '\\\\'))};
     configureRuntime();
     initializeFileSystem();
+    syncDefaultAssets();
     runMigrations();
+    const directories = getRuntimeDirectories();
+    rmSync(directories.models + '/all-MiniLM-L6-v2/onnx/model_fp16.onnx', { force: true });
 
     const db = getDatabase();
     const memoriesTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get();
@@ -87,7 +91,6 @@ const entrySource = `
     }
     if (!pathEscapeBlocked) throw new Error('Skill 路径越界未被拦截');
 
-    const directories = getRuntimeDirectories();
     if (!existsSync(directories.models) || !existsSync(directories.skills)) {
       throw new Error('runtime models/skills 目录未创建');
     }
@@ -115,7 +118,7 @@ try {
     platform: 'node',
     format: 'cjs',
     target: 'node20',
-    external: ['better-sqlite3', 'electron'],
+    external: ['better-sqlite3', 'electron', 'sharp', 'vm2'],
     alias: {
       '@shared': join(workspaceRoot, 'src/shared'),
       '@huggingface/transformers': transformersStubPath,

@@ -21,7 +21,7 @@ const staticChecks = [
   ['src/preload/index.ts', 'settings:memory:save'],
   ['src/shared/contracts/preload.ts', 'memory: {'],
   ['src/renderer/src/features/settings/SettingsHome.vue', '<MemoryConfig'],
-  ['src/renderer/src/features/settings/components/MemoryConfig.vue', '清空全部记忆'],
+  ['src/renderer/src/features/settings/components/MemoryConfig.vue', 'settings.memoryConfig.clear.allTitle'],
   ['src/main/services/settings/memory-settings.ts', 'disposeEmbedding'],
 ];
 
@@ -38,8 +38,9 @@ const entrySource = `
   import { app } from 'electron';
   import { configureGpu } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/app/gpu.ts')))};
   import { configureRuntime } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/app/runtime.ts')))};
-  import { initializeFileSystem, getRuntimeDirectories } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/file-system/index.ts')))};
-  import { closeDatabase, getDatabase, runMigrations, runSeed } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/database/index.ts')))};
+  import { initializeFileSystem } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/file-system/directories.ts')))};
+  import { getRuntimeDirectories } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/file-system/paths.ts')))};
+  import { closeDatabase, getDatabase } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/database/connection.ts')))};
   import {
     clearMemoryBySettings,
     getMemorySettings,
@@ -48,13 +49,36 @@ const entrySource = `
     validateMemoryModelPath,
   } from ${JSON.stringify(importPath(join(workspaceRoot, 'src/main/services/settings/memory-settings.ts')))};
 
+  function createRequiredTables() {
+    getDatabase().exec(\`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY,
+        isolation_key TEXT NOT NULL,
+        type TEXT NOT NULL,
+        role TEXT NULL,
+        name TEXT NULL,
+        content TEXT NOT NULL,
+        embedding TEXT NOT NULL DEFAULT '',
+        metadata TEXT NULL,
+        related_message_ids TEXT NULL,
+        summarized INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+    \`);
+  }
+
   async function main() {
     process.env.VT_STUDIO_USER_DATA = ${JSON.stringify(tempRoot.replace(/\\/g, '\\\\'))};
     configureGpu();
     configureRuntime();
     initializeFileSystem();
-    runMigrations();
-    runSeed();
+    createRequiredTables();
 
     const directories = getRuntimeDirectories();
     const initial = getMemorySettings();

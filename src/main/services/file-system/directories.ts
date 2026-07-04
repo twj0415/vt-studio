@@ -9,8 +9,10 @@ export function initializeFileSystem(): RuntimeDirectories {
   mkdirSync(directories.thumbnails, { recursive: true });
   mkdirSync(directories.modelTest, { recursive: true });
   mkdirSync(directories.models, { recursive: true });
+  mkdirSync(directories.modelPrompt, { recursive: true });
   mkdirSync(directories.skills, { recursive: true });
   mkdirSync(directories.vendors, { recursive: true });
+  mkdirSync(directories.assets, { recursive: true });
   mkdirSync(directories.temp, { recursive: true });
   mkdirSync(directories.exports, { recursive: true });
   mkdirSync(directories.logs, { recursive: true });

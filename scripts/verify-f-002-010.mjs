@@ -21,7 +21,8 @@ const staticChecks = [
   ['src/preload/index.ts', 'settings:database:export'],
   ['src/shared/contracts/preload.ts', 'database: {'],
   ['src/renderer/src/features/settings/SettingsHome.vue', '<DatabaseManagement'],
-  ['src/renderer/src/features/settings/components/DatabaseManagement.vue', '输入：清空全部数据'],
+  ['src/renderer/src/features/settings/components/DatabaseManagement.vue', 'settings.databaseManagement.placeholder.confirmPhrase'],
+  ['src/renderer/src/i18n/messages.ts', 'databaseManagement: {'],
   ['src/main/services/settings/database-management.ts', 'assertNoRunningTasks'],
 ];
 
@@ -89,6 +90,7 @@ const entrySource = `
 
     getDatabase().prepare("INSERT INTO tasks (category, status, started_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run('verify', 'running', Date.now(), Date.now(), Date.now());
     if (checkDatabaseRunningTasks().runningTaskCount !== 1) throw new Error('running 任务统计无效');
+    if (checkDatabaseRunningTasks().runningLockCount < 1) throw new Error('running 锁统计无效');
     await expectBlocked('running 任务未阻止导入', () => importDatabaseBackup({ backupName: firstBackup.backup.name, confirmText: '导入数据库' }));
     await expectBlocked('running 任务未阻止清表', () => clearDatabaseTable({ tableName: 'prompts', confirmText: 'prompts' }));
     await expectBlocked('running 任务未阻止清空全部', () => clearAllDatabaseData({ confirmText: '清空全部数据' }));
@@ -136,9 +138,12 @@ try {
     format: 'cjs',
     target: 'node20',
     external: [
+      '@babel/core',
       '@huggingface/transformers',
       'better-sqlite3',
       'electron',
+      'sharp',
+      'vm2',
     ],
     alias: {
       '@shared': join(workspaceRoot, 'src/shared'),

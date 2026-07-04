@@ -1,0 +1,50 @@
+<script setup lang="ts">
+import { onErrorCaptured, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
+import { reportRendererError } from '@renderer/utils/renderer-error-boundary';
+
+const router = useRouter();
+const { t } = useI18n();
+const hasError = ref(false);
+const errorText = ref('');
+
+function resetBoundary() {
+  hasError.value = false;
+  errorText.value = '';
+}
+
+function goProjects() {
+  resetBoundary();
+  router.push({ name: 'projects' });
+}
+
+onErrorCaptured((error, _instance, info) => {
+  hasError.value = true;
+  reportRendererError({
+    source: 'boundary',
+    error,
+    info,
+    showToast: false,
+  });
+  errorText.value = t('rendererError.boundaryLogged');
+
+  return false;
+});
+</script>
+
+<template>
+  <div v-if="hasError" class="flex min-h-screen items-center justify-center bg-[var(--vt-surface-app)] p-6 text-[var(--vt-text-primary)]">
+    <div class="w-full max-w-xl rounded-lg border border-[var(--vt-line-soft)] bg-[var(--vt-surface-panel)] p-6 shadow-sm">
+      <p class="text-sm font-medium text-[var(--vt-text-muted)]">{{ t('rendererError.boundaryEyebrow') }}</p>
+      <h1 class="mt-2 text-xl font-semibold">{{ t('rendererError.boundaryTitle') }}</h1>
+      <p class="mt-3 text-sm leading-6 text-[var(--vt-text-muted)]">{{ t('rendererError.boundaryHint') }}</p>
+      <p v-if="errorText" class="mt-4 rounded-md border border-[var(--vt-line-soft)] bg-[var(--vt-surface-raised)] px-3 py-2 text-sm text-[var(--vt-text-muted)]">{{ errorText }}</p>
+      <div class="mt-6 flex flex-wrap gap-3">
+        <t-button theme="primary" @click="resetBoundary">{{ t('rendererError.retryPage') }}</t-button>
+        <t-button variant="outline" @click="goProjects">{{ t('rendererError.goProjects') }}</t-button>
+      </div>
+    </div>
+  </div>
+  <slot v-else />
+</template>

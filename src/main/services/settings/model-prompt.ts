@@ -1,4 +1,5 @@
 import { VT_STATUS } from '@shared/constants/status';
+import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
 import type {
   ModelPromptBindPayload,
   ModelPromptBindResult,
@@ -17,7 +18,7 @@ import type {
   ModelPromptTemplateSaveResult,
   ModelPromptTemplateType,
 } from '@shared/types/model-prompt';
-import type { ApiConnection, RegisteredModel } from '@shared/types/model-config';
+import type { ApiConnection } from '@shared/types/model-config';
 import { getDatabase } from '../database';
 import { createError } from '../result';
 import { getResourceConfig } from './model-config';
@@ -44,8 +45,23 @@ interface MappingRow {
   updated_at: number;
 }
 
+export interface ResolvedModelPromptTemplate {
+  template: ModelPromptTemplate;
+  source: 'mapping' | 'default';
+  connectionId: string;
+  modelName: string;
+  modelType: ModelPromptModelType;
+  modelMode: string;
+}
+
 const MODEL_TYPES: ModelPromptModelType[] = ['image', 'video'];
 const TEMPLATE_TYPES: ModelPromptTemplateType[] = ['imagePrompt', 'videoPrompt'];
+const DEFAULT_VIDEO_TEMPLATE_NAMES = {
+  SEEDANCE_2_MULTI_PARAMETER: 'Seedance 2.0 多参数模式',
+  UNIVERSAL_START_END: '通用首尾帧模式',
+  UNIVERSAL_MULTI_PARAMETER: '通用多参数模式',
+  WAN_26_SINGLE_IMAGE: 'Wan 2.6 单图首帧模式',
+} as const;
 
 function isModelPromptModelType(value: string): value is ModelPromptModelType {
   return MODEL_TYPES.includes(value as ModelPromptModelType);
@@ -111,6 +127,15 @@ function makeMappingKey(connectionId: string, modelName: string, modelType: stri
   return `${connectionId}\n${modelName}\n${modelType}\n${modelMode}`;
 }
 
+function parseModelId(modelId: string): { connectionId: string; modelName: string } {
+  const [connectionId, modelName] = normalizeText(modelId).split(/:(.+)/);
+  if (!connectionId || !modelName) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '模型 ID 格式必须是 connectionId:modelName');
+  }
+
+  return { connectionId, modelName };
+}
+
 function getTemplates(): ModelPromptTemplate[] {
   const rows = getDatabase()
     .prepare<[], TemplateRow>(
@@ -166,6 +191,31 @@ function getTemplateById(id: number): ModelPromptTemplate | null {
   return row ? toTemplate(row) : null;
 }
 
+function getTemplateByName(type: ModelPromptTemplateType, name: string): ModelPromptTemplate | null {
+  const row = getDatabase()
+    .prepare<[string, string], TemplateRow>(
+      `
+      SELECT
+        t.id,
+        t.name,
+        t.type,
+        t.content,
+        t.is_builtin,
+        t.created_at,
+        t.updated_at,
+        COUNT(m.id) as reference_count
+      FROM model_prompt_templates t
+      LEFT JOIN model_prompt_mappings m ON m.template_id = t.id
+      WHERE t.type = ? AND lower(t.name) = lower(?)
+      GROUP BY t.id
+      LIMIT 1
+      `,
+    )
+    .get(type, name);
+
+  return row ? toTemplate(row) : null;
+}
+
 function requireTemplate(id: number): ModelPromptTemplate {
   const template = getTemplateById(id);
   if (!template) {
@@ -216,6 +266,64 @@ function getReferences(templateId: number): MappingRow[] {
     .all(templateId);
 }
 
+function getMappingByTarget(connectionId: string, modelName: string, modelType: ModelPromptModelType, modelMode: string): MappingRow | null {
+  return getDatabase()
+    .prepare<[string, string, string, string], MappingRow>(
+      'SELECT id, connection_id, model_name, model_type, model_mode, template_id, created_at, updated_at FROM model_prompt_mappings WHERE connection_id = ? AND model_name = ? AND model_type = ? AND model_mode = ? LIMIT 1',
+    )
+    .get(connectionId, modelName, modelType, modelMode) ?? null;
+}
+
+function getTemplateForMapping(mapping: MappingRow, modelType: ModelPromptModelType): ModelPromptTemplate {
+  const template = getTemplateById(mapping.template_id);
+  if (!template) {
+    throw createError(VT_STATUS.NOT_FOUND, '模型提示词映射指向的模板不存在');
+  }
+
+  if (modelTypeForTemplate(template.type) !== modelType) {
+    throw createError(VT_STATUS.CONFLICT, '模型提示词模板类型和模型类型不匹配');
+  }
+
+  return template;
+}
+
+function findDefaultVideoPromptTemplate(modelName: string, modelMode: string): ModelPromptTemplate | null {
+  const lowerModelName = modelName.toLowerCase();
+  const lowerMode = modelMode.toLowerCase();
+  const candidates: string[] = [];
+
+  if (lowerModelName.includes('wan') && /2[._-]?6/.test(lowerModelName)) {
+    candidates.push(DEFAULT_VIDEO_TEMPLATE_NAMES.WAN_26_SINGLE_IMAGE);
+  }
+
+  if (lowerModelName.includes('seedance') && (lowerModelName.includes('2.0') || lowerModelName.includes('2-0'))) {
+    candidates.push(DEFAULT_VIDEO_TEMPLATE_NAMES.SEEDANCE_2_MULTI_PARAMETER);
+  }
+
+  if (
+    lowerMode.includes(',') ||
+    lowerMode.includes('imagereference') ||
+    lowerMode.includes('videoreference') ||
+    lowerMode.includes('audioreference') ||
+    lowerMode === 'multireference'
+  ) {
+    candidates.push(DEFAULT_VIDEO_TEMPLATE_NAMES.UNIVERSAL_MULTI_PARAMETER);
+  }
+
+  if (['startendrequired', 'endframeoptional', 'startframeoptional'].includes(lowerMode)) {
+    candidates.push(DEFAULT_VIDEO_TEMPLATE_NAMES.UNIVERSAL_START_END);
+  }
+
+  for (const name of candidates) {
+    const template = getTemplateByName('videoPrompt', name);
+    if (template) {
+      return template;
+    }
+  }
+
+  return null;
+}
+
 function formatReferenceList(rows: MappingRow[]): string {
   return rows
     .slice(0, 3)
@@ -223,32 +331,39 @@ function formatReferenceList(rows: MappingRow[]): string {
     .join('、');
 }
 
-function getModel(connectionId: string, modelName: string, modelType: ModelPromptModelType): { connection: ApiConnection; model: RegisteredModel } {
+function getModel(connectionId: string, modelName: string, modelType: ModelPromptModelType, modelMode: string): { connection: ApiConnection; matrixItem: ModelCapabilityMatrixItem } {
   const resource = getResourceConfig();
   const connection = resource.connections.find((item) => item.id === connectionId);
   if (!connection) {
     throw createError(VT_STATUS.NOT_FOUND, '模型连接不存在');
   }
 
-  const model = connection.models.find((item) => item.modelName === modelName && item.type === modelType);
-  if (!model) {
+  const modeMatched = resource.capabilityMatrix.find((item) =>
+    item.connectionId === connectionId &&
+    item.modelName === modelName &&
+    item.modelType === modelType &&
+    (item.modeKey === modelMode || !modelMode),
+  );
+  if (!modeMatched) {
     throw createError(VT_STATUS.MODEL_NOT_FOUND, '模型不存在或类型不匹配');
   }
 
-  return { connection, model };
+  return { connection, matrixItem: modeMatched };
 }
 
-function buildModelItem(connection: ApiConnection, model: RegisteredModel, mappings: Map<string, MappingRow>, templates: Map<number, ModelPromptTemplate>): ModelPromptModelItem {
-  const modelType = model.type as ModelPromptModelType;
-  const modelMode = '';
-  const mapping = mappings.get(makeMappingKey(connection.id, model.modelName, modelType, modelMode));
+function buildModelItem(item: ModelCapabilityMatrixItem, mappings: Map<string, MappingRow>, templates: Map<number, ModelPromptTemplate>): ModelPromptModelItem {
+  const modelType = item.modelType as ModelPromptModelType;
+  const modelMode = item.modeKey;
+  const mapping =
+    mappings.get(makeMappingKey(item.connectionId, item.modelName, modelType, modelMode)) ??
+    mappings.get(makeMappingKey(item.connectionId, item.modelName, modelType, ''));
 
   if (!mapping) {
     return {
-      connectionId: connection.id,
-      connectionName: connection.name,
-      modelName: model.modelName,
-      modelDisplayName: model.displayName,
+      connectionId: item.connectionId,
+      connectionName: item.connectionName,
+      modelName: item.modelName,
+      modelDisplayName: item.modelDisplayName,
       modelType,
       modelMode,
       binding: null,
@@ -260,10 +375,10 @@ function buildModelItem(connection: ApiConnection, model: RegisteredModel, mappi
   const template = templates.get(mapping.template_id);
   if (!template) {
     return {
-      connectionId: connection.id,
-      connectionName: connection.name,
-      modelName: model.modelName,
-      modelDisplayName: model.displayName,
+      connectionId: item.connectionId,
+      connectionName: item.connectionName,
+      modelName: item.modelName,
+      modelDisplayName: item.modelDisplayName,
       modelType,
       modelMode,
       binding: null,
@@ -274,10 +389,10 @@ function buildModelItem(connection: ApiConnection, model: RegisteredModel, mappi
 
   if (modelTypeForTemplate(template.type) !== modelType) {
     return {
-      connectionId: connection.id,
-      connectionName: connection.name,
-      modelName: model.modelName,
-      modelDisplayName: model.displayName,
+      connectionId: item.connectionId,
+      connectionName: item.connectionName,
+      modelName: item.modelName,
+      modelDisplayName: item.modelDisplayName,
       modelType,
       modelMode,
       binding: toBinding(mapping, template),
@@ -287,10 +402,10 @@ function buildModelItem(connection: ApiConnection, model: RegisteredModel, mappi
   }
 
   return {
-    connectionId: connection.id,
-    connectionName: connection.name,
-    modelName: model.modelName,
-    modelDisplayName: model.displayName,
+    connectionId: item.connectionId,
+    connectionName: item.connectionName,
+    modelName: item.modelName,
+    modelDisplayName: item.modelDisplayName,
     modelType,
     modelMode,
     binding: toBinding(mapping, template),
@@ -374,34 +489,83 @@ export function getModelPromptConfig(): ModelPromptConfigResult {
   const templateMap = new Map(templates.map((template) => [template.id, template]));
   const mappingMap = new Map(mappings.map((mapping) => [makeMappingKey(mapping.connection_id, mapping.model_name, mapping.model_type, mapping.model_mode), mapping]));
   const currentKeys = new Set<string>();
-  const connections: ModelPromptConnectionGroup[] = [];
+  const connectionMap = new Map<string, ModelPromptConnectionGroup>();
+  const resource = getResourceConfig();
 
-  for (const connection of getResourceConfig().connections) {
-    const models = connection.models
-      .filter((model) => isModelPromptModelType(model.type))
-      .map((model) => {
-        currentKeys.add(makeMappingKey(connection.id, model.modelName, model.type));
-        return buildModelItem(connection, model, mappingMap, templateMap);
-      });
-
-    if (models.length === 0) {
+  for (const item of resource.capabilityMatrix) {
+    if (!isModelPromptModelType(item.modelType)) {
       continue;
     }
 
-    connections.push({
-      connectionId: connection.id,
-      connectionName: connection.name,
-      connectionStatus: connection.status,
-      connectionStatusText: connection.statusText,
-      models,
-    });
+    currentKeys.add(makeMappingKey(item.connectionId, item.modelName, item.modelType, item.modeKey));
+    currentKeys.add(makeMappingKey(item.connectionId, item.modelName, item.modelType, ''));
+
+    let group = connectionMap.get(item.connectionId);
+    if (!group) {
+      const connection = resource.connections.find((current) => current.id === item.connectionId);
+      group = {
+        connectionId: item.connectionId,
+        connectionName: item.connectionName,
+        connectionStatus: connection?.status ?? item.status,
+        connectionStatusText: connection?.statusText ?? item.statusText,
+        models: [],
+      };
+      connectionMap.set(item.connectionId, group);
+    }
+
+    group.models.push(buildModelItem(item, mappingMap, templateMap));
   }
 
   return {
     templates,
-    connections,
+    connections: [...connectionMap.values()],
     invalidMappings: buildInvalidMappings(mappings, templateMap, currentKeys),
   };
+}
+
+export function resolveModelPromptTemplate(input: {
+  modelId: string;
+  modelType: ModelPromptModelType;
+  modelMode?: string | null;
+}): ResolvedModelPromptTemplate | null {
+  if (!isModelPromptModelType(input.modelType)) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '模型类型只支持 image/video');
+  }
+
+  const { connectionId, modelName } = parseModelId(input.modelId);
+  const modelMode = normalizeMode(input.modelMode);
+  getModel(connectionId, modelName, input.modelType, modelMode);
+
+  const mapping =
+    getMappingByTarget(connectionId, modelName, input.modelType, modelMode) ??
+    (modelMode ? getMappingByTarget(connectionId, modelName, input.modelType, '') : null);
+
+  if (mapping) {
+    return {
+      template: getTemplateForMapping(mapping, input.modelType),
+      source: 'mapping',
+      connectionId,
+      modelName,
+      modelType: input.modelType,
+      modelMode,
+    };
+  }
+
+  if (input.modelType === 'video') {
+    const defaultTemplate = findDefaultVideoPromptTemplate(modelName, modelMode);
+    if (defaultTemplate) {
+      return {
+        template: defaultTemplate,
+        source: 'default',
+        connectionId,
+        modelName,
+        modelType: input.modelType,
+        modelMode,
+      };
+    }
+  }
+
+  return null;
 }
 
 export function saveModelPromptTemplate(payload: ModelPromptTemplateSavePayload): ModelPromptTemplateSaveResult {
@@ -468,7 +632,7 @@ export function bindModelPromptTemplate(payload: ModelPromptBindPayload): ModelP
     throw createError(VT_STATUS.INVALID_PARAMS, '模型连接和模型名称不能为空');
   }
 
-  getModel(connectionId, modelName, payload.modelType);
+  getModel(connectionId, modelName, payload.modelType, modelMode);
   const template = requireTemplate(Number(payload.templateId));
   if (template.type !== templateTypeForModel(payload.modelType)) {
     throw createError(VT_STATUS.INVALID_PARAMS, '模板类型和模型类型不匹配');

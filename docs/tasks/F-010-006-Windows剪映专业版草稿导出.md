@@ -1,6 +1,6 @@
 # F-010-006 Windows 剪映专业版草稿导出
 
-状态：等待用户确认  
+状态：已完成（第一版 VT Studio 可验证草稿包）  
 所属菜单：M-010 导出  
 对应功能文档：`docs/features/M-010-导出.md`  
 原则：先确认本文档，再改代码
@@ -226,10 +226,31 @@
 ## 10. 执行后记录
 
 ```txt
-改了哪些文件：（完成后填写）
-验证结果：（完成后填写）
-未完成事项：（完成后填写）
-最终结论：（完成后填写）
+改了哪些文件：
+  - src/shared/types/export.ts
+  - src/main/services/export/index.ts
+  - src/main/ipc/export.ts
+  - src/main/ipc/index.ts
+  - src/preload/index.ts
+  - src/shared/contracts/preload.ts
+  - src/renderer/src/features/production/components/ProductionWorkbenchDialog.vue
+  - src/renderer/src/i18n/messages.ts
+  - src/renderer/src/styles/index.scss
+  - scripts/verify-p10-export.mjs
+
+验证结果：
+  - D:\software\nodejs\node.exe scripts\verify-p10-export.mjs 通过
+  - D:\software\nodejs\pnpm.cmd run typecheck 通过
+  - D:\software\nodejs\pnpm.cmd run build 通过
+
+未完成事项：
+  - 未接入真实 Jianying Draft Exporter。
+  - 未核验剪映私有 draft_content.json schema。
+  - 当前输出 draft_meta_info.json、draft_content.json、vt_timeline.json、export_summary.json 和 assets/，并标记 native_jianying_schema_verified=false。
+
+最终结论：
+  - export.createJianyingDraft 已接入 main 服务、任务中心、素材校验、默认复制素材和打开导出目录能力。
+  - 第一版是 VT Studio 可验证草稿包，不能对外宣称已完整兼容剪映专业版原生草稿。
 ```
 
 ## 11. 最后大白话

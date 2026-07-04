@@ -4,11 +4,10 @@ import { useI18n } from 'vue-i18n';
 
 interface ModuleAction {
   title: string;
-  state: '待建任务' | '待确认' | '基础入口';
+  state: 'pending' | 'confirm' | 'ready';
 }
 
 const props = defineProps<{
-  moduleId: string;
   title: string;
   summary: string;
   actions: readonly ModuleAction[];
@@ -18,7 +17,7 @@ const { t } = useI18n();
 const localizedActions = computed(() =>
   props.actions.map((action) => ({
     ...action,
-    stateText: action.state === '待建任务' ? t('scaffold.state.pending') : action.state === '待确认' ? t('scaffold.state.confirm') : t('scaffold.state.ready'),
+    stateText: t(`scaffold.state.${action.state}`),
   })),
 );
 </script>
@@ -27,7 +26,7 @@ const localizedActions = computed(() =>
   <div class="module-page min-w-0">
     <section class="module-hero">
       <div>
-        <p class="eyebrow">{{ moduleId }}</p>
+        <p class="eyebrow">{{ t('scaffold.moduleEyebrow') }}</p>
         <h3>{{ title }}</h3>
         <p>{{ summary }}</p>
       </div>
@@ -39,9 +38,17 @@ const localizedActions = computed(() =>
 
     <section class="module-grid">
       <article v-for="action in localizedActions" :key="action.title" class="module-card">
-        <span>{{ action.stateText }}</span>
+        <t-tag variant="light" :theme="action.state === 'pending' ? 'warning' : action.state === 'confirm' ? 'primary' : 'success'">{{ action.stateText }}</t-tag>
         <strong>{{ action.title }}</strong>
       </article>
+    </section>
+
+    <section class="module-next-step">
+      <div>
+        <strong>{{ t('scaffold.nextStepTitle') }}</strong>
+        <p>{{ t('scaffold.nextStepSummary') }}</p>
+      </div>
+      <t-tag variant="light" theme="primary">{{ t('scaffold.stageReady') }}</t-tag>
     </section>
   </div>
 </template>

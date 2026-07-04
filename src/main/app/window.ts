@@ -9,6 +9,7 @@ export function createMainWindow(): BrowserWindow {
     height: 920,
     minWidth: 1180,
     minHeight: 760,
+    frame: false,
     show: true,
     title: 'VT Studio',
     autoHideMenuBar: true,

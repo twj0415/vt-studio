@@ -1,6 +1,14 @@
-export type AppearanceMode = 'auto' | 'light' | 'dark';
-export type AppearancePresetId = 'studio' | 'warm' | 'work';
-export type AppearanceFontSize = 12 | 13 | 14 | 16 | 18 | 20 | 22;
+import {
+  APPEARANCE_FONT_SIZE_VALUES,
+  APPEARANCE_MODE_VALUES,
+  APPEARANCE_PRESET_VALUES,
+  APPEARANCE_PRESETS as APPEARANCE_PRESET_IDS,
+  type AppearanceFontSize,
+  type AppearanceMode,
+  type AppearancePresetId,
+} from '@shared/constants/dictionaries';
+
+export type { AppearanceFontSize, AppearanceMode, AppearancePresetId };
 export type ResolvedAppearanceMode = 'light' | 'dark';
 
 export interface AppearanceSettings {
@@ -17,7 +25,7 @@ export interface AppearancePresetMeta {
 }
 
 const APPEARANCE_STORAGE_KEY = 'vtStudio.appearance';
-const FONT_SIZES: AppearanceFontSize[] = [12, 13, 14, 16, 18, 20, 22];
+const FONT_SIZES: AppearanceFontSize[] = [...APPEARANCE_FONT_SIZE_VALUES];
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   mode: 'auto',
@@ -29,19 +37,19 @@ export const APPEARANCE_PRESETS: AppearancePresetMeta[] = [
   {
     id: 'studio',
     name: 'Studio',
-    description: '当前产品默认风格，平衡创作感和工具感。',
+    description: 'Default studio preset.',
     preview: ['#2f6f63', '#f3efe7', '#9a641f'],
   },
   {
     id: 'warm',
-    name: '暖色',
-    description: '偏柔和和内容创作场景，更适合长时间阅读。',
+    name: 'Warm',
+    description: 'Warm reading preset.',
     preview: ['#b36a3c', '#f6eee4', '#7b8b53'],
   },
   {
     id: 'work',
-    name: '工作风',
-    description: '偏冷静和结构化，适合高密度操作。',
+    name: 'Work',
+    description: 'Dense work preset.',
     preview: ['#2563eb', '#eef2f6', '#0f172a'],
   },
 ];
@@ -51,11 +59,11 @@ let mediaQueryList: MediaQueryList | null = null;
 let mediaQueryHandlerBound = false;
 
 function isAppearanceMode(value: string): value is AppearanceMode {
-  return value === 'auto' || value === 'light' || value === 'dark';
+  return APPEARANCE_MODE_VALUES.includes(value as AppearanceMode);
 }
 
 function isAppearancePresetId(value: string): value is AppearancePresetId {
-  return value === 'studio' || value === 'warm' || value === 'work';
+  return APPEARANCE_PRESET_VALUES.includes(value as AppearancePresetId);
 }
 
 function isAppearanceFontSize(value: number): value is AppearanceFontSize {
@@ -110,7 +118,7 @@ export function applyAppearanceSettings(settings: AppearanceSettings): void {
   const resolvedMode = resolveAppearanceMode(currentSettings.mode);
 
   root.setAttribute('theme-mode', currentSettings.mode);
-  root.setAttribute('data-theme-preset', currentSettings.themePresetId);
+  root.setAttribute('data-theme-preset', currentSettings.themePresetId || APPEARANCE_PRESET_IDS.STUDIO);
   root.setAttribute('data-color-mode', resolvedMode);
   root.classList.toggle('dark', resolvedMode === 'dark');
   root.style.fontSize = `${currentSettings.fontSize}px`;

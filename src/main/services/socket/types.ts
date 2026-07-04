@@ -7,6 +7,7 @@ import type {
   AgentSocketErrorPayload,
   AgentThinkConfigPayload,
 } from '@shared/types/socket';
+import type { ScriptAgentWorkspaceSocketUpdate } from '@shared/types/script-agent';
 
 export interface AgentSocketData {
   token: string;
@@ -20,6 +21,7 @@ export interface ServerToClientEvents {
   'message:update': (payload: AgentMessageUpdatePayload) => void;
   'content:add': (payload: AgentContentAddPayload) => void;
   'content:update': (payload: AgentContentUpdatePayload) => void;
+  'workspace:update': (payload: ScriptAgentWorkspaceSocketUpdate) => void;
   error: (error: AgentSocketErrorPayload) => void;
   getPlanData: (data: unknown) => void;
 }

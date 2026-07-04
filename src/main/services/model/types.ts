@@ -1,16 +1,16 @@
 import type { generateText, streamText } from 'ai';
 import type { AgentModelKey, ModelType } from './constants';
+import type {
+  ImageGenerationMode,
+  VendorInputType,
+  VideoGenerationMode,
+  VideoReferenceMode,
+  VideoSimpleMode,
+} from '@shared/constants/dictionaries';
 
-export type VendorInputType = 'text' | 'password' | 'url';
-export type ImageMode = 'text' | 'singleImage' | 'multiReference';
-export type VideoSimpleMode =
-  | 'singleImage'
-  | 'startEndRequired'
-  | 'endFrameOptional'
-  | 'startFrameOptional'
-  | 'text';
-export type VideoReferenceMode = `${'videoReference' | 'imageReference' | 'audioReference'}:${number}`;
-export type VideoMode = VideoSimpleMode | VideoReferenceMode[];
+export type ImageMode = ImageGenerationMode;
+export type VideoMode = VideoGenerationMode;
+export type { VendorInputType, VideoReferenceMode, VideoSimpleMode };
 
 export interface VendorInput {
   key: string;
@@ -125,6 +125,7 @@ export type ReferenceItem =
   | { type: 'video'; sourceType: 'base64'; base64: string };
 
 export interface ImageGenerateInput {
+  requestId?: string;
   prompt: string;
   referenceList?: Extract<ReferenceItem, { type: 'image' }>[];
   size: '1K' | '2K' | '4K';
@@ -133,6 +134,7 @@ export interface ImageGenerateInput {
 }
 
 export interface VideoGenerateInput {
+  requestId?: string;
   duration: number;
   resolution: string;
   aspectRatio: '16:9' | '9:16';
@@ -144,6 +146,7 @@ export interface VideoGenerateInput {
 }
 
 export interface TtsGenerateInput {
+  requestId?: string;
   text?: string;
   voice?: string;
   speechRate?: number;
@@ -157,19 +160,25 @@ export interface TtsGenerateInput {
 export type AudioGenerateInput = TtsGenerateInput;
 
 export interface ModelTaskOptions {
+  taskId?: number;
   projectId: number;
   category: string;
   description: string;
   relatedObjects: unknown;
+  timeoutMs?: number;
+  retry?: ModelCallRetryOptions | false;
+  isCancelled?: () => boolean;
 }
 
 export type TextInvokeInput = Omit<Parameters<typeof generateText>[0], 'model'> & {
+  requestId?: string;
   modelKey: AgentModelKey | string;
   think?: boolean;
   thinkLevel?: 0 | 1 | 2 | 3;
 };
 
 export type TextStreamInput = Omit<Parameters<typeof streamText>[0], 'model'> & {
+  requestId?: string;
   modelKey: AgentModelKey | string;
   think?: boolean;
   thinkLevel?: 0 | 1 | 2 | 3;
@@ -196,4 +205,10 @@ export interface ModelTestVideoInput {
   images: ReferenceItem[];
   videos: ReferenceItem[];
   audios: ReferenceItem[];
+}
+
+export interface ModelCallRetryOptions {
+  maxAttempts?: number;
+  delayMs?: number;
+  backoffFactor?: number;
 }

@@ -5,6 +5,8 @@ export interface NormalizedError {
   message: string;
   statusCode?: number;
   errorKey?: string;
+  msgKey?: string;
+  requestId?: string;
   stack?: string;
   detail?: unknown;
   cause?: NormalizedError;
@@ -26,6 +28,8 @@ export function normalizeUnknownError(error: unknown): NormalizedError {
       message: error.message,
       statusCode: error.statusCode,
       errorKey: error.errorKey,
+      msgKey: error.msgKey,
+      requestId: error.requestId,
       stack: error.stack,
       detail: error.detail,
       cause: error.cause ? normalizeUnknownError(error.cause) : undefined,

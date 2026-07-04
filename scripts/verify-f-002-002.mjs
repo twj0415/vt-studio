@@ -107,6 +107,7 @@ try {
     absWorkingDir: workspaceRoot,
     alias: {
       '@renderer': join(workspaceRoot, 'src/renderer/src'),
+      '@shared': join(workspaceRoot, 'src/shared'),
     },
     logLevel: 'silent',
   });

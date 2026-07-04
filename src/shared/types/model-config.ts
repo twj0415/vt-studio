@@ -1,3 +1,6 @@
+import type { ImageGenerationMode, VideoGenerationMode } from '../constants/dictionaries';
+import type { ModelAudioSupport } from '../constants/model-capabilities';
+import type { ModelCapabilityMatrixItem } from './model-capability';
 import type { VendorModelType } from './vendor';
 
 export type ModelCapability = VendorModelType;
@@ -28,6 +31,16 @@ export interface RegisteredModel {
   modelName: string;
   type: ModelCapability;
   think?: boolean;
+  imageModes?: ImageGenerationMode[];
+  videoModes?: VideoGenerationMode[];
+  durationOptions?: number[];
+  resolutionOptions?: string[];
+  aspectRatioOptions?: string[];
+  audioSupport?: ModelAudioSupport;
+  voices?: Array<{
+    title: string;
+    voice: string;
+  }>;
 }
 
 export interface ApiConnection {
@@ -37,6 +50,9 @@ export interface ApiConnection {
   protocolType: ApiProtocolType;
   baseUrl: string;
   apiKey: string;
+  workflowManifest?: string;
+  apiKeyConfigured?: boolean;
+  apiKeyMasked?: string;
   capabilities: ModelCapability[];
   models: RegisteredModel[];
   status: ApiConnectionStatus;
@@ -51,6 +67,7 @@ export interface ApiConnectionDraft {
   serviceType: ApiServiceType;
   baseUrl: string;
   apiKey: string;
+  workflowManifest?: string;
   capabilities: ModelCapability[];
   models: RegisteredModel[];
 }
@@ -102,6 +119,7 @@ export interface ApiConnectionTestPayload {
 export interface ApiConnectionTestResult {
   content: string;
   thinking?: string;
+  filePath?: string;
   durationMs: number;
 }
 
@@ -109,6 +127,7 @@ export interface ResourceConfigResult {
   capabilities: CapabilitySummary[];
   bindings: CapabilityBindingMap;
   connections: ApiConnection[];
+  capabilityMatrix: ModelCapabilityMatrixItem[];
 }
 
 export interface ResourceBindingSavePayload {

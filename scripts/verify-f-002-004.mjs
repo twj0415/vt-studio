@@ -22,7 +22,7 @@ const staticChecks = [
   ['src/main/ipc/settings.ts', 'settings:model-prompt:bind'],
   ['src/main/services/settings/model-prompt.ts', '模板类型和模型类型不匹配'],
   ['src/renderer/src/features/settings/SettingsHome.vue', '<ModelPromptConfig'],
-  ['src/renderer/src/features/settings/components/ModelPromptConfig.vue', '模型专用模板'],
+  ['src/renderer/src/features/settings/components/ModelPromptConfig.vue', 'settings.modelPromptConfig.title'],
 ];
 
 for (const [relativePath, needle] of staticChecks) {

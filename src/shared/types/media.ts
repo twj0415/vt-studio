@@ -1,4 +1,4 @@
-export type MediaRoot = 'project' | 'cache' | 'temp' | 'exports';
+export type MediaRoot = 'project' | 'cache' | 'temp' | 'exports' | 'skills' | 'assets';
 
 export type MediaMode = 'original' | 'thumbnail';
 

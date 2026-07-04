@@ -2,6 +2,7 @@ import type { Server as HttpServer } from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import { VT_STATUS } from '@shared/constants/status';
 import type { AgentSocketInfo } from '@shared/types/socket';
+import type { SocketDiagnosticsInfo, SocketNamespaceDiagnosticsInfo } from '@shared/types/request-settings';
 import { getDatabase } from '../database';
 import { logger } from '../logger';
 import { authenticateAgentSocket } from './auth';
@@ -10,6 +11,11 @@ import type { AgentSocket } from './types';
 
 let io: SocketIOServer | null = null;
 let socketUrl: string | null = null;
+
+const SOCKET_NAMESPACES: Array<Omit<SocketNamespaceDiagnosticsInfo, 'connectedCount'>> = [
+  { name: 'scriptAgent', path: '/socket/scriptAgent' },
+  { name: 'productionAgent', path: '/socket/productionAgent' },
+];
 
 function getTokenKey(): string {
   const row = getDatabase()
@@ -71,6 +77,17 @@ export function getAgentSocketInfo(): AgentSocketInfo {
   return {
     url: socketUrl,
     token: getTokenKey(),
+  };
+}
+
+export function getSocketDiagnostics(): SocketDiagnosticsInfo {
+  return {
+    running: Boolean(io && socketUrl),
+    url: socketUrl,
+    namespaces: SOCKET_NAMESPACES.map((item) => ({
+      ...item,
+      connectedCount: io?.of(item.path).sockets.size ?? 0,
+    })),
   };
 }
 

@@ -1,5 +1,6 @@
 import { createServer, type Server as HttpServer } from 'node:http';
 import { logger } from '../services/logger';
+import { recordLocalRequestFailure } from '../services/local-request-diagnostics';
 import { handleMediaRequest } from '../services/media/request-handler';
 
 let server: HttpServer | null = null;
@@ -11,6 +12,20 @@ export interface LocalServerInfo {
   port: number;
 }
 
+export function getLocalServerInfo(): LocalServerInfo | null {
+  if (!server || !serverUrl) {
+    return null;
+  }
+
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  return {
+    server,
+    url: serverUrl,
+    port,
+  };
+}
+
 export async function startLocalServer(): Promise<LocalServerInfo> {
   if (server && serverUrl) {
     const address = server.address();
@@ -19,10 +34,20 @@ export async function startLocalServer(): Promise<LocalServerInfo> {
   }
 
   server = createServer(async (req, res) => {
+    const startedAt = Date.now();
     if (await handleMediaRequest(req, res)) {
       return;
     }
 
+    recordLocalRequestFailure({
+      kind: 'local-http',
+      method: req.method,
+      path: req.url ?? '/',
+      statusCode: 404,
+      reason: 'routeNotFound',
+      msg: 'Not Found',
+      startedAt,
+    });
     res.statusCode = 404;
     res.setHeader('content-type', 'application/json; charset=utf-8');
     res.end(JSON.stringify({ code: 404, msg: 'Not Found' }));

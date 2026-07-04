@@ -2,8 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { AddIcon, DeleteIcon, EditIcon, PlayCircleIcon, RefreshIcon, SwapIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
-import type { ApiConnection, ApiConnectionDraft, ApiServiceType, CapabilitySummary, ModelCapability, RegisteredModel } from '@shared/types/model-config';
-import AgentConfig from './AgentConfig.vue';
+import { useI18n } from 'vue-i18n';
+import type { ApiConnection, ApiConnectionDraft, ApiConnectionTestResult, ApiServiceType, CapabilitySummary, ModelCapability, RegisteredModel } from '@shared/types/model-config';
 
 interface ServiceTemplate {
   serviceType: ApiServiceType;
@@ -13,15 +13,19 @@ interface ServiceTemplate {
   models: RegisteredModel[];
 }
 
-const CAPABILITY_OPTIONS: Array<{ label: string; value: ModelCapability }> = [
-  { label: '文本', value: 'text' },
-  { label: '图片', value: 'image' },
-  { label: '视频', value: 'video' },
-  { label: '语音', value: 'tts' },
+const CAPABILITY_OPTIONS: Array<{ labelKey: string; value: ModelCapability }> = [
+  { labelKey: 'settings.modelService.capability.text', value: 'text' },
+  { labelKey: 'settings.modelService.capability.image', value: 'image' },
+  { labelKey: 'settings.modelService.capability.video', value: 'video' },
+  { labelKey: 'settings.modelService.capability.tts', value: 'tts' },
 ];
 
 const SERVICE_ORDER: ApiServiceType[] = ['openai-gateway', 'openai-official', 'claude', 'deepseek', 'gemini', 'local-workflow', 'advanced'];
 
+const { t } = useI18n();
+const emit = defineEmits<{
+  modelServiceUpdated: [];
+}>();
 const loading = ref(false);
 const saving = ref(false);
 const testingConnectionId = ref('');
@@ -31,16 +35,16 @@ const capabilities = ref<CapabilitySummary[]>([]);
 const templates = ref<ServiceTemplate[]>([]);
 const serviceDialogVisible = ref(false);
 const bindingDialogVisible = ref(false);
-const agentConfigRef = ref<InstanceType<typeof AgentConfig> | null>(null);
 const editingId = ref('');
 const activeCapability = ref<ModelCapability>('text');
 const testResult = ref('');
-const testPrompt = ref('请用一句话回复：模型配置测试成功。');
+const testPrompt = ref('');
 const serviceForm = reactive({
   name: '',
   serviceType: 'openai-gateway' as ApiServiceType,
   baseUrl: '',
   apiKey: '',
+  workflowManifest: '',
   selectedModelNames: [] as string[],
 });
 const bindingForm = reactive({
@@ -71,7 +75,56 @@ function isOk(response: { code: number; msg: string }): boolean {
 }
 
 function getCapabilityLabel(capability: ModelCapability): string {
-  return CAPABILITY_OPTIONS.find((item) => item.value === capability)?.label ?? capability;
+  const option = CAPABILITY_OPTIONS.find((item) => item.value === capability);
+  return option ? t(option.labelKey) : capability;
+}
+
+function getCapabilityStatusText(summary: CapabilitySummary): string {
+  if (summary.status === 'configured') {
+    return t('settings.modelService.status.configured');
+  }
+
+  if (!summary.binding || summary.status === 'missing') {
+    return t('settings.modelService.status.missing');
+  }
+
+  return t('settings.modelService.status.unsupported');
+}
+
+function getConnectionStatusText(connection: ApiConnection): string {
+  if (connection.status === 'ready') {
+    return t('settings.modelService.connectionStatus.ready');
+  }
+
+  if (connection.serviceType !== 'local-workflow' && !connection.apiKeyConfigured) {
+    return t('settings.modelService.connectionStatus.missingApiKey');
+  }
+
+  if (connection.serviceType === 'local-workflow' && !connection.baseUrl) {
+    return t('settings.modelService.connectionStatus.missingEndpoint');
+  }
+
+  if (connection.serviceType === 'local-workflow' && !connection.workflowManifest) {
+    return t('settings.modelService.connectionStatus.invalidWorkflow');
+  }
+
+  if (connection.serviceType === 'openai-gateway' && !connection.baseUrl) {
+    return t('settings.modelService.connectionStatus.missingBaseUrl');
+  }
+
+  if (connection.models.length === 0) {
+    return t('settings.modelService.connectionStatus.missingModels');
+  }
+
+  return t('settings.modelService.connectionStatus.incomplete');
+}
+
+function getCapabilityConnectionName(summary: CapabilitySummary): string {
+  return summary.binding ? summary.connectionName : t('settings.modelService.unselected');
+}
+
+function getCapabilityModelDisplayName(summary: CapabilitySummary): string {
+  return summary.binding ? summary.modelDisplayName : t('settings.modelService.unselected');
 }
 
 function getServiceName(serviceType: ApiServiceType): string {
@@ -82,8 +135,20 @@ function getModelsByType(type: ModelCapability): RegisteredModel[] {
   return selectableModels.value.filter((model) => model.type === type);
 }
 
+function getConnectionTestModel(connection: ApiConnection): RegisteredModel | null {
+  return connection.models.find((model) => ['text', 'image', 'video'].includes(model.type)) ?? null;
+}
+
 function getConnectionCapabilities(connection: ApiConnection): ModelCapability[] {
   return [...new Set(connection.models.map((model) => model.type))] as ModelCapability[];
+}
+
+function hasConfiguredApiKey(connection: ApiConnection | null): boolean {
+  return Boolean(connection?.apiKeyConfigured);
+}
+
+function isLocalWorkflowService(): boolean {
+  return serviceForm.serviceType === 'local-workflow';
 }
 
 function getStatusTheme(status: CapabilitySummary['status']): 'success' | 'warning' | 'danger' {
@@ -98,9 +163,43 @@ function getModelOptionLabel(connection: ApiConnection, modelDisplayName: string
   return `${connection.name} / ${modelDisplayName} (${modelName})`;
 }
 
+function getCapabilityTestPrompt(capability: ModelCapability): string {
+  if (capability === 'image') {
+    return t('settings.modelService.testPrompt.image');
+  }
+
+  if (capability === 'video') {
+    return t('settings.modelService.testPrompt.video');
+  }
+
+  return testPrompt.value.trim() || t('settings.modelService.testPrompt.text');
+}
+
+function formatTestResult(title: string, capability: ModelCapability, result: ApiConnectionTestResult): string {
+  const lines = [title];
+
+  if ((capability === 'image' || capability === 'video') && result.filePath) {
+    lines.push(t('settings.modelService.testResult.capabilityFile', { capability: getCapabilityLabel(capability), path: result.filePath }));
+  } else if (result.content) {
+    lines.push(result.content);
+  } else if (result.filePath) {
+    lines.push(t('settings.modelService.testResult.file', { path: result.filePath }));
+  } else {
+    lines.push(t('settings.modelService.testResult.noContent'));
+  }
+
+  if (result.thinking) {
+    lines.push('', t('settings.modelService.testResult.thinking', { thinking: result.thinking }));
+  }
+
+  lines.push('', t('settings.modelService.testResult.duration', { duration: result.durationMs }));
+  return lines.join('\n');
+}
+
 function applyTemplate(template: ServiceTemplate): void {
   serviceForm.name = template.name;
   serviceForm.baseUrl = template.defaultBaseUrl;
+  serviceForm.workflowManifest = '';
   serviceForm.selectedModelNames = template.models.map((model) => model.modelName);
 }
 
@@ -131,7 +230,6 @@ async function loadModelService(): Promise<void> {
     templates.value = templateResponse.data.services as ServiceTemplate[];
     connections.value = listResponse.data.connections;
     capabilities.value = resourceResponse.data.capabilities;
-    await agentConfigRef.value?.loadConfig();
   } finally {
     loading.value = false;
   }
@@ -154,7 +252,8 @@ function openEditServiceDialog(connection: ApiConnection): void {
   serviceForm.name = connection.name;
   serviceForm.serviceType = connection.serviceType;
   serviceForm.baseUrl = connection.baseUrl;
-  serviceForm.apiKey = connection.apiKey;
+  serviceForm.apiKey = '';
+  serviceForm.workflowManifest = connection.workflowManifest ?? '';
   serviceForm.selectedModelNames = connection.models.map((model) => model.modelName);
   testResult.value = '';
   serviceDialogVisible.value = true;
@@ -171,17 +270,29 @@ function openBindingDialog(summary: CapabilitySummary): void {
 
 function buildDraft(): ApiConnectionDraft | null {
   if (!serviceForm.name.trim()) {
-    MessagePlugin.warning('服务名称不能为空');
+    MessagePlugin.warning(t('settings.modelService.validation.nameRequired'));
     return null;
   }
 
-  if (!serviceForm.apiKey.trim() && serviceForm.serviceType !== 'local-workflow') {
-    MessagePlugin.warning('API Key 不能为空');
+  if (!serviceForm.apiKey.trim() && serviceForm.serviceType !== 'local-workflow' && !hasConfiguredApiKey(editingConnection.value)) {
+    MessagePlugin.warning(t('settings.modelService.validation.apiKeyRequired'));
     return null;
+  }
+
+  if (serviceForm.serviceType === 'local-workflow') {
+    if (!serviceForm.baseUrl.trim()) {
+      MessagePlugin.warning(t('settings.modelService.validation.endpointRequired'));
+      return null;
+    }
+
+    if (!serviceForm.workflowManifest.trim() && !editingConnection.value?.workflowManifest) {
+      MessagePlugin.warning(t('settings.modelService.validation.workflowRequired'));
+      return null;
+    }
   }
 
   if (selectedModels.value.length === 0) {
-    MessagePlugin.warning('至少需要启用一个模型');
+    MessagePlugin.warning(t('settings.modelService.validation.modelRequired'));
     return null;
   }
 
@@ -192,6 +303,7 @@ function buildDraft(): ApiConnectionDraft | null {
     serviceType: serviceForm.serviceType,
     baseUrl: serviceForm.baseUrl.trim(),
     apiKey: serviceForm.apiKey.trim(),
+    workflowManifest: serviceForm.workflowManifest.trim(),
     capabilities: capabilitiesFromModels,
     models: selectedModels.value.map((model) => ({ ...model })),
   };
@@ -211,11 +323,12 @@ async function saveService(): Promise<void> {
       return;
     }
 
-    MessagePlugin.success(editingId.value ? '模型服务已保存' : '模型服务已创建');
+    MessagePlugin.success(editingId.value ? t('settings.modelService.message.saved') : t('settings.modelService.message.created'));
     serviceDialogVisible.value = false;
     await loadModelService();
+    emit('modelServiceUpdated');
   } catch (error) {
-    const message = error instanceof Error ? error.message : '模型服务保存失败';
+    const message = error instanceof Error ? error.message : t('settings.modelService.message.saveFailed');
     MessagePlugin.error(message);
   } finally {
     saving.value = false;
@@ -224,7 +337,7 @@ async function saveService(): Promise<void> {
 
 async function saveBinding(): Promise<void> {
   if (!bindingForm.connectionId || !bindingForm.modelName) {
-    MessagePlugin.warning('请选择服务和模型');
+    MessagePlugin.warning(t('settings.modelService.validation.bindingRequired'));
     return;
   }
 
@@ -241,15 +354,16 @@ async function saveBinding(): Promise<void> {
     return;
   }
 
-  MessagePlugin.success('默认模型已更新');
+  MessagePlugin.success(t('settings.modelService.message.bindingUpdated'));
   bindingDialogVisible.value = false;
   await loadModelService();
+  emit('modelServiceUpdated');
 }
 
 async function testConnection(connection: ApiConnection): Promise<void> {
-  const model = connection.models.find((item) => item.type === 'text');
+  const model = getConnectionTestModel(connection);
   if (!model) {
-    MessagePlugin.warning('当前服务没有文本模型，暂不能测试');
+    MessagePlugin.warning(t('settings.modelService.validation.noTestableModel'));
     return;
   }
 
@@ -259,7 +373,7 @@ async function testConnection(connection: ApiConnection): Promise<void> {
     const response = await window.vtStudio.settings.api.test({
       connectionId: connection.id,
       modelName: model.modelName,
-      prompt: testPrompt.value,
+      prompt: getCapabilityTestPrompt(model.type),
     });
 
     if (!isOk(response)) {
@@ -268,25 +382,20 @@ async function testConnection(connection: ApiConnection): Promise<void> {
       return;
     }
 
-    testResult.value = `${connection.name} / ${model.displayName}\n${response.data.content}\n\n耗时：${response.data.durationMs}ms`;
-    MessagePlugin.success('文本模型测试成功');
+    testResult.value = formatTestResult(`${connection.name} / ${model.displayName}`, model.type, response.data);
+    MessagePlugin.success(t('settings.modelService.message.modelTestSuccess', { capability: getCapabilityLabel(model.type) }));
   } finally {
     testingConnectionId.value = '';
   }
 }
 
 async function runCapabilityTest(summary: CapabilitySummary): Promise<void> {
-  if (summary.capability !== 'text') {
-    MessagePlugin.warning('第一版先打通文本测试，媒体测试会在后续能力任务接入');
-    return;
-  }
-
   testingCapability.value = summary.capability;
   testResult.value = '';
   try {
     const response = await window.vtStudio.settings.resource.test({
       capability: summary.capability,
-      prompt: testPrompt.value,
+      prompt: getCapabilityTestPrompt(summary.capability),
     });
 
     if (!isOk(response)) {
@@ -295,8 +404,9 @@ async function runCapabilityTest(summary: CapabilitySummary): Promise<void> {
       return;
     }
 
-    testResult.value = `${summary.label} / ${summary.modelDisplayName}\n${response.data.content}\n\n耗时：${response.data.durationMs}ms`;
-    MessagePlugin.success('文本模型测试成功');
+    const capabilityLabel = getCapabilityLabel(summary.capability);
+    testResult.value = formatTestResult(`${capabilityLabel} / ${summary.modelDisplayName}`, summary.capability, response.data);
+    MessagePlugin.success(t('settings.modelService.message.capabilityTestSuccess', { capability: capabilityLabel }));
   } finally {
     testingCapability.value = '';
   }
@@ -304,10 +414,10 @@ async function runCapabilityTest(summary: CapabilitySummary): Promise<void> {
 
 function confirmDeleteConnection(connection: ApiConnection): void {
   const dialog = DialogPlugin.confirm({
-    header: '删除模型服务',
-    body: `将删除 ${connection.name}。如果默认模型或 Agent 仍在引用，系统会阻止删除。`,
-    confirmBtn: '删除',
-    cancelBtn: '取消',
+    header: t('settings.modelService.deleteDialog.title'),
+    body: t('settings.modelService.deleteDialog.body', { name: connection.name }),
+    confirmBtn: t('settings.modelService.deleteDialog.confirm'),
+    cancelBtn: t('settings.modelService.deleteDialog.cancel'),
     theme: 'danger',
     async onConfirm() {
       const response = await window.vtStudio.settings.api.delete({ connectionId: connection.id });
@@ -317,8 +427,9 @@ function confirmDeleteConnection(connection: ApiConnection): void {
       }
 
       dialog.destroy();
-      MessagePlugin.success('模型服务已删除');
+      MessagePlugin.success(t('settings.modelService.message.deleted'));
       await loadModelService();
+      emit('modelServiceUpdated');
     },
   });
 }
@@ -353,17 +464,17 @@ onMounted(loadModelService);
   <section class="settings-section model-service-section">
     <div class="settings-section-head">
       <div>
-        <p class="eyebrow">模型服务</p>
-        <h3>模型接入与默认模型</h3>
+        <p class="eyebrow">{{ t('settings.modelService.eyebrow') }}</p>
+        <h3>{{ t('settings.modelService.title') }}</h3>
       </div>
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadModelService">
           <template #icon><RefreshIcon /></template>
-          刷新
+          {{ t('settings.modelService.refresh') }}
         </t-button>
         <t-button theme="primary" @click="openCreateServiceDialog">
           <template #icon><AddIcon /></template>
-          新增模型服务
+          {{ t('settings.modelService.addService') }}
         </t-button>
       </div>
     </div>
@@ -372,26 +483,26 @@ onMounted(loadModelService);
       <article v-for="summary in capabilities" :key="summary.capability" class="capability-card">
         <div class="capability-card-head">
           <div>
-            <strong>{{ summary.label }}</strong>
-            <small>{{ summary.connectionName }}</small>
+            <strong>{{ getCapabilityLabel(summary.capability) }}</strong>
+            <small>{{ getCapabilityConnectionName(summary) }}</small>
           </div>
-          <t-tag :theme="getStatusTheme(summary.status)" variant="light">{{ summary.statusText }}</t-tag>
+          <t-tag :theme="getStatusTheme(summary.status)" variant="light">{{ getCapabilityStatusText(summary) }}</t-tag>
         </div>
 
         <div class="capability-model">
-          <span>默认模型</span>
-          <b>{{ summary.modelDisplayName }}</b>
+          <span>{{ t('settings.modelService.defaultModel') }}</span>
+          <b>{{ getCapabilityModelDisplayName(summary) }}</b>
           <small v-if="summary.modelName">{{ summary.modelName }}</small>
         </div>
 
         <div class="capability-actions">
           <t-button variant="outline" @click="openBindingDialog(summary)">
             <template #icon><SwapIcon /></template>
-            更换
+            {{ t('settings.modelService.change') }}
           </t-button>
           <t-button theme="primary" :loading="testingCapability === summary.capability" :disabled="summary.status !== 'configured'" @click="runCapabilityTest(summary)">
             <template #icon><PlayCircleIcon /></template>
-            测试
+            {{ t('settings.modelService.test') }}
           </t-button>
         </div>
       </article>
@@ -399,8 +510,8 @@ onMounted(loadModelService);
 
     <div class="model-service-block-head">
       <div>
-        <strong>已连接服务</strong>
-        <p>模型能力由启用的模型决定；保存服务后会自动补齐可用默认模型。</p>
+        <strong>{{ t('settings.modelService.connectedServices') }}</strong>
+        <p>{{ t('settings.modelService.connectedHint') }}</p>
       </div>
     </div>
 
@@ -409,9 +520,9 @@ onMounted(loadModelService);
         <div class="connection-card-head">
           <div>
             <strong>{{ connection.name }}</strong>
-            <small>{{ getServiceName(connection.serviceType) }} · {{ connection.baseUrl || '默认地址' }}</small>
+            <small>{{ getServiceName(connection.serviceType) }} · {{ connection.baseUrl || t('settings.modelService.defaultAddress') }}</small>
           </div>
-          <t-tag :theme="connection.status === 'ready' ? 'success' : 'warning'" variant="light">{{ connection.statusText }}</t-tag>
+          <t-tag :theme="connection.status === 'ready' ? 'success' : 'warning'" variant="light">{{ getConnectionStatusText(connection) }}</t-tag>
         </div>
 
         <div class="connection-meta">
@@ -423,57 +534,66 @@ onMounted(loadModelService);
         </div>
 
         <div class="connection-actions">
-          <t-button shape="square" variant="text" title="测试文本模型" :loading="testingConnectionId === connection.id" @click="testConnection(connection)">
-            <PlayCircleIcon />
-          </t-button>
-          <t-button shape="square" variant="text" title="编辑模型服务" @click="openEditServiceDialog(connection)">
-            <EditIcon />
-          </t-button>
-          <t-button shape="square" variant="text" theme="danger" title="删除模型服务" @click="confirmDeleteConnection(connection)">
-            <DeleteIcon />
-          </t-button>
+          <t-tooltip :content="t('settings.modelService.tooltip.testConnection')">
+            <t-button shape="square" variant="text" :aria-label="t('settings.modelService.tooltip.testConnection')" :loading="testingConnectionId === connection.id" @click="testConnection(connection)">
+              <PlayCircleIcon />
+            </t-button>
+          </t-tooltip>
+          <t-tooltip :content="t('settings.modelService.tooltip.editConnection')">
+            <t-button shape="square" variant="text" :aria-label="t('settings.modelService.tooltip.editConnection')" @click="openEditServiceDialog(connection)">
+              <EditIcon />
+            </t-button>
+          </t-tooltip>
+          <t-tooltip :content="t('settings.modelService.tooltip.deleteConnection')">
+            <t-button shape="square" variant="text" theme="danger" :aria-label="t('settings.modelService.tooltip.deleteConnection')" @click="confirmDeleteConnection(connection)">
+              <DeleteIcon />
+            </t-button>
+          </t-tooltip>
         </div>
       </article>
     </div>
 
-    <t-empty v-else description="还没有模型服务，先新增一个 OpenAI 中转或官方服务" />
+    <t-empty v-else :description="t('settings.modelService.empty')" />
 
     <div v-if="testResult" class="resource-test-result">
-      <strong>测试结果</strong>
+      <strong>{{ t('settings.modelService.testResult.title') }}</strong>
       <pre>{{ testResult }}</pre>
     </div>
-
-    <AgentConfig ref="agentConfigRef" />
   </section>
 
-  <t-dialog v-model:visible="serviceDialogVisible" :header="editingId ? '编辑模型服务' : '新增模型服务'" width="720px" confirm-btn="保存" :confirm-loading="saving" @confirm="saveService">
+  <t-dialog v-model:visible="serviceDialogVisible" :header="editingId ? t('settings.modelService.dialog.editTitle') : t('settings.modelService.dialog.createTitle')" width="720px" :confirm-btn="t('settings.modelService.dialog.save')" :confirm-loading="saving" @confirm="saveService">
     <t-form layout="vertical">
       <div class="model-form-grid">
-        <t-form-item label="服务类型">
+        <t-form-item :label="t('settings.modelService.form.serviceType')">
           <t-select v-model="serviceForm.serviceType" :disabled="Boolean(editingId)">
             <t-option v-for="option in serviceOptions" :key="option.value" :value="option.value" :label="option.label" />
           </t-select>
         </t-form-item>
-        <t-form-item label="服务名称">
-          <t-input v-model="serviceForm.name" placeholder="例如 我的 OpenAI 中转" />
+        <t-form-item :label="t('settings.modelService.form.serviceName')">
+          <t-input v-model="serviceForm.name" :placeholder="t('settings.modelService.form.serviceNamePlaceholder')" />
         </t-form-item>
       </div>
 
-      <t-form-item label="Base URL">
-        <t-input v-model="serviceForm.baseUrl" placeholder="官方服务可使用默认地址，中转服务通常填到 /v1" />
+      <t-form-item :label="isLocalWorkflowService() ? 'ComfyUI Endpoint' : 'Base URL'">
+        <t-input v-model="serviceForm.baseUrl" :placeholder="isLocalWorkflowService() ? 'http://127.0.0.1:8188' : t('settings.modelService.form.baseUrlPlaceholder')" />
       </t-form-item>
-      <t-form-item label="API Key">
-        <t-input v-model="serviceForm.apiKey" type="password" placeholder="请输入 API Key" />
+      <t-form-item v-if="!isLocalWorkflowService()" label="API Key">
+        <t-input v-model="serviceForm.apiKey" type="password" :placeholder="t('settings.modelService.form.apiKeyPlaceholder')" />
+        <small v-if="hasConfiguredApiKey(editingConnection)" class="settings-hint">{{ t('settings.modelService.form.apiKeySavedHint') }}</small>
+      </t-form-item>
+      <t-form-item v-else label="Workflow Manifest">
+        <t-textarea v-model="serviceForm.workflowManifest" class="workflow-manifest-textarea" :placeholder="t('settings.modelService.form.workflowPlaceholder')" :autosize="{ minRows: 7, maxRows: 14 }" />
+        <small v-if="editingConnection?.workflowManifest" class="settings-hint">{{ t('settings.modelService.form.workflowSavedHint') }}</small>
       </t-form-item>
 
       <div class="model-enable-panel">
         <div class="model-enable-head">
-          <span>启用模型</span>
-          <small>普通用户只需要勾选这个服务实际可用的模型</small>
+          <span>{{ t('settings.modelService.enableModels') }}</span>
+          <small>{{ t('settings.modelService.enableModelsHint') }}</small>
         </div>
         <t-checkbox-group v-model="serviceForm.selectedModelNames" class="model-check-list">
           <div v-for="item in CAPABILITY_OPTIONS" :key="item.value" class="model-check-group">
-            <strong v-if="getModelsByType(item.value).length">{{ item.label }}</strong>
+            <strong v-if="getModelsByType(item.value).length">{{ getCapabilityLabel(item.value) }}</strong>
             <t-checkbox v-for="model in getModelsByType(item.value)" :key="model.modelName" :value="model.modelName">
               <span>{{ model.displayName }}</span>
               <small>{{ model.modelName }}</small>
@@ -482,19 +602,19 @@ onMounted(loadModelService);
         </t-checkbox-group>
       </div>
 
-      <p class="settings-hint">普通用户不需要选择协议；系统按服务类型自动适配。协议、adapter、headers 等细节放在开发者模式。</p>
+      <p class="settings-hint">{{ t('settings.modelService.protocolHint') }}</p>
     </t-form>
   </t-dialog>
 
-  <t-dialog v-model:visible="bindingDialogVisible" :header="activeSummary ? `更换${activeSummary.label}` : '更换模型'" width="560px" confirm-btn="保存" @confirm="saveBinding">
+  <t-dialog v-model:visible="bindingDialogVisible" :header="activeSummary ? t('settings.modelService.bindingDialog.titleWithCapability', { capability: getCapabilityLabel(activeSummary.capability) }) : t('settings.modelService.bindingDialog.title')" width="560px" :confirm-btn="t('settings.modelService.dialog.save')" @confirm="saveBinding">
     <t-form layout="vertical">
-      <t-form-item label="服务">
-        <t-select v-model="bindingForm.connectionId" placeholder="选择模型服务">
+      <t-form-item :label="t('settings.modelService.bindingDialog.service')">
+        <t-select v-model="bindingForm.connectionId" :placeholder="t('settings.modelService.bindingDialog.servicePlaceholder')">
           <t-option v-for="connection in availableConnections" :key="connection.id" :value="connection.id" :label="connection.name" />
         </t-select>
       </t-form-item>
-      <t-form-item label="模型">
-        <t-select v-model="bindingForm.modelName" placeholder="选择模型">
+      <t-form-item :label="t('settings.modelService.bindingDialog.model')">
+        <t-select v-model="bindingForm.modelName" :placeholder="t('settings.modelService.bindingDialog.modelPlaceholder')">
           <t-option
             v-for="model in availableModels"
             :key="model.modelName"
@@ -503,10 +623,10 @@ onMounted(loadModelService);
           />
         </t-select>
       </t-form-item>
-      <t-form-item v-if="activeCapability === 'text'" label="测试 Prompt">
-        <t-textarea v-model="testPrompt" :autosize="{ minRows: 3, maxRows: 6 }" />
+      <t-form-item v-if="activeCapability === 'text'" :label="t('settings.modelService.bindingDialog.testPrompt')">
+        <t-textarea v-model="testPrompt" :placeholder="t('settings.modelService.testPrompt.text')" :autosize="{ minRows: 3, maxRows: 6 }" />
       </t-form-item>
-      <p v-if="availableConnections.length === 0" class="settings-hint">还没有支持当前能力的模型，请先新增模型服务并启用对应模型。</p>
+      <p v-if="availableConnections.length === 0" class="settings-hint">{{ t('settings.modelService.bindingDialog.noAvailableConnection') }}</p>
     </t-form>
   </t-dialog>
 </template>

@@ -1,9 +1,10 @@
 import { createI18n } from 'vue-i18n';
 import enUs from 'tdesign-vue-next/es/locale/en_US.mjs';
 import zhCn from 'tdesign-vue-next/es/locale/zh_CN.mjs';
+import { LOCALES, LOCALE_VALUES, type AppLocale } from '@shared/constants/dictionaries';
 import { messages } from './messages';
 
-export type AppLocale = 'zh-CN' | 'en';
+export type { AppLocale };
 
 export interface LanguageOption {
   value: AppLocale;
@@ -11,8 +12,8 @@ export interface LanguageOption {
   tipsKey: `language.options.${AppLocale}.tips`;
 }
 
-export const SUPPORTED_LOCALES: AppLocale[] = ['zh-CN', 'en'];
-export const DEFAULT_LOCALE: AppLocale = 'zh-CN';
+export const SUPPORTED_LOCALES: AppLocale[] = [...LOCALE_VALUES];
+export const DEFAULT_LOCALE: AppLocale = LOCALES.ZH_CN;
 export const APP_LOCALE_KEY = 'vtStudio.locale';
 export const APP_LOCALE_INITIALIZED_KEY = 'vtStudio.localeInitialized';
 

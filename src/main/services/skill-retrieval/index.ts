@@ -4,8 +4,9 @@ import { basename } from 'node:path';
 import { VT_STATUS } from '@shared/constants/status';
 import { normalizeUnknownError } from '@shared/errors';
 import { cosineSimilarity, embedText, getEmbeddingModelStatus } from '../embedding';
-import { getDatabase } from '../database';
-import { getRuntimeDirectories, safeJoin } from '../file-system';
+import { getDatabase } from '../database/connection';
+import { getRuntimeDirectories } from '../file-system/paths';
+import { safeJoin } from '../file-system/safe-path';
 import { logger } from '../logger';
 import { createError } from '../result';
 
@@ -223,6 +224,9 @@ export async function rebuildSkillEmbeddings(skillId?: string): Promise<RebuildS
   for (const row of rows) {
     if (!row.description.trim()) {
       failedSkillIds.push(row.id);
+      getDatabase()
+        .prepare<[number, number, string]>('UPDATE skill_list SET state = ?, updated_at = ? WHERE id = ?')
+        .run(0, Date.now(), row.id);
       continue;
     }
 
@@ -236,6 +240,9 @@ export async function rebuildSkillEmbeddings(skillId?: string): Promise<RebuildS
       succeeded += 1;
     } catch (error) {
       failedSkillIds.push(row.id);
+      getDatabase()
+        .prepare<[number, number, string]>('UPDATE skill_list SET state = ?, updated_at = ? WHERE id = ?')
+        .run(0, Date.now(), row.id);
       logger.warn('Skill', `Skill embedding 生成失败：${row.name}`);
       logger.detail('Skill', 'Skill embedding 生成失败详情', {
         skillId: row.id,

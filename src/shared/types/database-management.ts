@@ -1,3 +1,5 @@
+import type { BusinessLockSummary } from './business-lock';
+
 export interface DatabaseManagementInfo {
   directory: string;
   filePath: string;
@@ -9,12 +11,15 @@ export interface DatabaseManagementInfo {
   backupCount: number;
   latestBackupName: string | null;
   runningTaskCount: number;
+  runningLockCount: number;
+  runningLocks: BusinessLockSummary[];
 }
 
 export interface DatabaseBackupItem {
   name: string;
   sizeBytes: number;
   createdAt: number;
+  containsSecrets: boolean;
 }
 
 export interface DatabaseTableInfo {
@@ -34,6 +39,7 @@ export interface DatabaseBackupListResult {
 
 export interface DatabaseExportResult {
   backup: DatabaseBackupItem;
+  containsSecrets: boolean;
 }
 
 export interface DatabaseImportPayload {
@@ -75,4 +81,6 @@ export interface DatabaseClearAllResult {
 
 export interface DatabaseRunningTasksResult {
   runningTaskCount: number;
+  runningLockCount: number;
+  runningLocks: BusinessLockSummary[];
 }

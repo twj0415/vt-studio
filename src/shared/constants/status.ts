@@ -29,6 +29,7 @@ export const VT_STATUS = {
   MODEL_VENDOR_INVALID: 70004,
   MODEL_NOT_FOUND: 70005,
   MODEL_VENDOR_INPUT_MISSING: 70006,
+  MODEL_TIMEOUT: 70007,
   EMBEDDING_ERROR: 71000,
   EMBEDDING_MODEL_NOT_FOUND: 71001,
   EMBEDDING_MODEL_INVALID: 71002,
@@ -82,6 +83,7 @@ const statusMessages: Record<VtLocale, Partial<Record<VtStatusCode, string>>> = 
     [VT_STATUS.MODEL_VENDOR_INVALID]: '供应商配置无效',
     [VT_STATUS.MODEL_NOT_FOUND]: '模型不存在',
     [VT_STATUS.MODEL_VENDOR_INPUT_MISSING]: '供应商参数缺失',
+    [VT_STATUS.MODEL_TIMEOUT]: '模型调用超时',
     [VT_STATUS.EMBEDDING_ERROR]: '向量模型处理失败',
     [VT_STATUS.EMBEDDING_MODEL_NOT_FOUND]: '本地向量模型不存在',
     [VT_STATUS.EMBEDDING_MODEL_INVALID]: '本地向量模型配置无效',
@@ -127,6 +129,7 @@ const statusMessages: Record<VtLocale, Partial<Record<VtStatusCode, string>>> = 
     [VT_STATUS.MODEL_VENDOR_INVALID]: 'Invalid model vendor config',
     [VT_STATUS.MODEL_NOT_FOUND]: 'Model not found',
     [VT_STATUS.MODEL_VENDOR_INPUT_MISSING]: 'Model vendor input is missing',
+    [VT_STATUS.MODEL_TIMEOUT]: 'Model call timed out',
     [VT_STATUS.EMBEDDING_ERROR]: 'Embedding model failed',
     [VT_STATUS.EMBEDDING_MODEL_NOT_FOUND]: 'Local embedding model not found',
     [VT_STATUS.EMBEDDING_MODEL_INVALID]: 'Invalid local embedding model config',
@@ -145,4 +148,8 @@ const statusMessages: Record<VtLocale, Partial<Record<VtStatusCode, string>>> = 
 
 export function getStatusMsg(code: VtStatusCode, locale: VtLocale = DEFAULT_LOCALE): string {
   return statusMessages[locale][code] ?? statusMessages[DEFAULT_LOCALE][code] ?? statusMessages[DEFAULT_LOCALE][VT_STATUS.FAIL]!;
+}
+
+export function getStatusMsgKey(code: VtStatusCode): string {
+  return `status.${code}`;
 }

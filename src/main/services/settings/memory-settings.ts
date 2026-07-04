@@ -17,12 +17,15 @@ import type {
 } from '@shared/types/memory-settings';
 import { clearMemory } from '../memory';
 import { disposeEmbedding, getEmbeddingModelStatus } from '../embedding';
-import { getDatabase, withTransaction } from '../database';
-import { getRuntimeDirectories, safeJoin } from '../file-system';
+import { getDatabase } from '../database/connection';
+import { withTransaction } from '../database/transaction';
+import { DEFAULT_MODEL_ONNX_FILE } from '../default-assets/registry';
+import { getRuntimeDirectories } from '../file-system/paths';
+import { safeJoin } from '../file-system/safe-path';
 import { createError } from '../result';
 
 const DEFAULT_MEMORY_CONFIG: MemorySettingsConfig = {
-  modelOnnxFile: ['all-MiniLM-L6-v2', 'onnx', 'model_fp16.onnx'],
+  modelOnnxFile: [...DEFAULT_MODEL_ONNX_FILE],
   modelDtype: 'fp16',
   messagesPerSummary: 10,
   shortTermLimit: 5,
@@ -96,10 +99,14 @@ function parseModelOnnxFile(raw: string | null): string[] {
 
 function readNumberConfig(key: keyof typeof NUMBER_RANGES): number {
   const raw = readSetting(key);
-  const value = Number(raw);
   const fallback = DEFAULT_MEMORY_CONFIG[key];
   const range = NUMBER_RANGES[key];
 
+  if (raw === null) {
+    return fallback;
+  }
+
+  const value = Number(raw);
   if (!Number.isFinite(value)) {
     return fallback;
   }

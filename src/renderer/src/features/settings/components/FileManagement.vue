@@ -3,7 +3,14 @@ import { computed, onMounted, ref } from 'vue';
 import { FolderOpenIcon, RefreshIcon } from 'tdesign-icons-vue-next';
 import { useI18n } from 'vue-i18n';
 import { MessagePlugin } from 'tdesign-vue-next';
-import type { FileManagementDirectoryGroup, FileManagementDirectoryItem } from '@shared/types/file-management';
+import type {
+  FileLifecycleCleanupPayload,
+  FileLifecycleDiagnoseResult,
+  FileLifecycleIssue,
+  FileManagementDirectoryGroup,
+  FileManagementDirectoryItem,
+  FileRuntimeInfo,
+} from '@shared/types/file-management';
 
 interface DirectoryGroupMeta {
   key: FileManagementDirectoryGroup;
@@ -18,8 +25,12 @@ const GROUPS: DirectoryGroupMeta[] = [
 ];
 
 const loading = ref(false);
+const lifecycleLoading = ref(false);
+const cleanupLoading = ref('');
 const openingKey = ref('');
 const directories = ref<FileManagementDirectoryItem[]>([]);
+const runtimeInfo = ref<FileRuntimeInfo | null>(null);
+const lifecycle = ref<FileLifecycleDiagnoseResult | null>(null);
 const { t } = useI18n();
 
 function isOk(response: { code: number; msg: string }): boolean {
@@ -33,6 +44,30 @@ const groupedDirectories = computed(() =>
   })),
 );
 
+const visibleLifecycleIssues = computed(() => lifecycle.value?.issues.slice(0, 8) ?? []);
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function issueLabel(issue: FileLifecycleIssue): string {
+  return t(`files.lifecycle.issue.${issue.type}`);
+}
+
+function formatRuntimeKeys(keys: string[]): string {
+  return keys.map((key) => t(`files.runtime.directory.${key}`)).join(' / ');
+}
+
 async function loadDirectories(): Promise<void> {
   loading.value = true;
   try {
@@ -43,8 +78,45 @@ async function loadDirectories(): Promise<void> {
     }
 
     directories.value = response.data.directories;
+    runtimeInfo.value = response.data.runtime;
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadLifecycle(): Promise<void> {
+  lifecycleLoading.value = true;
+  try {
+    const response = await window.vtStudio.settings.files.diagnoseLifecycle();
+    if (!isOk(response)) {
+      MessagePlugin.error(response.msg);
+      return;
+    }
+
+    lifecycle.value = response.data;
+  } finally {
+    lifecycleLoading.value = false;
+  }
+}
+
+async function cleanupLifecycle(action: 'orphans' | 'cache' | 'temp'): Promise<void> {
+  const payload: FileLifecycleCleanupPayload = {
+    includeOrphans: action === 'orphans',
+    includeCache: action === 'cache',
+    includeTemp: action === 'temp',
+  };
+  cleanupLoading.value = action;
+  try {
+    const response = await window.vtStudio.settings.files.cleanupLifecycle(payload);
+    if (!isOk(response)) {
+      MessagePlugin.error(response.msg);
+      return;
+    }
+
+    lifecycle.value = response.data.diagnose;
+    MessagePlugin.success(t('files.lifecycle.cleaned', { count: response.data.deletedCount, size: formatBytes(response.data.freedBytes) }));
+  } finally {
+    cleanupLoading.value = '';
   }
 }
 
@@ -65,7 +137,10 @@ async function openDirectory(directory: FileManagementDirectoryItem): Promise<vo
 }
 
 defineExpose({ loadDirectories });
-onMounted(loadDirectories);
+onMounted(() => {
+  void loadDirectories();
+  void loadLifecycle();
+});
 </script>
 
 <template>
@@ -86,6 +161,100 @@ onMounted(loadDirectories);
     <div class="file-management-warning">
       {{ t('files.warning') }}
     </div>
+
+    <section v-if="runtimeInfo" class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <strong class="block text-sm text-[var(--vt-text)]">{{ t('files.runtime.title') }}</strong>
+          <p class="mt-1 text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.hint') }}</p>
+        </div>
+        <t-tag :theme="runtimeInfo.insideWorkspace ? 'danger' : 'success'" variant="light">
+          {{ runtimeInfo.insideWorkspace ? t('files.runtime.insideWorkspace') : t('files.runtime.outsideWorkspace') }}
+        </t-tag>
+      </div>
+      <div class="mt-4 grid gap-3 md:grid-cols-2">
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.userData') }}</span>
+          <strong class="mt-1 block break-all text-sm text-[var(--vt-text)]">{{ runtimeInfo.userData }}</strong>
+        </div>
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.source') }}</span>
+          <strong class="mt-1 block text-sm text-[var(--vt-text)]">{{ t(`files.runtime.sourceValue.${runtimeInfo.source}`) }}</strong>
+          <small class="text-[var(--vt-text-muted)]">{{ t(`files.runtime.mode.${runtimeInfo.mode}`) }}</small>
+        </div>
+      </div>
+      <div class="mt-3 grid gap-2 md:grid-cols-3">
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.cleanable') }}</span>
+          <p class="mt-1 text-sm text-[var(--vt-text)]">{{ formatRuntimeKeys(runtimeInfo.cleanableKeys) }}</p>
+        </div>
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.recoverable') }}</span>
+          <p class="mt-1 text-sm text-[var(--vt-text)]">{{ formatRuntimeKeys(runtimeInfo.recoverableKeys) }}</p>
+        </div>
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.protected') }}</span>
+          <p class="mt-1 text-sm text-[var(--vt-text)]">{{ formatRuntimeKeys(runtimeInfo.protectedKeys) }}</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <strong class="block text-sm text-[var(--vt-text)]">{{ t('files.lifecycle.title') }}</strong>
+          <p class="mt-1 text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.hint') }}</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <t-button size="small" variant="outline" :loading="lifecycleLoading" @click="loadLifecycle">
+            <template #icon><RefreshIcon /></template>
+            {{ t('files.lifecycle.diagnose') }}
+          </t-button>
+          <t-button size="small" variant="outline" theme="warning" :loading="cleanupLoading === 'orphans'" :disabled="!lifecycle?.summary.orphanProjectFileCount" @click="cleanupLifecycle('orphans')">
+            {{ t('files.lifecycle.cleanOrphans') }}
+          </t-button>
+          <t-button size="small" variant="outline" :loading="cleanupLoading === 'cache'" :disabled="!lifecycle?.summary.cacheFileCount" @click="cleanupLifecycle('cache')">
+            {{ t('files.lifecycle.cleanCache') }}
+          </t-button>
+          <t-button size="small" variant="outline" :loading="cleanupLoading === 'temp'" :disabled="!lifecycle?.summary.tempFileCount" @click="cleanupLifecycle('temp')">
+            {{ t('files.lifecycle.cleanTemp') }}
+          </t-button>
+        </div>
+      </div>
+
+      <div v-if="lifecycle" class="mt-4 grid gap-2 md:grid-cols-4">
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.referenced') }}</span>
+          <strong class="mt-1 block text-base text-[var(--vt-text)]">{{ lifecycle.summary.referencedFileCount }}</strong>
+          <small class="text-[var(--vt-text-muted)]">{{ formatBytes(lifecycle.summary.referencedBytes) }}</small>
+        </div>
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.missing') }}</span>
+          <strong class="mt-1 block text-base text-[var(--vt-danger)]">{{ lifecycle.summary.missingReferenceCount }}</strong>
+        </div>
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.orphans') }}</span>
+          <strong class="mt-1 block text-base text-[var(--vt-text)]">{{ lifecycle.summary.orphanProjectFileCount }}</strong>
+          <small class="text-[var(--vt-text-muted)]">{{ formatBytes(lifecycle.summary.orphanBytes) }}</small>
+        </div>
+        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+          <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.cacheTemp') }}</span>
+          <strong class="mt-1 block text-base text-[var(--vt-text)]">{{ lifecycle.summary.cacheFileCount + lifecycle.summary.tempFileCount }}</strong>
+          <small class="text-[var(--vt-text-muted)]">{{ formatBytes(lifecycle.summary.cacheBytes + lifecycle.summary.tempBytes) }}</small>
+        </div>
+      </div>
+
+      <div v-if="visibleLifecycleIssues.length" class="mt-4 space-y-2">
+        <div v-for="issue in visibleLifecycleIssues" :key="`${issue.type}-${issue.root}-${issue.relativePath}`" class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <strong class="text-sm text-[var(--vt-text)]">{{ issueLabel(issue) }}</strong>
+            <t-tag size="small" :theme="issue.canDelete ? 'warning' : 'danger'" variant="light">{{ issue.canDelete ? t('files.lifecycle.canClean') : t('files.lifecycle.needFix') }}</t-tag>
+          </div>
+          <p class="mt-1 break-all text-xs text-[var(--vt-text-muted)]">{{ issue.relativePath }}</p>
+          <p class="mt-1 text-xs text-[var(--vt-text-muted)]">{{ issue.reason }} · {{ formatBytes(issue.sizeBytes) }}</p>
+        </div>
+      </div>
+    </section>
 
     <div class="file-management-groups">
       <div v-for="group in groupedDirectories" :key="group.key" class="file-management-group">

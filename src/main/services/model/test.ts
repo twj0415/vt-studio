@@ -16,6 +16,10 @@ function formatTextTestErrorMessage(message: string): string {
   return message;
 }
 
+function formatModelTestErrorMessage(message: string): string {
+  return formatTextTestErrorMessage(message.replace(/^(文本|图片|视频|TTS)\s+\S+调用失败：/, ''));
+}
+
 export async function testTextModel(input: ModelTestTextInput): Promise<{ thinking?: string; content: string }> {
   try {
     const result = await invokeText({
@@ -29,6 +33,10 @@ export async function testTextModel(input: ModelTestTextInput): Promise<{ thinki
     };
   } catch (error) {
     if (isVtError(error)) {
+      if (error.statusCode === VT_STATUS.MODEL_ERROR) {
+        throw createError(VT_STATUS.MODEL_ERROR, `模型测试失败：${formatModelTestErrorMessage(error.message)}`, error, { requestId: error.requestId, msgKey: error.msgKey });
+      }
+
       throw error;
     }
 

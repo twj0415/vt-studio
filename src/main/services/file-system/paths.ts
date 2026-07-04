@@ -7,8 +7,10 @@ export const FILE_SYSTEM_DIRECTORY_NAMES = {
   thumbnails: 'thumbnails',
   modelTest: 'model-test',
   models: 'models',
+  modelPrompt: 'modelPrompt',
   skills: 'skills',
   vendors: 'vendors',
+  assets: 'assets',
   temp: 'temp',
   exports: 'exports',
   logs: 'logs',
@@ -21,8 +23,10 @@ export interface RuntimeDirectories {
   thumbnails: string;
   modelTest: string;
   models: string;
+  modelPrompt: string;
   skills: string;
   vendors: string;
+  assets: string;
   temp: string;
   exports: string;
   logs: string;
@@ -43,8 +47,10 @@ export function getRuntimeDirectories(): RuntimeDirectories {
     thumbnails: join(cache, FILE_SYSTEM_DIRECTORY_NAMES.thumbnails),
     modelTest: join(cache, FILE_SYSTEM_DIRECTORY_NAMES.modelTest),
     models: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.models),
+    modelPrompt: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.modelPrompt),
     skills: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.skills),
     vendors: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.vendors),
+    assets: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.assets),
     temp: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.temp),
     exports: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.exports),
     logs: join(userData, FILE_SYSTEM_DIRECTORY_NAMES.logs),

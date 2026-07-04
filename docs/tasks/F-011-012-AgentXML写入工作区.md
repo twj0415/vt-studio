@@ -1,6 +1,6 @@
 # F-011-012 Agent XML 写入工作区
 
-状态：等待用户确认  
+状态：已完成  
 所属菜单：M-011 剧本 Agent  
 对应功能文档：`docs/features/M-011-剧本Agent.md`  
 原则：先确认本文档，再改代码
@@ -24,7 +24,7 @@
   1. 识别 storySkeleton XML
   2. 识别 adaptationStrategy XML
   3. 识别 scriptItem XML
-  4. 流式更新右侧工作区
+  4. 流式过程中清洗聊天正文，XML 完成后刷新右侧工作区
   5. XML 完成后持久化
   6. 非法 XML 拦截
 
@@ -65,7 +65,7 @@
   无。
 
 成功反馈：
-  右侧故事骨架、改编策略、剧本卡片实时更新，完成后保存。
+  右侧故事骨架、改编策略、剧本卡片在 Agent 完成后刷新并保存。
 
 失败反馈：
   XML 不合法时显示 Agent 输出格式错误，不写入业务数据。
@@ -79,7 +79,7 @@
 - 输入：Agent 流式内容。
 - 输出：storySkeleton 文本。
 - 写什么数据：XML complete 后保存 agent_work_data。
-- 状态怎么变：右侧预览流式更新。
+- 状态怎么变：完成后通过 socket 刷新右侧工作区。
 - 异常怎么处理：标签不闭合或内容为空时不保存。
 - 限制：不把 XML 原文展示在聊天正文里。
 
@@ -89,7 +89,7 @@
 - 输入：Agent 流式内容。
 - 输出：adaptationStrategy 文本。
 - 写什么数据：XML complete 后保存 agent_work_data。
-- 状态怎么变：右侧预览流式更新。
+- 状态怎么变：完成后通过 socket 刷新右侧工作区。
 - 异常怎么处理：格式错误不保存。
 - 限制：只更新改编策略字段。
 
@@ -197,17 +197,31 @@
 ## 10. 执行后记录
 
 ```txt
-改了哪些文件：（完成后填写）
-验证结果：（完成后填写）
-未完成事项：（完成后填写）
-最终结论：（完成后填写）
+改了哪些文件：
+  src/shared/types/script-agent.ts
+  src/main/services/agent/script-xml.ts
+  src/main/services/socket/types.ts
+  src/main/services/socket/agent-handler.ts
+  src/renderer/src/composables/useAgentSocket.ts
+  src/renderer/src/features/script-agent/ScriptAgentHome.vue
+  src/renderer/src/i18n/messages.ts
+  scripts/verify-p6-script-agent-phase3.mjs
+验证结果：
+  verify-p6-script-agent-phase1 通过
+  verify-p6-script-agent-phase2 通过
+  typecheck 通过
+  build 通过
+未完成事项：
+  不做半截 XML 实时预览和落库；阶段 3 采用完成后事务写入并刷新工作区。
+最终结论：
+  P6 阶段 3 已完成；合法 storySkeleton/adaptationStrategy/scriptItem XML 能写入工作区和 scripts，非法 XML 不写业务表，聊天正文和记忆不保留 XML。
 ```
 
 ## 11. 最后大白话
 
 ```txt
 我这次准备怎么做：
-1. Agent 输出特定 XML 时，右侧工作区同步更新。
+1. Agent 输出特定 XML 完成后，右侧工作区同步更新。
 2. 骨架写骨架，策略写策略，剧本写剧本表。
 3. XML 格式不对就不写，避免污染数据。
 

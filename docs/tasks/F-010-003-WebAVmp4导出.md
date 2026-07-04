@@ -1,6 +1,6 @@
 # F-010-003 WebAV mp4 导出
 
-状态：等待用户确认  
+状态：后置增强（P10 第一版不实现 WebAV mp4）  
 所属菜单：M-010 导出  
 对应功能文档：`docs/features/M-010-导出.md`  
 原则：先确认本文档，再改代码
@@ -186,10 +186,22 @@
 ## 10. 执行后记录
 
 ```txt
-改了哪些文件：（完成后填写）
-验证结果：（完成后填写）
-未完成事项：（完成后填写）
-最终结论：（完成后填写）
+改了哪些文件：
+  - docs/tasks/P10-导出批次.md
+  - src/renderer/src/features/production/components/ProductionWorkbenchDialog.vue
+
+验证结果：
+  - D:\software\nodejs\node.exe scripts\verify-p10-export.mjs 通过
+  - D:\software\nodejs\pnpm.cmd run typecheck 通过
+  - D:\software\nodejs\pnpm.cmd run build 通过
+
+未完成事项：
+  - 当前项目没有 WebAV 相关依赖，也没有可持久化的内置编辑器 timeline。
+  - 未实现 renderer WebAV 合成 mp4、导出前素材检查、Blob 保存或任务记录。
+
+最终结论：
+  - P10 第一版不伪造 WebAV mp4 导出能力。
+  - WebAV 快速 mp4 后续需要在依赖、时间单位、素材校验和桌面保存策略都明确后单独实现。
 ```
 
 ## 11. 最后大白话

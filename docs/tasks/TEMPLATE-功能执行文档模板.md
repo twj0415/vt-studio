@@ -166,6 +166,9 @@ VT Studio 差异：
 调用链：renderer -> window.vtStudio -> main/ipc -> main/services
 需要新增：
 需要修改：
+样式方案：能用 Tailwind 的全部用 Tailwind；只有穿透、全局、滚动、z-index、复杂动画/伪元素或公共样式才写 SCSS
+多语言方案：所有用户能看到的文案必须写入 i18n，同时补 zh-CN 和 en；动态文案必须用 i18n params
+UI/UX 方案：涉及页面结构、视觉层级、交互、响应式、可访问性时，必须使用 ui-ux-pro-max Skill 检查，并写明检查重点
 ```
 
 ## 7. 偏差
@@ -187,6 +190,9 @@ VT Studio 差异：
 4. 失败路径有提示。
 5. 没有把 Toonflow 旧命名当成 VT Studio 正式命名。
 6. 如有偏差，已写入 04。
+7. 可见文案已走 i18n，zh-CN/en 都已补齐。
+8. 样式优先使用 Tailwind，新增 SCSS 必须属于允许场景并说明原因。
+9. UI 相关任务已按 ui-ux-pro-max 检查可访问性、点击区域、布局响应式、颜色对比、表单反馈和导航清晰度。
 ```
 
 ## 9. 执行后记录

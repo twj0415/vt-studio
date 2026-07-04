@@ -1,19 +1,39 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { AddIcon, DeleteIcon, EditIcon, RefreshIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import type {
+  ModelPromptBindingStatus,
   ModelPromptConfigResult,
+  ModelPromptConnectionGroup,
+  ModelPromptInvalidMapping,
+  ModelPromptInvalidReason,
   ModelPromptModelItem,
   ModelPromptModelType,
   ModelPromptTemplate,
   ModelPromptTemplateType,
 } from '@shared/types/model-prompt';
 
-const TEMPLATE_TYPE_OPTIONS: Array<{ label: string; value: ModelPromptTemplateType; modelType: ModelPromptModelType }> = [
-  { label: '图片模板', value: 'imagePrompt', modelType: 'image' },
-  { label: '视频模板', value: 'videoPrompt', modelType: 'video' },
+const { t } = useI18n();
+
+const TEMPLATE_TYPE_OPTIONS: Array<{ labelKey: string; value: ModelPromptTemplateType; modelType: ModelPromptModelType }> = [
+  { labelKey: 'settings.modelPromptConfig.templateType.imagePrompt', value: 'imagePrompt', modelType: 'image' },
+  { labelKey: 'settings.modelPromptConfig.templateType.videoPrompt', value: 'videoPrompt', modelType: 'video' },
 ];
+
+const MODEL_STATUS_KEYS: Record<ModelPromptBindingStatus, string> = {
+  bound: 'settings.modelPromptConfig.modelStatus.bound',
+  fallback: 'settings.modelPromptConfig.modelStatus.fallback',
+  'invalid-template': 'settings.modelPromptConfig.modelStatus.invalidTemplate',
+  'type-mismatch': 'settings.modelPromptConfig.modelStatus.typeMismatch',
+};
+
+const INVALID_REASON_KEYS: Record<ModelPromptInvalidReason, string> = {
+  'model-missing': 'settings.modelPromptConfig.invalidReason.modelMissing',
+  'template-missing': 'settings.modelPromptConfig.invalidReason.templateMissing',
+  'type-mismatch': 'settings.modelPromptConfig.invalidReason.typeMismatch',
+};
 
 const loading = ref(false);
 const saving = ref(false);
@@ -54,11 +74,12 @@ function templateTypeForModel(modelType: ModelPromptModelType): ModelPromptTempl
 }
 
 function getTemplateTypeLabel(type: ModelPromptTemplateType): string {
-  return TEMPLATE_TYPE_OPTIONS.find((item) => item.value === type)?.label ?? type;
+  const option = TEMPLATE_TYPE_OPTIONS.find((item) => item.value === type);
+  return option ? t(option.labelKey) : type;
 }
 
 function getModelTypeLabel(type: ModelPromptModelType): string {
-  return type === 'image' ? '图片' : '视频';
+  return type === 'image' ? t('settings.modelPromptConfig.modelType.image') : t('settings.modelPromptConfig.modelType.video');
 }
 
 function getStatusTheme(status: ModelPromptModelItem['status']): 'success' | 'warning' | 'danger' | 'default' {
@@ -75,6 +96,46 @@ function getStatusTheme(status: ModelPromptModelItem['status']): 'success' | 'wa
 
 function getTemplateSummary(template: ModelPromptTemplate): string {
   return template.content.replace(/\s+/g, ' ').slice(0, 130);
+}
+
+function getTemplateReferenceText(template: ModelPromptTemplate): string {
+  return template.referenceCount > 0 ? t('settings.modelPromptConfig.referenceCount', { count: template.referenceCount }) : t('settings.modelPromptConfig.unreferenced');
+}
+
+function getConnectionStatusText(connection: ModelPromptConnectionGroup): string {
+  if (connection.connectionStatus === 'ready') {
+    return t('settings.modelPromptConfig.connectionStatus.ready');
+  }
+
+  if (connection.connectionStatus === 'incomplete') {
+    return t('settings.modelPromptConfig.connectionStatus.incomplete');
+  }
+
+  return connection.connectionStatus;
+}
+
+function getModelStatusText(model: ModelPromptModelItem): string {
+  if (model.status === 'fallback' && model.modelType === 'video') {
+    return t('settings.modelPromptConfig.modelStatus.videoFallback');
+  }
+
+  return t(MODEL_STATUS_KEYS[model.status]);
+}
+
+function getBindingName(model: ModelPromptModelItem): string {
+  return model.binding ? model.binding.templateName : t('settings.modelPromptConfig.unboundTemplate');
+}
+
+function getModelModeText(modelMode: string): string {
+  return modelMode ? t('settings.modelPromptConfig.modeWithValue', { mode: modelMode }) : t('settings.modelPromptConfig.defaultMode');
+}
+
+function getInvalidReasonText(mapping: ModelPromptInvalidMapping): string {
+  return t(INVALID_REASON_KEYS[mapping.reason]);
+}
+
+function getTemplateOptionLabel(template: ModelPromptTemplate): string {
+  return t('settings.modelPromptConfig.templateOption', { name: template.name, type: getTemplateTypeLabel(template.type) });
 }
 
 async function loadConfig(): Promise<void> {
@@ -114,7 +175,7 @@ function openEditTemplate(template: ModelPromptTemplate): void {
 
 async function saveTemplate(): Promise<void> {
   if (!templateForm.name.trim() || !templateForm.content.trim()) {
-    MessagePlugin.warning('模板名称和内容不能为空');
+    MessagePlugin.warning(t('settings.modelPromptConfig.message.templateRequired'));
     return;
   }
 
@@ -132,7 +193,7 @@ async function saveTemplate(): Promise<void> {
       return;
     }
 
-    MessagePlugin.success(editingTemplateId.value ? '模板已保存' : '模板已新增');
+    MessagePlugin.success(editingTemplateId.value ? t('settings.modelPromptConfig.message.templateSaved') : t('settings.modelPromptConfig.message.templateCreated'));
     templateDialogVisible.value = false;
     await loadConfig();
   } finally {
@@ -142,10 +203,10 @@ async function saveTemplate(): Promise<void> {
 
 function confirmDeleteTemplate(template: ModelPromptTemplate): void {
   const dialog = DialogPlugin.confirm({
-    header: '删除模型模板',
-    body: `删除“${template.name}”后不可恢复。被模型引用的模板会被阻止删除。`,
-    confirmBtn: '删除',
-    cancelBtn: '取消',
+    header: t('settings.modelPromptConfig.deleteDialog.title'),
+    body: t('settings.modelPromptConfig.deleteDialog.body', { name: template.name }),
+    confirmBtn: t('settings.modelPromptConfig.deleteDialog.confirm'),
+    cancelBtn: t('settings.modelPromptConfig.deleteDialog.cancel'),
     theme: 'danger',
     async onConfirm() {
       deleting.value = true;
@@ -156,7 +217,7 @@ function confirmDeleteTemplate(template: ModelPromptTemplate): void {
           return;
         }
 
-        MessagePlugin.success('模板已删除');
+        MessagePlugin.success(t('settings.modelPromptConfig.message.templateDeleted'));
         dialog.destroy();
         await loadConfig();
       } finally {
@@ -174,7 +235,7 @@ function openBindDialog(model: ModelPromptModelItem): void {
 
 async function saveBinding(): Promise<void> {
   if (!activeModel.value || !selectedTemplateId.value) {
-    MessagePlugin.warning('请选择模板');
+    MessagePlugin.warning(t('settings.modelPromptConfig.message.templateSelectRequired'));
     return;
   }
 
@@ -193,7 +254,7 @@ async function saveBinding(): Promise<void> {
       return;
     }
 
-    MessagePlugin.success('模型模板已绑定');
+    MessagePlugin.success(t('settings.modelPromptConfig.message.bound'));
     bindingDialogVisible.value = false;
     await loadConfig();
   } finally {
@@ -208,7 +269,7 @@ async function clearBinding(model: ModelPromptModelItem): Promise<void> {
       connectionId: model.connectionId,
       modelName: model.modelName,
       modelType: model.modelType,
-      modelMode: model.modelMode,
+      modelMode: model.binding?.modelMode ?? model.modelMode,
     });
 
     if (!isOk(response)) {
@@ -216,7 +277,7 @@ async function clearBinding(model: ModelPromptModelItem): Promise<void> {
       return;
     }
 
-    MessagePlugin.success('绑定已清除');
+    MessagePlugin.success(t('settings.modelPromptConfig.message.bindingCleared'));
     await loadConfig();
   } finally {
     binding.value = false;
@@ -231,25 +292,25 @@ onMounted(loadConfig);
   <section class="model-prompt-section">
     <div class="model-prompt-head">
       <div>
-        <strong>模型专用模板</strong>
-        <p>高级能力，只给图片/视频模型绑定专用提示词模板；未绑定时由生成服务统一 fallback。</p>
+        <strong>{{ t('settings.modelPromptConfig.title') }}</strong>
+        <p>{{ t('settings.modelPromptConfig.hint') }}</p>
       </div>
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadConfig">
           <template #icon><RefreshIcon /></template>
-          刷新
+          {{ t('settings.modelPromptConfig.refresh') }}
         </t-button>
         <t-button theme="primary" @click="openCreateTemplate()">
           <template #icon><AddIcon /></template>
-          新增模板
+          {{ t('settings.modelPromptConfig.addTemplate') }}
         </t-button>
       </div>
     </div>
 
     <div class="model-prompt-block">
       <div class="model-prompt-block-title">
-        <strong>模板库</strong>
-        <span>{{ config.templates.length }} 个模板</span>
+        <strong>{{ t('settings.modelPromptConfig.templateLibrary') }}</strong>
+        <span>{{ t('settings.modelPromptConfig.templateCount', { count: config.templates.length }) }}</span>
       </div>
       <div v-if="config.templates.length > 0" class="model-prompt-template-grid">
         <article v-for="template in config.templates" :key="template.id" class="model-prompt-template-card">
@@ -259,29 +320,29 @@ onMounted(loadConfig);
               <small>{{ getTemplateTypeLabel(template.type) }}</small>
             </div>
             <t-tag :theme="template.referenceCount > 0 ? 'success' : 'default'" variant="light">
-              {{ template.referenceCount > 0 ? `${template.referenceCount} 引用` : '未引用' }}
+              {{ getTemplateReferenceText(template) }}
             </t-tag>
           </div>
           <p>{{ getTemplateSummary(template) }}</p>
           <div class="model-prompt-card-actions">
             <t-button size="small" variant="outline" @click="openEditTemplate(template)">
               <template #icon><EditIcon /></template>
-              编辑
+              {{ t('settings.modelPromptConfig.edit') }}
             </t-button>
             <t-button size="small" variant="outline" theme="danger" :loading="deleting" @click="confirmDeleteTemplate(template)">
               <template #icon><DeleteIcon /></template>
-              删除
+              {{ t('settings.modelPromptConfig.delete') }}
             </t-button>
           </div>
         </article>
       </div>
-      <p v-else class="model-empty">{{ loading ? '正在读取模板...' : '还没有模型模板，先新增一个图片或视频模板。' }}</p>
+      <p v-else class="model-empty">{{ loading ? t('settings.modelPromptConfig.loadingTemplates') : t('settings.modelPromptConfig.emptyTemplates') }}</p>
     </div>
 
     <div class="model-prompt-block">
       <div class="model-prompt-block-title">
-        <strong>模型绑定</strong>
-        <span>只显示 image/video 模型</span>
+        <strong>{{ t('settings.modelPromptConfig.modelBinding') }}</strong>
+        <span>{{ t('settings.modelPromptConfig.modelBindingHint') }}</span>
       </div>
 
       <div v-if="config.connections.length > 0" class="model-prompt-connection-list">
@@ -291,7 +352,7 @@ onMounted(loadConfig);
               <strong>{{ connection.connectionName }}</strong>
               <small>{{ connection.connectionId }}</small>
             </div>
-            <t-tag :theme="connection.connectionStatus === 'ready' ? 'success' : 'warning'" variant="light">{{ connection.connectionStatusText }}</t-tag>
+            <t-tag :theme="connection.connectionStatus === 'ready' ? 'success' : 'warning'" variant="light">{{ getConnectionStatusText(connection) }}</t-tag>
           </div>
 
           <div class="model-prompt-model-grid">
@@ -301,58 +362,59 @@ onMounted(loadConfig);
                   <strong>{{ model.modelDisplayName }}</strong>
                   <small>{{ model.modelName }}</small>
                 </div>
-                <t-tag :theme="getStatusTheme(model.status)" variant="light">{{ model.statusText }}</t-tag>
+                <t-tag :theme="getStatusTheme(model.status)" variant="light">{{ getModelStatusText(model) }}</t-tag>
               </div>
               <div class="model-prompt-binding-info">
-                <span>{{ getModelTypeLabel(model.modelType) }}模型</span>
-                <b>{{ model.binding ? model.binding.templateName : '未绑定专用模板' }}</b>
-                <small>{{ model.modelMode ? `模式：${model.modelMode}` : '默认模式' }}</small>
+                <span>{{ t('settings.modelPromptConfig.modelTypeSuffix', { type: getModelTypeLabel(model.modelType) }) }}</span>
+                <b>{{ getBindingName(model) }}</b>
+                <small>{{ getModelModeText(model.modelMode) }}</small>
+                <small v-if="model.binding && model.binding.modelMode !== model.modelMode">{{ t('settings.modelPromptConfig.usingDefaultBinding') }}</small>
               </div>
               <div class="model-prompt-card-actions">
-                <t-button size="small" variant="outline" @click="openBindDialog(model)">绑定</t-button>
-                <t-button size="small" variant="outline" :disabled="!model.binding" :loading="binding" @click="clearBinding(model)">清除</t-button>
+                <t-button size="small" variant="outline" @click="openBindDialog(model)">{{ t('settings.modelPromptConfig.bind') }}</t-button>
+                <t-button size="small" variant="outline" :disabled="!model.binding" :loading="binding" @click="clearBinding(model)">{{ t('settings.modelPromptConfig.clear') }}</t-button>
               </div>
             </article>
           </div>
         </section>
       </div>
-      <p v-else class="model-empty">{{ loading ? '正在读取模型...' : '还没有 image/video 模型，请先在模型服务中登记模型。' }}</p>
+      <p v-else class="model-empty">{{ loading ? t('settings.modelPromptConfig.loadingModels') : t('settings.modelPromptConfig.emptyModels') }}</p>
     </div>
 
     <div v-if="config.invalidMappings.length > 0" class="model-prompt-warning">
-      <strong>失效映射</strong>
+      <strong>{{ t('settings.modelPromptConfig.invalidMappings') }}</strong>
       <p v-for="mapping in config.invalidMappings" :key="mapping.id">
-        {{ mapping.connectionId }} / {{ mapping.modelName }} / {{ mapping.templateName }}：{{ mapping.reasonText }}
+        {{ mapping.connectionId }} / {{ mapping.modelName }} / {{ mapping.templateName }}: {{ getInvalidReasonText(mapping) }}
       </p>
     </div>
 
-    <t-dialog v-model:visible="templateDialogVisible" :header="editingTemplateId ? '编辑模型模板' : '新增模型模板'" width="820px" confirm-btn="保存" :confirm-loading="saving" @confirm="saveTemplate">
+    <t-dialog v-model:visible="templateDialogVisible" :header="editingTemplateId ? t('settings.modelPromptConfig.templateDialog.editTitle') : t('settings.modelPromptConfig.templateDialog.addTitle')" width="820px" :confirm-btn="t('settings.modelPromptConfig.save')" :confirm-loading="saving" @confirm="saveTemplate">
       <t-form class="settings-form model-prompt-form" :data="templateForm" layout="vertical">
-        <t-form-item label="模板名称">
-          <t-input v-model="templateForm.name" placeholder="例如：通用图片生成模板" />
+        <t-form-item :label="t('settings.modelPromptConfig.templateDialog.name')">
+          <t-input v-model="templateForm.name" :placeholder="t('settings.modelPromptConfig.templateDialog.namePlaceholder')" />
         </t-form-item>
-        <t-form-item label="模板类型">
+        <t-form-item :label="t('settings.modelPromptConfig.templateDialog.type')">
           <t-select v-model="templateForm.type" :disabled="Boolean(currentEditingTemplate?.referenceCount)">
-            <t-option v-for="item in TEMPLATE_TYPE_OPTIONS" :key="item.value" :value="item.value" :label="item.label" />
+            <t-option v-for="item in TEMPLATE_TYPE_OPTIONS" :key="item.value" :value="item.value" :label="t(item.labelKey)" />
           </t-select>
         </t-form-item>
-        <t-form-item label="模板内容">
-          <t-textarea v-model="templateForm.content" class="code-editor model-prompt-textarea" placeholder="请输入模型专用提示词模板" :autosize="{ minRows: 16, maxRows: 26 }" />
+        <t-form-item :label="t('settings.modelPromptConfig.templateDialog.content')">
+          <t-textarea v-model="templateForm.content" class="code-editor model-prompt-textarea" :placeholder="t('settings.modelPromptConfig.templateDialog.contentPlaceholder')" :autosize="{ minRows: 16, maxRows: 26 }" />
         </t-form-item>
       </t-form>
     </t-dialog>
 
-    <t-dialog v-model:visible="bindingDialogVisible" :header="activeModel ? `绑定模板：${activeModel.modelDisplayName}` : '绑定模板'" width="560px" confirm-btn="保存绑定" :confirm-loading="binding" @confirm="saveBinding">
+    <t-dialog v-model:visible="bindingDialogVisible" :header="activeModel ? t('settings.modelPromptConfig.bindingDialog.titleWithModel', { model: activeModel.modelDisplayName }) : t('settings.modelPromptConfig.bindingDialog.title')" width="560px" :confirm-btn="t('settings.modelPromptConfig.bindingDialog.save')" :confirm-loading="binding" @confirm="saveBinding">
       <div class="model-prompt-bind-panel">
         <div v-if="activeModel" class="model-prompt-binding-info">
-          <span>当前模型</span>
+          <span>{{ t('settings.modelPromptConfig.bindingDialog.currentModel') }}</span>
           <b>{{ activeModel.connectionName }} / {{ activeModel.modelDisplayName }}</b>
           <small>{{ activeModel.modelName }}</small>
         </div>
-        <t-select v-model="selectedTemplateId" placeholder="选择同类型模板">
-          <t-option v-for="template in compatibleTemplates" :key="template.id" :value="template.id" :label="`${template.name}（${getTemplateTypeLabel(template.type)}）`" />
+        <t-select v-model="selectedTemplateId" :placeholder="t('settings.modelPromptConfig.bindingDialog.templatePlaceholder')">
+          <t-option v-for="template in compatibleTemplates" :key="template.id" :value="template.id" :label="getTemplateOptionLabel(template)" />
         </t-select>
-        <p v-if="compatibleTemplates.length === 0" class="settings-hint">当前类型没有可绑定模板，请先新增模板。</p>
+        <p v-if="compatibleTemplates.length === 0" class="settings-hint">{{ t('settings.modelPromptConfig.bindingDialog.noCompatibleTemplate') }}</p>
       </div>
     </t-dialog>
   </section>

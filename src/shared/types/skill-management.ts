@@ -2,7 +2,7 @@ export type SkillType = 'main' | 'references';
 
 export type SkillFileStatus = 'ready' | 'missing';
 
-export type SkillEmbeddingStatus = 'ready' | 'expired' | 'not-applicable';
+export type SkillEmbeddingStatus = 'ready' | 'expired' | 'failed' | 'not-applicable';
 
 export interface SkillManagementItem {
   id: string;
@@ -51,4 +51,15 @@ export interface SkillManagementSaveContentResult {
   warnings: SkillManagementValidationWarning[];
   skill?: SkillManagementItem;
   content?: string;
+}
+
+export interface SkillManagementRebuildEmbeddingsPayload {
+  id?: string;
+}
+
+export interface SkillManagementRebuildEmbeddingsResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  failedSkillIds: string[];
 }

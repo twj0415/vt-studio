@@ -1,19 +1,19 @@
 :root {
   color-scheme: light;
-  --vt-surface-app: #f3efe7;
-  --vt-surface-panel: #fbfaf6;
+  --vt-surface-app: #eef3f1;
+  --vt-surface-panel: #f8fbfa;
   --vt-surface-raised: #ffffff;
-  --vt-line-soft: rgba(32, 31, 27, 0.1);
-  --vt-line-strong: rgba(32, 31, 27, 0.18);
-  --vt-text-primary: #25231f;
-  --vt-text-secondary: #676157;
-  --vt-text-muted: #928a7b;
-  --vt-brand: #2f6f63;
-  --vt-brand-strong: #1f5149;
-  --vt-success: #2f7d4f;
-  --vt-warning: #9a641f;
+  --vt-line-soft: rgba(25, 42, 38, 0.1);
+  --vt-line-strong: rgba(25, 42, 38, 0.18);
+  --vt-text-primary: #18211f;
+  --vt-text-secondary: #51615d;
+  --vt-text-muted: #778783;
+  --vt-brand: #23756a;
+  --vt-brand-strong: #145c54;
+  --vt-success: #237a52;
+  --vt-warning: #a46421;
   --vt-danger: #a23b3b;
-  --vt-shadow-panel: 0 22px 80px rgba(37, 35, 31, 0.1);
+  --vt-shadow-panel: 0 22px 80px rgba(24, 33, 31, 0.1);
   --vt-td-brand-1: #eef7f4;
   --vt-td-brand-2: #d8eee7;
   --vt-td-brand-3: #b5ddd0;
@@ -47,20 +47,20 @@
 
 :root,
 :root[data-theme-preset='studio'] {
-  --vt-surface-app: #f3efe7;
-  --vt-surface-panel: #fbfaf6;
+  --vt-surface-app: #eef3f1;
+  --vt-surface-panel: #f8fbfa;
   --vt-surface-raised: #ffffff;
-  --vt-line-soft: rgba(32, 31, 27, 0.1);
-  --vt-line-strong: rgba(32, 31, 27, 0.18);
-  --vt-text-primary: #25231f;
-  --vt-text-secondary: #676157;
-  --vt-text-muted: #928a7b;
-  --vt-brand: #2f6f63;
-  --vt-brand-strong: #1f5149;
-  --vt-success: #2f7d4f;
-  --vt-warning: #9a641f;
+  --vt-line-soft: rgba(25, 42, 38, 0.1);
+  --vt-line-strong: rgba(25, 42, 38, 0.18);
+  --vt-text-primary: #18211f;
+  --vt-text-secondary: #51615d;
+  --vt-text-muted: #778783;
+  --vt-brand: #23756a;
+  --vt-brand-strong: #145c54;
+  --vt-success: #237a52;
+  --vt-warning: #a46421;
   --vt-danger: #a23b3b;
-  --vt-shadow-panel: 0 22px 80px rgba(37, 35, 31, 0.1);
+  --vt-shadow-panel: 0 22px 80px rgba(24, 33, 31, 0.1);
   --vt-td-brand-1: #eef7f4;
   --vt-td-brand-2: #d8eee7;
   --vt-td-brand-3: #b5ddd0;

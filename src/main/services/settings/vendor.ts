@@ -1,5 +1,7 @@
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { VT_STATUS } from '@shared/constants/status';
+import { hasConfiguredSecret, isSensitiveInput, maskSecret } from '@shared/security/secrets';
 import type {
   VendorAddCodePayload,
   VendorAddCodeResult,
@@ -31,14 +33,12 @@ import {
   addVendorFromCode,
   getVendor,
   setVendorEnabled,
-  testImageModel,
-  testTextModel,
-  testVideoModel,
   updateVendorCode,
   updateVendorInputs,
   validateVendorCode,
-} from '../model';
+} from '../model/vendor-service';
 import { getBuiltinVendorDefinition, getBuiltinVendorIds, isBuiltinVendor } from '../model/builtin-vendors';
+import { getConnectionProjectionMeta, isConnectionProjectionId } from '../model/connection-projection';
 import { getVendorCodePath, getVendorCodeRelativePath, getVendorRows, parseJsonObject, parseModelList } from '../model/storage';
 import type { VendorManifest, VendorModelConfig, VideoMode } from '../model/types';
 import { normalizeVendorManifest } from '../model/validation';
@@ -76,11 +76,43 @@ function getVendorCapabilities(vendorId: string, models: VendorModelConfig[]): V
   return [...new Set(models.map((model) => model.type))] as VendorListItem['capabilities'];
 }
 
-function manifestToListItem(manifest: VendorManifest, row: { enabled: number; input_values: string; models: string }, status: VendorListItem['status'], codeReady: boolean, statusText: string): VendorListItem {
+function getAdapterMd5(vendorId: string): string | null {
+  const codePath = getVendorCodePath(vendorId);
+  if (!existsSync(codePath)) {
+    return null;
+  }
+
+  return createHash('md5').update(readFileSync(codePath)).digest('hex');
+}
+
+function manifestToListItem(
+  manifest: VendorManifest,
+  row: { id: string; enabled: number; input_values: string; models: string; updated_at: number },
+  status: VendorListItem['status'],
+  codeReady: boolean,
+  statusText: string,
+): VendorListItem {
   const inputValues = { ...manifest.inputValues, ...parseJsonObject(row.input_values) };
+  const publicInputValues: Record<string, string> = {};
+  const inputConfigured: Record<string, boolean> = {};
+  const inputMasked: Record<string, string> = {};
+
+  for (const input of manifest.inputs) {
+    const value = inputValues[input.key] ?? '';
+    if (isSensitiveInput(input)) {
+      publicInputValues[input.key] = '';
+      inputConfigured[input.key] = hasConfiguredSecret(value);
+      inputMasked[input.key] = maskSecret(value);
+    } else {
+      publicInputValues[input.key] = value;
+    }
+  }
+
   const models = parseModelList(row.models);
   const mergedModels = mergeModels(manifest.models, models);
   const builtin = isBuiltinVendor(manifest.id);
+  const projectionMeta = getConnectionProjectionMeta(row);
+  const readOnly = Boolean(projectionMeta) || isConnectionProjectionId(row.id);
 
   return {
     id: manifest.id,
@@ -91,13 +123,20 @@ function manifestToListItem(manifest: VendorManifest, row: { enabled: number; in
     version: manifest.version,
     enabled: row.enabled === 1,
     builtin,
-    codeEditable: !builtin || codeReady,
+    managedBy: readOnly ? 'model-service' : null,
+    readOnly,
+    codeEditable: readOnly ? false : !builtin || codeReady,
     codeReady,
     status,
-    statusText,
+    statusText: readOnly ? '由模型服务生成，请到模型服务里修改' : statusText,
+    adapterMd5: getAdapterMd5(row.id),
+    adapterUpdatedAt: row.updated_at,
+    lastError: status === 'ready' ? null : statusText,
     capabilities: getVendorCapabilities(manifest.id, mergedModels),
     inputs: manifest.inputs,
-    inputValues,
+    inputValues: publicInputValues,
+    inputConfigured,
+    inputMasked,
     models: mergedModels,
   };
 }
@@ -167,6 +206,20 @@ function assertEditableVendor(vendorId: string): void {
   }
 }
 
+function getConnectionProjectionVendorMeta(vendorId: string): ReturnType<typeof getConnectionProjectionMeta> {
+  const row = getDatabase()
+    .prepare<[string], { id: string; input_values: string } | undefined>('SELECT id, input_values FROM model_vendors WHERE id = ? LIMIT 1')
+    .get(vendorId);
+
+  return row ? getConnectionProjectionMeta(row) : null;
+}
+
+function assertNotConnectionProjection(vendorId: string, action: string): void {
+  if (isConnectionProjectionId(vendorId) || getConnectionProjectionVendorMeta(vendorId)) {
+    throw createError(VT_STATUS.FORBIDDEN, `模型服务生成的运行投影不能直接${action}，请到模型服务里修改连接`);
+  }
+}
+
 function assertModelPayload(model: VendorModelConfig): VendorModelConfig {
   const normalized = normalizeVendorManifest({
     id: 'payload',
@@ -178,6 +231,38 @@ function assertModelPayload(model: VendorModelConfig): VendorModelConfig {
   });
 
   return normalized.models[0];
+}
+
+function normalizeOpenAiVendorBaseUrl(baseUrl: string): string {
+  const value = baseUrl.trim();
+  if (!value) {
+    return value;
+  }
+
+  try {
+    const parsed = new URL(value);
+    let pathname = parsed.pathname.replace(/\/+$/, '');
+    pathname = pathname.replace(/\/(chat\/completions|responses|completions)$/i, '');
+
+    if (!pathname || pathname === '/') {
+      pathname = '/v1';
+    }
+
+    return `${parsed.origin}${pathname}`;
+  } catch {
+    return value;
+  }
+}
+
+function normalizeVendorInputValues(vendorId: string, inputValues: Record<string, string>): Record<string, string> {
+  if (vendorId !== 'openai' || typeof inputValues.baseUrl !== 'string') {
+    return inputValues;
+  }
+
+  return {
+    ...inputValues,
+    baseUrl: normalizeOpenAiVendorBaseUrl(inputValues.baseUrl),
+  };
 }
 
 function normalizeModelPayload(model: VendorModelPayload['model']): VendorModelConfig {
@@ -231,23 +316,35 @@ export function getVendorList(): VendorListResult {
 }
 
 export function saveVendorInputs(payload: VendorUpdateInputsPayload): VendorUpdateInputsResult {
+  assertNotConnectionProjection(payload.vendorId, '保存参数');
   const vendor = getVendor(payload.vendorId);
-  const allowedKeys = new Set(vendor.manifest.inputs.map((input) => input.key));
-  const sanitized = Object.fromEntries(
-    Object.entries(payload.inputValues).filter(([key, value]) => allowedKeys.has(key) && typeof value === 'string'),
-  );
+  const sanitized: Record<string, string> = {};
+  for (const input of vendor.manifest.inputs) {
+    const value = payload.inputValues[input.key];
+    if (typeof value !== 'string') {
+      continue;
+    }
 
-  updateVendorInputs(payload.vendorId, sanitized);
+    if (isSensitiveInput(input) && value.trim() === '' && hasConfiguredSecret(vendor.inputValues[input.key])) {
+      continue;
+    }
+
+    sanitized[input.key] = value;
+  }
+
+  updateVendorInputs(payload.vendorId, normalizeVendorInputValues(payload.vendorId, sanitized));
   return { vendorId: payload.vendorId };
 }
 
 export function saveVendorEnabled(payload: VendorSetEnabledPayload): VendorSetEnabledResult {
+  assertNotConnectionProjection(payload.vendorId, payload.enabled ? '启用' : '禁用');
   getVendor(payload.vendorId);
   setVendorEnabled(payload.vendorId, payload.enabled);
   return { vendorId: payload.vendorId, enabled: payload.enabled };
 }
 
 export function saveVendorModel(payload: VendorModelPayload): VendorModelSaveResult {
+  assertNotConnectionProjection(payload.vendorId, '编辑模型');
   const model = normalizeModelPayload(payload.model);
 
   updateVendorModels(payload.vendorId, (models) => {
@@ -269,6 +366,7 @@ export function saveVendorModel(payload: VendorModelPayload): VendorModelSaveRes
 }
 
 export function deleteVendorModel(payload: VendorDeleteModelPayload): VendorDeleteModelResult {
+  assertNotConnectionProjection(payload.vendorId, '删除模型');
   assertNoReferences(payload.vendorId, payload.modelName);
 
   updateVendorModels(payload.vendorId, (models) => {
@@ -283,6 +381,7 @@ export function deleteVendorModel(payload: VendorDeleteModelPayload): VendorDele
 }
 
 export function getVendorCode(payload: VendorDeletePayload): VendorCodeResult {
+  assertNotConnectionProjection(payload.vendorId, '编辑 adapter');
   const vendor = getVendor(payload.vendorId);
   if (!vendor.codeReady && isBuiltinVendor(vendor.id)) {
     throw createError(VT_STATUS.FORBIDDEN, '内置供应商当前使用固定 adapter，不提供代码编辑');
@@ -297,16 +396,22 @@ export function getVendorCode(payload: VendorDeletePayload): VendorCodeResult {
 
 export function addVendorCode(payload: VendorAddCodePayload): VendorAddCodeResult {
   const manifest = validateVendorCode(payload.code);
+  if (isConnectionProjectionId(manifest.id)) {
+    throw createError(VT_STATUS.FORBIDDEN, '自定义供应商 ID 不能使用 conn_ 前缀');
+  }
+
   addVendorFromCode(payload.code);
   return { vendorId: manifest.id };
 }
 
 export function saveVendorCode(payload: VendorCodePayload): VendorUpdateCodeResult {
+  assertNotConnectionProjection(payload.vendorId, '保存 adapter');
   updateVendorCode(payload.vendorId, payload.code);
   return { vendorId: payload.vendorId };
 }
 
 export function deleteVendor(payload: VendorDeletePayload): VendorDeleteResult {
+  assertNotConnectionProjection(payload.vendorId, '删除');
   assertEditableVendor(payload.vendorId);
   assertNoReferences(payload.vendorId);
   getVendor(payload.vendorId);
@@ -320,6 +425,7 @@ export function deleteVendor(payload: VendorDeletePayload): VendorDeleteResult {
 }
 
 export async function runVendorTextTest(payload: VendorTestTextPayload): Promise<VendorTestTextResult> {
+  const { testTextModel } = await import('../model/test');
   const startedAt = Date.now();
   const result = await testTextModel({
     vendorId: payload.vendorId,
@@ -331,12 +437,14 @@ export async function runVendorTextTest(payload: VendorTestTextPayload): Promise
 }
 
 export async function runVendorImageTest(payload: VendorTestImagePayload): Promise<VendorTestMediaResult> {
+  const { testImageModel } = await import('../model/test');
   const startedAt = Date.now();
   const result = await testImageModel(payload);
   return { ...result, durationMs: Date.now() - startedAt };
 }
 
 export async function runVendorVideoTest(payload: VendorTestVideoPayload): Promise<VendorTestMediaResult> {
+  const { testVideoModel } = await import('../model/test');
   const startedAt = Date.now();
   const result = await testVideoModel({
     vendorId: payload.vendorId,

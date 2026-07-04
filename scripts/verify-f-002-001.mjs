@@ -166,6 +166,7 @@ try {
     target: 'node20',
     alias: {
       '@renderer': join(workspaceRoot, 'src/renderer/src'),
+      '@shared': join(workspaceRoot, 'src/shared'),
     },
     logLevel: 'silent',
   });

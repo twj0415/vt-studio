@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { ChevronDownIcon, ChevronUpIcon, RefreshIcon, SaveIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
 import type { AgentConfigGroup, AgentConfigItem, AgentConfigResult, AgentTextModelOption, TextAgentKey } from '@shared/types/agent-config';
@@ -15,23 +16,53 @@ interface AgentDraft {
   maxOutputTokensText: string;
 }
 
-const CREATIVITY_OPTIONS: Array<{ label: string; value: CreativityPreset; temperature: number }> = [
-  { label: '稳', value: 'stable', temperature: 0.4 },
-  { label: '平衡', value: 'balanced', temperature: 0.7 },
-  { label: '发散', value: 'creative', temperature: 1 },
+const { t } = useI18n();
+
+const CREATIVITY_OPTIONS: Array<{ labelKey: string; value: CreativityPreset; temperature: number }> = [
+  { labelKey: 'settings.agentConfig.creativity.stable', value: 'stable', temperature: 0.4 },
+  { labelKey: 'settings.agentConfig.creativity.balanced', value: 'balanced', temperature: 0.7 },
+  { labelKey: 'settings.agentConfig.creativity.creative', value: 'creative', temperature: 1 },
 ];
 
-const OUTPUT_LENGTH_OPTIONS: Array<{ label: string; value: OutputLengthPreset; maxOutputTokens: number }> = [
-  { label: '自动', value: 'auto', maxOutputTokens: 0 },
-  { label: '短', value: 'short', maxOutputTokens: 1024 },
-  { label: '中', value: 'medium', maxOutputTokens: 4096 },
-  { label: '长', value: 'long', maxOutputTokens: 8192 },
+const OUTPUT_LENGTH_OPTIONS: Array<{ labelKey: string; value: OutputLengthPreset; maxOutputTokens: number }> = [
+  { labelKey: 'settings.agentConfig.outputLength.auto', value: 'auto', maxOutputTokens: 0 },
+  { labelKey: 'settings.agentConfig.outputLength.short', value: 'short', maxOutputTokens: 1024 },
+  { labelKey: 'settings.agentConfig.outputLength.medium', value: 'medium', maxOutputTokens: 4096 },
+  { labelKey: 'settings.agentConfig.outputLength.long', value: 'long', maxOutputTokens: 8192 },
 ];
 
-const GROUP_LABELS: Record<AgentConfigGroup, string> = {
-  main: '主 Agent',
-  script: '剧本子 Agent',
-  production: '生产子 Agent',
+const GROUP_LABEL_KEYS: Record<AgentConfigGroup, string> = {
+  main: 'settings.agentConfig.group.main',
+  script: 'settings.agentConfig.group.script',
+  production: 'settings.agentConfig.group.production',
+};
+
+const AGENT_NAME_KEYS: Record<TextAgentKey, string> = {
+  scriptAgent: 'settings.agentConfig.agentName.scriptAgent',
+  productionAgent: 'settings.agentConfig.agentName.productionAgent',
+  universalAi: 'settings.agentConfig.agentName.universalAi',
+  'scriptAgent:decisionAgent': 'settings.agentConfig.agentName.scriptDecisionAgent',
+  'scriptAgent:supervisionAgent': 'settings.agentConfig.agentName.scriptSupervisionAgent',
+  'scriptAgent:storySkeletonAgent': 'settings.agentConfig.agentName.storySkeletonAgent',
+  'scriptAgent:adaptationStrategyAgent': 'settings.agentConfig.agentName.adaptationStrategyAgent',
+  'scriptAgent:scriptAgent': 'settings.agentConfig.agentName.scriptWritingAgent',
+  'productionAgent:decisionAgent': 'settings.agentConfig.agentName.productionDecisionAgent',
+  'productionAgent:supervisionAgent': 'settings.agentConfig.agentName.productionSupervisionAgent',
+  'productionAgent:deriveAssetsAgent': 'settings.agentConfig.agentName.deriveAssetsAgent',
+  'productionAgent:generateAssetsAgent': 'settings.agentConfig.agentName.generateAssetsAgent',
+  'productionAgent:directorPlanAgent': 'settings.agentConfig.agentName.directorPlanAgent',
+  'productionAgent:storyboardGenAgent': 'settings.agentConfig.agentName.storyboardGenAgent',
+  'productionAgent:storyboardPanelAgent': 'settings.agentConfig.agentName.storyboardPanelAgent',
+  'productionAgent:storyboardTableAgent': 'settings.agentConfig.agentName.storyboardTableAgent',
+};
+
+const AGENT_STATUS_KEYS: Record<AgentConfigItem['status'], string> = {
+  inherited: 'settings.agentConfig.status.inherited',
+  overridden: 'settings.agentConfig.status.overridden',
+  'missing-default': 'settings.agentConfig.status.missingDefault',
+  'invalid-default': 'settings.agentConfig.status.invalidDefault',
+  'invalid-override': 'settings.agentConfig.status.invalidOverride',
+  disabled: 'settings.agentConfig.status.disabled',
 };
 
 const loading = ref(false);
@@ -40,7 +71,6 @@ const advancedVisible = ref(false);
 const agents = ref<AgentConfigItem[]>([]);
 const availableTextModels = ref<AgentTextModelOption[]>([]);
 const defaultTextStatus = ref<AgentConfigResult['defaultTextStatus']>('missing');
-const defaultTextStatusText = ref('默认文本模型未配置');
 const defaultTextModel = ref<AgentConfigResult['defaultTextModel']>(null);
 const globalForm = reactive({
   creativity: 'balanced' as CreativityPreset,
@@ -83,6 +113,30 @@ function getStatusTheme(status: AgentConfigItem['status']): 'success' | 'warning
   }
 
   return status === 'missing-default' ? 'warning' : 'danger';
+}
+
+function getGroupLabel(group: AgentConfigGroup | string | number): string {
+  return t(GROUP_LABEL_KEYS[group as AgentConfigGroup] ?? String(group));
+}
+
+function getAgentName(agent: AgentConfigItem): string {
+  return t(AGENT_NAME_KEYS[agent.key]);
+}
+
+function getAgentStatusText(status: AgentConfigItem['status']): string {
+  return t(AGENT_STATUS_KEYS[status]);
+}
+
+function getDefaultTextStatusText(): string {
+  if (defaultTextStatus.value === 'configured') {
+    return t('settings.agentConfig.defaultStatus.configured');
+  }
+
+  if (defaultTextStatus.value === 'missing') {
+    return t('settings.agentConfig.defaultStatus.missing');
+  }
+
+  return t('settings.agentConfig.defaultStatus.unsupported');
 }
 
 function inferCreativity(temperature: number): CreativityPreset {
@@ -159,7 +213,6 @@ async function loadConfig(): Promise<void> {
     availableTextModels.value = response.data.availableTextModels;
     defaultTextModel.value = response.data.defaultTextModel;
     defaultTextStatus.value = response.data.defaultTextStatus;
-    defaultTextStatusText.value = response.data.defaultTextStatusText;
     globalForm.creativity = inferCreativity(response.data.globalSettings.temperature);
     globalForm.outputLength = inferOutputLength(response.data.globalSettings.maxOutputTokens);
     resetDrafts(response.data.agents);
@@ -171,8 +224,9 @@ async function loadConfig(): Promise<void> {
 async function saveConfig(): Promise<void> {
   const payloadAgents = agents.value.map((agent) => {
     const draft = getDraft(agent.key);
+    const agentName = getAgentName(agent);
     if (draft.overrideEnabled && !modelOptions.value.some((item) => item.value === draft.modelId)) {
-      throw new Error(`${agent.name} 的覆盖模型无效，请重新选择`);
+      throw new Error(t('settings.agentConfig.validation.invalidOverrideModel', { agent: agentName }));
     }
 
     if (draft.inheritParams) {
@@ -187,11 +241,11 @@ async function saveConfig(): Promise<void> {
     const temperature = parseTemperature(draft.temperatureText);
     const maxOutputTokens = parseMaxOutputTokens(draft.maxOutputTokensText);
     if (temperature === null) {
-      throw new Error(`${agent.name} 的 temperature 必须在 0-2 之间`);
+      throw new Error(t('settings.agentConfig.validation.temperatureRange', { agent: agentName }));
     }
 
     if (maxOutputTokens === null) {
-      throw new Error(`${agent.name} 的 maxOutputTokens 必须大于等于 0`);
+      throw new Error(t('settings.agentConfig.validation.maxOutputTokensRange', { agent: agentName }));
     }
 
     return {
@@ -217,10 +271,10 @@ async function saveConfig(): Promise<void> {
       return;
     }
 
-    MessagePlugin.success('Agent 配置已保存');
+    MessagePlugin.success(t('settings.agentConfig.message.saved'));
     await loadConfig();
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Agent 配置保存失败';
+    const message = error instanceof Error ? error.message : t('settings.agentConfig.message.saveFailed');
     MessagePlugin.error(message);
   } finally {
     saving.value = false;
@@ -235,90 +289,90 @@ onMounted(loadConfig);
   <section class="agent-config-panel">
     <div class="agent-config-head">
       <div>
-        <strong>Agent 高级设置</strong>
-        <p>普通 Agent 继承默认文本模型；高级模式才单独覆盖模型和参数。</p>
+        <strong>{{ t('settings.agentConfig.title') }}</strong>
+        <p>{{ t('settings.agentConfig.hint') }}</p>
       </div>
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadConfig">
           <template #icon><RefreshIcon /></template>
-          刷新
+          {{ t('settings.agentConfig.refresh') }}
         </t-button>
         <t-button theme="primary" :loading="saving" @click="saveConfig">
           <template #icon><SaveIcon /></template>
-          保存
+          {{ t('settings.agentConfig.save') }}
         </t-button>
       </div>
     </div>
 
     <div class="agent-default-row">
       <div class="agent-default-model">
-        <span>默认文本模型</span>
-        <b>{{ defaultTextModel ? `${defaultTextModel.connectionName} / ${defaultTextModel.modelDisplayName}` : '未配置' }}</b>
+        <span>{{ t('settings.agentConfig.defaultModel') }}</span>
+        <b>{{ defaultTextModel ? `${defaultTextModel.connectionName} / ${defaultTextModel.modelDisplayName}` : t('settings.agentConfig.notConfigured') }}</b>
         <small v-if="defaultTextModel">{{ defaultTextModel.modelName }}</small>
       </div>
-      <t-tag :theme="defaultTextStatus === 'configured' ? 'success' : 'warning'" variant="light">{{ defaultTextStatusText }}</t-tag>
+      <t-tag :theme="defaultTextStatus === 'configured' ? 'success' : 'warning'" variant="light">{{ getDefaultTextStatusText() }}</t-tag>
     </div>
 
     <div class="agent-simple-controls">
       <t-form layout="inline">
-        <t-form-item label="创作稳定性">
+        <t-form-item :label="t('settings.agentConfig.creativityLabel')">
           <t-radio-group v-model="globalForm.creativity" variant="default-filled">
-            <t-radio-button v-for="item in CREATIVITY_OPTIONS" :key="item.value" :value="item.value">{{ item.label }}</t-radio-button>
+            <t-radio-button v-for="item in CREATIVITY_OPTIONS" :key="item.value" :value="item.value">{{ t(item.labelKey) }}</t-radio-button>
           </t-radio-group>
         </t-form-item>
-        <t-form-item label="输出长度">
+        <t-form-item :label="t('settings.agentConfig.outputLengthLabel')">
           <t-radio-group v-model="globalForm.outputLength" variant="default-filled">
-            <t-radio-button v-for="item in OUTPUT_LENGTH_OPTIONS" :key="item.value" :value="item.value">{{ item.label }}</t-radio-button>
+            <t-radio-button v-for="item in OUTPUT_LENGTH_OPTIONS" :key="item.value" :value="item.value">{{ t(item.labelKey) }}</t-radio-button>
           </t-radio-group>
         </t-form-item>
       </t-form>
     </div>
 
-    <button type="button" class="agent-advanced-toggle" @click="advancedVisible = !advancedVisible">
-      <span>高级覆盖</span>
+    <t-button class="agent-advanced-toggle" variant="outline" @click="advancedVisible = !advancedVisible">
+      <span>{{ t('settings.agentConfig.advancedOverride') }}</span>
       <ChevronUpIcon v-if="advancedVisible" />
       <ChevronDownIcon v-else />
-    </button>
+    </t-button>
 
     <div v-if="advancedVisible" class="agent-group-list">
       <section v-for="(items, group) in groupedAgents" :key="group" class="agent-group">
-        <div class="agent-group-title">{{ GROUP_LABELS[group] }}</div>
+        <div class="agent-group-title">{{ getGroupLabel(group) }}</div>
         <div class="agent-card-grid">
           <article v-for="agent in items" :key="agent.key" class="agent-card">
             <div class="agent-card-head">
               <div>
-                <strong>{{ agent.name }}</strong>
+                <strong>{{ getAgentName(agent) }}</strong>
                 <small>{{ agent.key }}</small>
               </div>
-              <t-tag :theme="getStatusTheme(agent.status)" variant="light">{{ agent.statusText }}</t-tag>
+              <t-tag :theme="getStatusTheme(agent.status)" variant="light">{{ getAgentStatusText(agent.status) }}</t-tag>
             </div>
 
             <div class="agent-effective-model">
-              <span>当前生效</span>
-              <b>{{ agent.effectiveModel ? `${agent.effectiveModel.connectionName} / ${agent.effectiveModel.modelDisplayName}` : '未配置' }}</b>
+              <span>{{ t('settings.agentConfig.currentEffective') }}</span>
+              <b>{{ agent.effectiveModel ? `${agent.effectiveModel.connectionName} / ${agent.effectiveModel.modelDisplayName}` : t('settings.agentConfig.notConfigured') }}</b>
               <small v-if="agent.effectiveModel">{{ agent.effectiveModel.modelName }}</small>
             </div>
 
             <div class="agent-field-row">
-              <span>覆盖模型</span>
+              <span>{{ t('settings.agentConfig.overrideModel') }}</span>
               <t-switch v-model="getDraft(agent.key).overrideEnabled" />
             </div>
-            <t-select v-if="getDraft(agent.key).overrideEnabled" v-model="getDraft(agent.key).modelId" placeholder="选择已启用文本模型">
+            <t-select v-if="getDraft(agent.key).overrideEnabled" v-model="getDraft(agent.key).modelId" :placeholder="t('settings.agentConfig.modelPlaceholder')">
               <t-option v-for="option in modelOptions" :key="option.value" :value="option.value" :label="option.label" />
             </t-select>
 
             <div class="agent-field-row">
-              <span>继承全局参数</span>
+              <span>{{ t('settings.agentConfig.inheritGlobalParams') }}</span>
               <t-switch v-model="getDraft(agent.key).inheritParams" />
             </div>
             <div v-if="!getDraft(agent.key).inheritParams" class="agent-param-grid">
               <label>
-                <span>temperature</span>
+                <span>{{ t('settings.agentConfig.form.temperature') }}</span>
                 <t-input v-model="getDraft(agent.key).temperatureText" placeholder="0-2" />
               </label>
               <label>
-                <span>maxOutputTokens</span>
-                <t-input v-model="getDraft(agent.key).maxOutputTokensText" placeholder="0 为自动" />
+                <span>{{ t('settings.agentConfig.form.maxOutputTokens') }}</span>
+                <t-input v-model="getDraft(agent.key).maxOutputTokensText" :placeholder="t('settings.agentConfig.autoTokensPlaceholder')" />
               </label>
             </div>
           </article>

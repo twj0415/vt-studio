@@ -19,17 +19,16 @@ import type {
   DatabaseTableInfo,
   DatabaseTableListResult,
 } from '@shared/types/database-management';
-import {
-  closeDatabase,
-  getDatabase,
-  getDatabaseInfo as getCoreDatabaseInfo,
-  resolveDatabaseFilePath,
-  runMigrations,
-  runSeed,
-  withTransaction,
-} from '../database';
-import { getRuntimeDirectories, safeJoin } from '../file-system';
+import { closeDatabase, getDatabase } from '../database/connection';
+import { getDatabaseInfo as getCoreDatabaseInfo } from '../database/info';
+import { resolveDatabaseFilePath } from '../database/path';
+import { runMigrations } from '../database/migrations';
+import { runSeed } from '../database/seed';
+import { withTransaction } from '../database/transaction';
+import { getRuntimeDirectories } from '../file-system/paths';
+import { safeJoin } from '../file-system/safe-path';
 import { createError } from '../result';
+import { assertNoBusinessLocks, countBusinessLocks, countRunningTaskRecords, listBusinessLocks } from '../task/locks';
 
 const BACKUP_DIRECTORY_NAME = 'database';
 const BACKUP_FILE_PREFIX = 'vt-studio-db';
@@ -81,6 +80,7 @@ function mapBackup(name: string): DatabaseBackupItem {
     name,
     sizeBytes: stat.size,
     createdAt: stat.mtimeMs,
+    containsSecrets: true,
   };
 }
 
@@ -95,28 +95,21 @@ export function listDatabaseBackups(): DatabaseBackupListResult {
 }
 
 function getRunningTaskCount(): number {
-  const table = getDatabase()
-    .prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks' LIMIT 1")
-    .get();
-
-  if (!table) {
-    return 0;
-  }
-
-  return getDatabase()
-    .prepare<[], { count: number }>("SELECT COUNT(*) as count FROM tasks WHERE status = 'running'")
-    .get()?.count ?? 0;
+  return countRunningTaskRecords();
 }
 
 function assertNoRunningTasks(): void {
-  const runningTaskCount = getRunningTaskCount();
-  if (runningTaskCount > 0) {
-    throw createError(VT_STATUS.TASK_STATUS_CONFLICT, `当前有 ${runningTaskCount} 个运行中任务，请先停止任务`);
-  }
+  assertNoBusinessLocks({ action: '执行数据库危险操作' });
 }
 
 export function checkDatabaseRunningTasks(): DatabaseRunningTasksResult {
-  return { runningTaskCount: getRunningTaskCount() };
+  const runningLocks = listBusinessLocks();
+
+  return {
+    runningTaskCount: getRunningTaskCount(),
+    runningLockCount: countBusinessLocks(),
+    runningLocks,
+  };
 }
 
 export function getDatabaseManagementInfo(): DatabaseManagementInfoResult {
@@ -129,6 +122,8 @@ export function getDatabaseManagementInfo(): DatabaseManagementInfoResult {
       backupCount: backups.length,
       latestBackupName: backups[0]?.name ?? null,
       runningTaskCount: getRunningTaskCount(),
+      runningLockCount: countBusinessLocks(),
+      runningLocks: listBusinessLocks(),
     } satisfies DatabaseManagementInfo,
   };
 }
@@ -139,7 +134,7 @@ export async function exportDatabaseBackup(): Promise<DatabaseExportResult> {
 
   await getDatabase().backup(backupPath);
 
-  return { backup: mapBackup(backupName) };
+  return { backup: mapBackup(backupName), containsSecrets: true };
 }
 
 function validateSqliteBackup(filePath: string): void {

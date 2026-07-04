@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-rou
 import LoginHome from '@renderer/features/auth/LoginHome.vue';
 import WorkbenchLayout from '@renderer/layouts/WorkbenchLayout.vue';
 import ProjectHome from '@renderer/features/project/ProjectHome.vue';
+import ProjectOverviewHome from '@renderer/features/project-overview/ProjectOverviewHome.vue';
 import TaskCenter from '@renderer/features/task-center/TaskCenter.vue';
 import SettingsHome from '@renderer/features/settings/SettingsHome.vue';
 import NovelHome from '@renderer/features/novel/NovelHome.vue';
@@ -11,14 +12,27 @@ import CornerScapeHome from '@renderer/features/corner-scape/CornerScapeHome.vue
 import ProductionHome from '@renderer/features/production/ProductionHome.vue';
 import AssetsHome from '@renderer/features/assets/AssetsHome.vue';
 import ExportHome from '@renderer/features/export/ExportHome.vue';
+import { useAppStore } from '@renderer/stores/app';
 import { useAuthStore } from '@renderer/stores/auth';
+import type { ProjectRouteName } from '@shared/types/project';
+
+const PROJECT_ROUTE_NAMES: ProjectRouteName[] = [
+  'project-overview',
+  'novel',
+  'script-agent',
+  'script',
+  'assets',
+  'corner-scape',
+  'production',
+  'export',
+];
 
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'login',
     component: LoginHome,
-    meta: { title: '登录', public: true },
+    meta: { titleKey: 'route.login', public: true },
   },
   {
     path: '/',
@@ -30,61 +44,67 @@ const routes: RouteRecordRaw[] = [
         path: 'projects',
         name: 'projects',
         component: ProjectHome,
-        meta: { title: '项目管理' },
+        meta: { titleKey: 'route.projects' },
       },
       {
         path: 'tasks',
         name: 'tasks',
         component: TaskCenter,
-        meta: { title: '任务中心' },
+        meta: { titleKey: 'route.tasks' },
       },
       {
         path: 'settings',
         name: 'settings',
         component: SettingsHome,
-        meta: { title: '设置' },
+        meta: { titleKey: 'route.settings' },
+      },
+      {
+        path: 'project-overview',
+        name: 'project-overview',
+        component: ProjectOverviewHome,
+        meta: { titleKey: 'route.projectOverview', requiresProject: true },
       },
       {
         path: 'novel',
         name: 'novel',
         component: NovelHome,
-        meta: { title: '小说/原文' },
+        meta: { titleKey: 'route.novel', requiresProject: true },
       },
       {
         path: 'script-agent',
         name: 'script-agent',
         component: ScriptAgentHome,
-        meta: { title: '剧本 Agent' },
+        meta: { titleKey: 'route.script-agent', requiresProject: true },
       },
       {
         path: 'script',
         name: 'script',
         component: ScriptHome,
-        meta: { title: '剧本' },
+        meta: { titleKey: 'route.script', requiresProject: true },
       },
       {
         path: 'corner-scape',
         name: 'corner-scape',
         component: CornerScapeHome,
-        meta: { title: '角景音频绑定' },
+        meta: { titleKey: 'route.corner-scape', requiresProject: true },
       },
       {
         path: 'production',
         name: 'production',
         component: ProductionHome,
-        meta: { title: '生产工作台' },
+        meta: { titleKey: 'route.production', requiresProject: true },
       },
       {
         path: 'assets',
         name: 'assets',
         component: AssetsHome,
-        meta: { title: '资产中心' },
+        meta: { titleKey: 'route.assets', requiresProject: true },
       },
       {
         path: 'export',
         name: 'export',
         component: ExportHome,
-        meta: { title: '导出' },
+        meta: { titleKey: 'route.export', requiresProject: true },
       },
     ],
   },
@@ -95,8 +115,25 @@ export const router = createRouter({
   routes,
 });
 
+let didTryInitialProjectRestore = false;
+
+function toProjectRouteName(value: unknown): ProjectRouteName | null {
+  return typeof value === 'string' && PROJECT_ROUTE_NAMES.includes(value as ProjectRouteName) ? (value as ProjectRouteName) : null;
+}
+
+async function restoreRecentProjectContext(appStore: ReturnType<typeof useAppStore>): Promise<ProjectRouteName | null> {
+  const response = await window.vtStudio.project.restoreRecent();
+  if (response.code !== 200 || !response.data.project || response.data.targetRoute === 'projects') {
+    return null;
+  }
+
+  appStore.setCurrentProject(response.data.project);
+  return response.data.targetRoute;
+}
+
 router.beforeEach(async (to) => {
   const authStore = useAuthStore();
+  const appStore = useAppStore();
 
   if (to.meta.public) {
     if (!authStore.restored) {
@@ -114,5 +151,35 @@ router.beforeEach(async (to) => {
     };
   }
 
+  if (!didTryInitialProjectRestore && to.name === 'projects' && !appStore.currentProject?.id) {
+    didTryInitialProjectRestore = true;
+    const restoredRoute = await restoreRecentProjectContext(appStore);
+    if (restoredRoute) {
+      return { name: restoredRoute };
+    }
+  }
+
+  if (to.meta.requiresProject && !appStore.currentProject?.id) {
+    const restoredRoute = await restoreRecentProjectContext(appStore);
+    if (!restoredRoute) {
+      return { name: 'projects' };
+    }
+  }
+
   return true;
+});
+
+router.afterEach((to) => {
+  const routeName = toProjectRouteName(to.name);
+  if (!routeName) {
+    return;
+  }
+
+  const appStore = useAppStore();
+  const projectId = Number(appStore.currentProject?.id ?? 0);
+  if (!projectId) {
+    return;
+  }
+
+  void window.vtStudio.project.updateRecentRoute({ projectId, routeName });
 });
