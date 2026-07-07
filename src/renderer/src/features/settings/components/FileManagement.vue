@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { FolderOpenIcon, RefreshIcon } from 'tdesign-icons-vue-next';
+import { CopyIcon, FolderOpenIcon, RefreshIcon } from 'tdesign-icons-vue-next';
 import { useI18n } from 'vue-i18n';
 import { MessagePlugin } from 'tdesign-vue-next';
 import type {
@@ -136,6 +136,15 @@ async function openDirectory(directory: FileManagementDirectoryItem): Promise<vo
   }
 }
 
+async function copyDirectoryPath(directory: FileManagementDirectoryItem): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(directory.path);
+    MessagePlugin.success(t('files.pathCopied', { name: directory.name }));
+  } catch {
+    MessagePlugin.error(t('files.copyPathFailed'));
+  }
+}
+
 defineExpose({ loadDirectories });
 onMounted(() => {
   void loadDirectories();
@@ -145,11 +154,7 @@ onMounted(() => {
 
 <template>
   <section class="file-management-section">
-    <div class="file-management-head">
-      <div>
-        <strong>{{ t('files.title') }}</strong>
-        <p>{{ t('files.hint') }}</p>
-      </div>
+    <div class="settings-inline-toolbar">
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadDirectories">
           <template #icon><RefreshIcon /></template>
@@ -162,7 +167,7 @@ onMounted(() => {
       {{ t('files.warning') }}
     </div>
 
-    <section v-if="runtimeInfo" class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-4">
+    <section v-if="runtimeInfo" class="file-runtime-panel">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
           <strong class="block text-sm text-[var(--vt-text)]">{{ t('files.runtime.title') }}</strong>
@@ -172,34 +177,34 @@ onMounted(() => {
           {{ runtimeInfo.insideWorkspace ? t('files.runtime.insideWorkspace') : t('files.runtime.outsideWorkspace') }}
         </t-tag>
       </div>
-      <div class="mt-4 grid gap-3 md:grid-cols-2">
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+      <div class="file-runtime-grid primary">
+        <div class="file-runtime-cell">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.userData') }}</span>
           <strong class="mt-1 block break-all text-sm text-[var(--vt-text)]">{{ runtimeInfo.userData }}</strong>
         </div>
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+        <div class="file-runtime-cell">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.source') }}</span>
           <strong class="mt-1 block text-sm text-[var(--vt-text)]">{{ t(`files.runtime.sourceValue.${runtimeInfo.source}`) }}</strong>
           <small class="text-[var(--vt-text-muted)]">{{ t(`files.runtime.mode.${runtimeInfo.mode}`) }}</small>
         </div>
       </div>
-      <div class="mt-3 grid gap-2 md:grid-cols-3">
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+      <div class="file-runtime-grid secondary">
+        <div class="file-runtime-cell compact">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.cleanable') }}</span>
           <p class="mt-1 text-sm text-[var(--vt-text)]">{{ formatRuntimeKeys(runtimeInfo.cleanableKeys) }}</p>
         </div>
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+        <div class="file-runtime-cell compact">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.recoverable') }}</span>
           <p class="mt-1 text-sm text-[var(--vt-text)]">{{ formatRuntimeKeys(runtimeInfo.recoverableKeys) }}</p>
         </div>
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-3">
+        <div class="file-runtime-cell compact">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.runtime.protected') }}</span>
           <p class="mt-1 text-sm text-[var(--vt-text)]">{{ formatRuntimeKeys(runtimeInfo.protectedKeys) }}</p>
         </div>
       </div>
     </section>
 
-    <section class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface-muted)] p-4">
+    <section class="file-lifecycle-panel">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
           <strong class="block text-sm text-[var(--vt-text)]">{{ t('files.lifecycle.title') }}</strong>
@@ -222,30 +227,30 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-if="lifecycle" class="mt-4 grid gap-2 md:grid-cols-4">
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+      <div v-if="lifecycle" class="file-lifecycle-stats">
+        <div class="file-lifecycle-stat">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.referenced') }}</span>
           <strong class="mt-1 block text-base text-[var(--vt-text)]">{{ lifecycle.summary.referencedFileCount }}</strong>
           <small class="text-[var(--vt-text-muted)]">{{ formatBytes(lifecycle.summary.referencedBytes) }}</small>
         </div>
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+        <div class="file-lifecycle-stat">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.missing') }}</span>
           <strong class="mt-1 block text-base text-[var(--vt-danger)]">{{ lifecycle.summary.missingReferenceCount }}</strong>
         </div>
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+        <div class="file-lifecycle-stat">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.orphans') }}</span>
           <strong class="mt-1 block text-base text-[var(--vt-text)]">{{ lifecycle.summary.orphanProjectFileCount }}</strong>
           <small class="text-[var(--vt-text-muted)]">{{ formatBytes(lifecycle.summary.orphanBytes) }}</small>
         </div>
-        <div class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+        <div class="file-lifecycle-stat">
           <span class="text-xs text-[var(--vt-text-muted)]">{{ t('files.lifecycle.cacheTemp') }}</span>
           <strong class="mt-1 block text-base text-[var(--vt-text)]">{{ lifecycle.summary.cacheFileCount + lifecycle.summary.tempFileCount }}</strong>
           <small class="text-[var(--vt-text-muted)]">{{ formatBytes(lifecycle.summary.cacheBytes + lifecycle.summary.tempBytes) }}</small>
         </div>
       </div>
 
-      <div v-if="visibleLifecycleIssues.length" class="mt-4 space-y-2">
-        <div v-for="issue in visibleLifecycleIssues" :key="`${issue.type}-${issue.root}-${issue.relativePath}`" class="rounded border border-[var(--vt-border)] bg-[var(--vt-surface)] p-3">
+      <div v-if="visibleLifecycleIssues.length" class="file-lifecycle-issues">
+        <div v-for="issue in visibleLifecycleIssues" :key="`${issue.type}-${issue.root}-${issue.relativePath}`" class="file-lifecycle-issue">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <strong class="text-sm text-[var(--vt-text)]">{{ issueLabel(issue) }}</strong>
             <t-tag size="small" :theme="issue.canDelete ? 'warning' : 'danger'" variant="light">{{ issue.canDelete ? t('files.lifecycle.canClean') : t('files.lifecycle.needFix') }}</t-tag>
@@ -266,20 +271,22 @@ onMounted(() => {
           <t-tag variant="light">{{ t('files.total', { count: group.items.length }) }}</t-tag>
         </div>
 
-        <div class="file-management-grid">
-          <div v-for="directory in group.items" :key="directory.key" class="file-management-card">
-            <div class="file-management-card-head">
+        <div class="file-management-grid settings-row-list">
+          <div v-for="directory in group.items" :key="directory.key" class="settings-row file-management-card">
+            <div class="file-management-card-head settings-row-main">
               <div>
-                <strong>{{ directory.name }}</strong>
-                <small>{{ directory.description }}</small>
+                <span class="settings-row-title">{{ directory.name }}</span>
+                <span class="settings-row-note">{{ directory.path }}</span>
               </div>
               <t-tag :theme="directory.exists ? 'success' : 'warning'" variant="light">
                 {{ directory.exists ? t('files.exists') : t('files.pending') }}
               </t-tag>
             </div>
-            <div class="file-management-path">{{ directory.path }}</div>
-            <div class="file-management-card-foot">
-              <span>{{ directory.autoCreate ? t('files.autoCreate') : t('files.openOnly') }}</span>
+            <div class="settings-row-control file-management-card-foot">
+              <t-button variant="outline" @click="copyDirectoryPath(directory)">
+                <template #icon><CopyIcon /></template>
+                {{ t('files.copyPath') }}
+              </t-button>
               <t-button theme="primary" variant="outline" :loading="openingKey === directory.key" @click="openDirectory(directory)">
                 <template #icon><FolderOpenIcon /></template>
                 {{ t('files.open') }}

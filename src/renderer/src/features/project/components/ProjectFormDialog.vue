@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import {
   PROJECT_IMAGE_QUALITIES,
   PROJECT_SOURCE_TYPES,
+  PROJECT_TEMPLATE_TYPES,
   PROJECT_VIDEO_RATIOS,
 } from '@shared/constants/dictionaries';
 import type {
@@ -11,7 +12,7 @@ import type {
   ProjectManualSummary,
   ProjectModelOption,
   ProjectSavePayload,
-  ProjectSourceType,
+  ProjectTemplateType,
   ProjectSummary,
   ProjectVideoRatio,
 } from '@shared/types/project';
@@ -38,7 +39,8 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const form = reactive<ProjectSavePayload>({
-  sourceType: PROJECT_SOURCE_TYPES.NOVEL,
+  templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
+  sourceType: PROJECT_SOURCE_TYPES.SCRIPT,
   name: '',
   genre: '',
   description: '',
@@ -51,9 +53,8 @@ const form = reactive<ProjectSavePayload>({
   directorManualId: 0,
 });
 
-const sourceTypeOptions = computed<Array<{ label: string; value: ProjectSourceType }>>(() => [
-  { label: t('project.sourceType.novel'), value: PROJECT_SOURCE_TYPES.NOVEL },
-  { label: t('project.sourceType.script'), value: PROJECT_SOURCE_TYPES.SCRIPT },
+const templateTypeOptions = computed<Array<{ label: string; value: ProjectTemplateType }>>(() => [
+  { label: t('project.templateType.aiShortDrama'), value: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA },
 ]);
 
 const selectedVideoModel = computed(() => props.videoModels.find((item) => item.modelId === form.videoModelId) ?? null);
@@ -61,7 +62,8 @@ const videoModeOptions = computed(() => selectedVideoModel.value?.modes ?? []);
 
 function resetForm(): void {
   form.id = undefined;
-  form.sourceType = PROJECT_SOURCE_TYPES.NOVEL;
+  form.templateType = PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA;
+  form.sourceType = PROJECT_SOURCE_TYPES.SCRIPT;
   form.name = '';
   form.genre = '';
   form.description = '';
@@ -83,7 +85,8 @@ watch(
 
     if (props.mode === 'edit' && props.project) {
       form.id = props.project.id;
-      form.sourceType = props.project.sourceType;
+      form.templateType = props.project.templateType;
+      form.sourceType = PROJECT_SOURCE_TYPES.SCRIPT;
       form.name = props.project.name;
       form.genre = props.project.genre;
       form.description = props.project.description;
@@ -131,7 +134,7 @@ function submit(): void {
     return;
   }
 
-  emit('submit', { ...form });
+  emit('submit', { ...form, templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA, sourceType: PROJECT_SOURCE_TYPES.SCRIPT });
 }
 </script>
 
@@ -147,9 +150,9 @@ function submit(): void {
   >
     <t-form class="project-form" layout="vertical">
       <div class="project-form-grid">
-        <t-form-item :label="t('project.form.sourceType')">
-          <t-select v-model="form.sourceType">
-            <t-option v-for="item in sourceTypeOptions" :key="item.value" :value="item.value" :label="item.label" />
+        <t-form-item :label="t('project.form.templateType')">
+          <t-select v-model="form.templateType">
+            <t-option v-for="item in templateTypeOptions" :key="item.value" :value="item.value" :label="item.label" />
           </t-select>
         </t-form-item>
 

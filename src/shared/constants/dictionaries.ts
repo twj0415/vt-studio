@@ -6,6 +6,13 @@ export const PROJECT_SOURCE_TYPES = {
 export const PROJECT_SOURCE_TYPE_VALUES = Object.values(PROJECT_SOURCE_TYPES);
 export type ProjectSourceType = (typeof PROJECT_SOURCE_TYPE_VALUES)[number];
 
+export const PROJECT_TEMPLATE_TYPES = {
+  AI_SHORT_DRAMA: 'aiShortDrama',
+} as const;
+
+export const PROJECT_TEMPLATE_TYPE_VALUES = Object.values(PROJECT_TEMPLATE_TYPES);
+export type ProjectTemplateType = (typeof PROJECT_TEMPLATE_TYPE_VALUES)[number];
+
 export const PROJECT_IMAGE_QUALITIES = {
   ONE_K: '1K',
   TWO_K: '2K',
@@ -242,6 +249,7 @@ export const PRODUCTION_NODE_TYPES = [
   'storyboardTable',
   'storyboard',
   'workbench',
+  'export',
 ] as const;
 export type ProductionNodeType = (typeof PRODUCTION_NODE_TYPES)[number];
 

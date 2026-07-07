@@ -71,28 +71,28 @@ const SUB_AGENT_CONFIGS: SubAgentConfig[] = [
   {
     kind: 'storySkeleton',
     toolName: 'run_sub_agent_storySkeleton',
-    title: '故事骨架子 Agent',
+    title: '故事大纲生成',
     modelKey: 'scriptAgent:storySkeletonAgent',
     requiredXmlTag: 'storySkeleton',
   },
   {
     kind: 'adaptationStrategy',
     toolName: 'run_sub_agent_adaptationStrategy',
-    title: '改编策略子 Agent',
+    title: '改编方案生成',
     modelKey: 'scriptAgent:adaptationStrategyAgent',
     requiredXmlTag: 'adaptationStrategy',
   },
   {
     kind: 'script',
     toolName: 'run_sub_agent_script',
-    title: '剧本生成子 Agent',
+    title: '成稿生成',
     modelKey: 'scriptAgent:scriptAgent',
     requiredXmlTag: 'scriptItem',
   },
   {
     kind: 'supervision',
     toolName: 'run_supervision_agent',
-    title: '监督层子 Agent',
+    title: '监督审核',
     modelKey: 'scriptAgent:supervisionAgent',
   },
 ];
@@ -137,10 +137,10 @@ async function readSkillBundle(attribution: string, query: string): Promise<stri
 
 function buildDecisionInstructions(): string {
   return [
-    '你是剧本 Agent 的决策层。',
+    '你是改编助手的决策层。',
     '你必须先判断用户目标，再按需调用上下文工具或子 Agent 工具。',
-    '可用子 Agent：run_sub_agent_storySkeleton、run_sub_agent_adaptationStrategy、run_sub_agent_script、run_supervision_agent。',
-    '故事骨架、改编策略、剧本正文的结构化产物必须由对应子 Agent 输出 XML；不要在普通说明里手写伪 XML。',
+    '可用执行步骤：run_sub_agent_storySkeleton、run_sub_agent_adaptationStrategy、run_sub_agent_script、run_supervision_agent。',
+    '故事大纲、改编方案、成稿正文的结构化产物必须由对应执行步骤输出 XML；不要在普通说明里手写伪 XML。',
     '如果任务只需要问答或分析，可以先调用只读上下文工具后直接回复。',
     '所有项目事实必须来自工具或用户输入，不要编造章节、事件或已有剧本。',
   ].join('\n');
@@ -148,10 +148,10 @@ function buildDecisionInstructions(): string {
 
 function buildSubAgentInstructions(config: SubAgentConfig): string {
   if (config.kind === 'storySkeleton') {
-    return '你的输出必须包含且只通过 <storySkeleton>...</storySkeleton> 承载最终故事骨架。';
+    return '你的输出必须包含且只通过 <storySkeleton>...</storySkeleton> 承载最终故事大纲。';
   }
   if (config.kind === 'adaptationStrategy') {
-    return '你的输出必须包含且只通过 <adaptationStrategy>...</adaptationStrategy> 承载最终改编策略。';
+    return '你的输出必须包含且只通过 <adaptationStrategy>...</adaptationStrategy> 承载最终改编方案。';
   }
   if (config.kind === 'script') {
     return '你的输出必须包含一个或多个 <scriptItem name="...">...</scriptItem>；如有稳定 episodeKey 可写入 episodeKey 属性。';
@@ -165,9 +165,9 @@ function buildSubAgentUserMessage(input: SubAgentToolInput): string {
     `任务：${normalizeTask(input.task)}`,
     input.requirements ? `补充要求：${input.requirements}` : '',
     input.chapterIndexes?.length ? `重点章节序号：${input.chapterIndexes.join(', ')}` : '',
-    input.scriptIds?.length ? `相关剧本 ID：${input.scriptIds.join(', ')}` : '',
+    input.scriptIds?.length ? `相关成稿 ID：${input.scriptIds.join(', ')}` : '',
     input.episodeKey ? `目标 episodeKey：${input.episodeKey}` : '',
-    input.scriptName ? `目标剧本名称：${input.scriptName}` : '',
+    input.scriptName ? `目标成稿名称：${input.scriptName}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -287,15 +287,15 @@ function createSubAgentTool(projectId: number, config: SubAgentConfig, options: 
           items: {
             oneOf: [{ type: 'number' }, { type: 'string' }],
           },
-          description: '需要重点参考的已有剧本 ID。',
+          description: '需要重点参考的已有成稿 ID。',
         },
         episodeKey: {
           type: 'string',
-          description: '目标剧本 episodeKey，可选。',
+          description: '目标成稿 episodeKey，可选。',
         },
         scriptName: {
           type: 'string',
-          description: '目标剧本名称，可选。',
+          description: '目标成稿名称，可选。',
         },
         requirements: {
           type: 'string',

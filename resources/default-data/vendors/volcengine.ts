@@ -22,6 +22,8 @@ interface TextModel {
   think: boolean;
 }
 
+type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+
 interface ImageModel {
   name: string;
   modelName: string;
@@ -289,16 +291,22 @@ const getBaseUrl = () => vendor.inputValues.baseUrl.replace(/\/+$/, "");
 // 适配器函数
 // ============================================================
 
-const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3) => {
+const normalizeReasoningEffort = (value: ReasoningEffort | undefined, fallback: ReasoningEffort): ReasoningEffort => {
+  return value === "none" || value === "low" || value === "medium" || value === "high" || value === "xhigh" ? value : fallback;
+};
+
+const legacyReasoningEffort = (thinkLevel: 0 | 1 | 2 | 3): ReasoningEffort => {
+  if (thinkLevel === 1) return "low";
+  if (thinkLevel === 2) return "medium";
+  if (thinkLevel === 3) return "high";
+  return "low";
+};
+
+const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3, reasoningEffort?: ReasoningEffort) => {
   if (!vendor.inputValues.apiKey) throw new Error("缺少API Key");
   const apiKey = vendor.inputValues.apiKey.replace(/^Bearer\s+/i, "");
-
-  const effortMap: Record<number, string> = {
-    0: "minimal",
-    1: "low",
-    2: "medium",
-    3: "high",
-  };
+  const effort = normalizeReasoningEffort(reasoningEffort, think ? legacyReasoningEffort(thinkLevel) : "none");
+  const enableThinking = model.think && think && effort !== "none";
 
   return createOpenAICompatible({
     name: "volcengine",
@@ -306,13 +314,15 @@ const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3
     apiKey,
     fetch: async (url: string, options?: RequestInit) => {
       const rawBody = JSON.parse((options?.body as string) ?? "{}");
-      const modifiedBody = {
-        ...rawBody,
-        thinking: {
-          type: "enabled",
-        },
-        reasoning_effort: effortMap[thinkLevel],
-      };
+      const modifiedBody = enableThinking
+        ? {
+          ...rawBody,
+          thinking: {
+            type: "enabled",
+          },
+          reasoning_effort: effort,
+        }
+        : rawBody;
       return await fetch(url, {
         ...options,
         body: JSON.stringify(modifiedBody),

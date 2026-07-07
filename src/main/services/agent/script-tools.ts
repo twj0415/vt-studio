@@ -231,7 +231,7 @@ export function getScriptAgentPlanData(payload: ScriptAgentToolPlanDataPayload):
 
 export function getScriptAgentScriptContent(payload: ScriptAgentToolScriptContentPayload): ScriptAgentToolScriptContentResult {
   const project = assertScriptAgentNovelProject(payload.projectId);
-  const scriptIds = normalizeIds(payload.scriptIds, '剧本 ID');
+  const scriptIds = normalizeIds(payload.scriptIds, '成稿 ID');
   const limit = normalizeLimit(payload.limit);
   const placeholders = scriptIds.map(() => '?').join(', ');
   const rows = getDatabase()
@@ -325,7 +325,7 @@ export function createScriptAgentTools(projectId: number): ScriptAgentToolSet {
         ),
     }),
     get_planData: tool<PlanDataToolInput, unknown>({
-      description: '读取当前项目剧本 Agent 工作区数据。key 可为 all、storySkeleton、adaptationStrategy、scripts；兼容旧 key script。',
+      description: '读取当前项目改编助手工作区数据。key 可为 all、storySkeleton、adaptationStrategy、scripts；兼容旧 key script。',
       inputSchema: jsonSchema<PlanDataToolInput>({
         type: 'object',
         properties: {
@@ -346,7 +346,7 @@ export function createScriptAgentTools(projectId: number): ScriptAgentToolSet {
         ),
     }),
     get_script_content: tool<ScriptContentToolInput, unknown>({
-      description: '按剧本 ID 读取当前项目已有剧本内容。输入 scriptIds，也兼容参考项目 ids。',
+      description: '按成稿 ID 读取当前项目已有成稿内容。输入 scriptIds，也兼容参考项目 ids。',
       inputSchema: jsonSchema<ScriptContentToolInput>({
         type: 'object',
         properties: {
@@ -355,7 +355,7 @@ export function createScriptAgentTools(projectId: number): ScriptAgentToolSet {
             items: {
               oneOf: [{ type: 'number' }, { type: 'string' }],
             },
-            description: '要读取的剧本 ID 数组。',
+            description: '要读取的成稿 ID 数组。',
           },
           ids: {
             type: 'array',
@@ -376,7 +376,7 @@ export function createScriptAgentTools(projectId: number): ScriptAgentToolSet {
         runScriptAgentTool(() =>
           getScriptAgentScriptContent({
             projectId,
-            scriptIds: normalizeToolIds(input.scriptIds ?? input.ids, '剧本 ID'),
+            scriptIds: normalizeToolIds(input.scriptIds ?? input.ids, '成稿 ID'),
             limit: input.limit,
           }),
         ),

@@ -27,6 +27,8 @@ interface TextModel {
   think: boolean;
 }
 
+type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+
 interface ImageModel {
   name: string;
   modelName: string;
@@ -113,6 +115,8 @@ type AtlasVideoModelKind =
 // ============================================================
 
 declare const axios: any;
+declare const FormData: any;
+declare const Buffer: any;
 declare const logger: (msg: string) => void;
 declare const urlToBase64: (url: string) => Promise<string>;
 declare const pollTask: (fn: () => Promise<PollResult>, interval?: number, timeout?: number) => Promise<PollResult>;
@@ -219,13 +223,17 @@ const getMediaBaseUrl = () => vendor.inputValues.mediaBaseUrl.replace(/\/+$/, ""
 
 const joinUrl = (base: string, path: string) => `${base}${path.startsWith("/") ? "" : "/"}${path}`;
 
-const getHeaders = () => {
+const getAuthHeaders = () => {
   if (!vendor.inputValues.apiKey) throw new Error("缺少 API Key");
   return {
-    "Content-Type": "application/json",
     Authorization: `Bearer ${vendor.inputValues.apiKey.replace(/^Bearer\s+/i, "")}`,
   };
 };
+
+const getHeaders = () => ({
+  "Content-Type": "application/json",
+  ...getAuthHeaders(),
+});
 
 const readByPath = (obj: any, path: string): any => {
   if (!obj || !path) return undefined;
@@ -249,6 +257,7 @@ const extractUrl = (data: any): string | undefined => {
   return (
     (Array.isArray(readByPath(data, "data.outputs")) ? readByPath(data, "data.outputs")[0] : undefined) ||
     (Array.isArray(readByPath(data, "outputs")) ? readByPath(data, "outputs")[0] : undefined) ||
+    (Array.isArray(readByPath(data, "data")) ? readByPath(data, "data")[0]?.url : undefined) ||
     readByPath(data, "url") ||
     readByPath(data, "video_url") ||
     readByPath(data, "image_url") ||
@@ -293,16 +302,41 @@ const withNetworkRetry = async <T>(fn: () => Promise<T>, maxRetry = 3, waitMs = 
   throw lastErr;
 };
 
-const resolveAtlasImageModelName = (modelName: string, hasImageRefs: boolean): string => {
-  if (!hasImageRefs) return modelName;
+const ATLAS_IMAGE_MODEL_ALIASES: Record<string, string> = {
+  "gpt-image-2": "openai/gpt-image-2/text-to-image",
+  "gptimage2": "openai/gpt-image-2/text-to-image",
+  "gpt-image2": "openai/gpt-image-2/text-to-image",
+  "gpt_image_2": "openai/gpt-image-2/text-to-image",
+};
 
-  switch (modelName) {
+const isAtlasCloudMediaBaseUrl = (): boolean => {
+  try {
+    return new URL(getMediaBaseUrl()).hostname.includes("atlascloud.ai");
+  } catch {
+    return false;
+  }
+};
+
+const isAtlasCloudImageModelName = (modelName: string): boolean => modelName.includes("/");
+
+const shouldUseAtlasCloudImageApi = (modelName: string): boolean => isAtlasCloudImageModelName(modelName) || isAtlasCloudMediaBaseUrl();
+
+const normalizeAtlasImageModelName = (modelName: string): string => {
+  const normalized = modelName.trim();
+  return ATLAS_IMAGE_MODEL_ALIASES[normalized] || normalized;
+};
+
+const resolveAtlasImageModelName = (modelName: string, hasImageRefs: boolean): string => {
+  const normalizedModelName = normalizeAtlasImageModelName(modelName);
+  if (!hasImageRefs) return normalizedModelName;
+
+  switch (normalizedModelName) {
     case "google/nano-banana-pro/text-to-image":
       return "google/nano-banana-pro/edit";
     case "google/nano-banana-2/text-to-image":
       return "google/nano-banana-2/edit";
     default:
-      return modelName;
+      return normalizedModelName;
   }
 };
 
@@ -328,6 +362,107 @@ const normalizeResolution = (value: unknown, allowed: string[], fallback: string
   if (/720/.test(lower)) return allowed.find((item) => /720/i.test(item)) || fallback;
   if (/480/.test(lower)) return allowed.find((item) => /480/i.test(item)) || fallback;
   return fallback;
+};
+
+const getOpenAiCompatibleImageSize = (aspectRatio: string): string => {
+  if (aspectRatio === "16:9" || aspectRatio === "3:2") return "1536x1024";
+  if (aspectRatio === "9:16" || aspectRatio === "2:3") return "1024x1536";
+  return "1024x1024";
+};
+
+const splitBase64Media = (value: string, fallbackMime = "image/png"): { mime: string; data: string } => {
+  const normalized = value.trim();
+  const dataUrlMatch = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(normalized);
+  return {
+    mime: (dataUrlMatch?.[1] || fallbackMime).toLowerCase(),
+    data: (dataUrlMatch?.[2] ?? normalized).replace(/\s/g, ""),
+  };
+};
+
+const getImageExtension = (mime: string): string => {
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+  if (mime.includes("webp")) return "webp";
+  return "png";
+};
+
+const requestOpenAiCompatibleImage = async (config: ImageConfig, model: ImageModel, imageRefs: string[]): Promise<string> => {
+  if (imageRefs.length === 0) {
+    const url = joinUrl(getChatBaseUrl(), "/images/generations");
+    const body = {
+      model: model.modelName,
+      prompt: config.prompt || "",
+      n: 1,
+      size: getOpenAiCompatibleImageSize(config.aspectRatio || "1:1"),
+    };
+
+    logger(`[OpenAI Compatible 图片] 提交文生图: ${model.modelName}`);
+    try {
+      const response = await axios.post(url, body, { headers: getHeaders() });
+      const data = response.data;
+      const b64 = extractB64(data);
+      if (b64) return b64;
+      const imageUrl = extractUrl(data);
+      if (imageUrl) return await urlToBase64(imageUrl);
+      throw new Error(`图片生成失败：未获取到图片结果。原始响应：${JSON.stringify(data).slice(0, 500)}`);
+    } catch (error) {
+      throw formatHttpError(error, `OpenAI Compatible 图片接口调用失败 ${url}`);
+    }
+  }
+
+  const url = joinUrl(getChatBaseUrl(), "/images/edits");
+  const form = new FormData();
+  form.append("model", model.modelName);
+  form.append("prompt", config.prompt || "");
+  form.append("n", "1");
+  form.append("size", getOpenAiCompatibleImageSize(config.aspectRatio || "1:1"));
+
+  imageRefs.forEach((imageRef, index) => {
+    const media = splitBase64Media(imageRef);
+    form.append("image[]", Buffer.from(media.data, "base64"), {
+      filename: `reference-${index + 1}.${getImageExtension(media.mime)}`,
+      contentType: media.mime,
+    });
+  });
+
+  logger(`[OpenAI Compatible 图片] 提交图生图: ${model.modelName}, refs=${imageRefs.length}`);
+  try {
+    const response = await axios.post(url, form, {
+      headers: {
+        ...getAuthHeaders(),
+        ...form.getHeaders(),
+      },
+    });
+    const data = response.data;
+    const b64 = extractB64(data);
+    if (b64) return b64;
+    const imageUrl = extractUrl(data);
+    if (imageUrl) return await urlToBase64(imageUrl);
+    throw new Error(`图片生成失败：未获取到图片结果。原始响应：${JSON.stringify(data).slice(0, 500)}`);
+  } catch (error) {
+    throw formatHttpError(error, `OpenAI Compatible 图片编辑接口调用失败 ${url}`);
+  }
+};
+
+const getHttpErrorHint = (status: unknown, detail: string | undefined, summary: string): string => {
+  const text = `${summary} ${detail || ""}`;
+  if (
+    status === 403 &&
+    /Image generation is not enabled for this group|permission_error/i.test(text) &&
+    /(图片|images\/generations|images\/edits|generateImage)/i.test(text)
+  ) {
+    return "当前 API Key/Group 未开通图片生成权限；请在中转服务后台启用图片生成，或换用已开通图片能力的 Key、模型或供应商";
+  }
+
+  return "";
+};
+
+const formatHttpError = (error: any, summary: string): Error => {
+  const status = error?.response?.status;
+  const data = error?.response?.data;
+  const detail = typeof data === "string" ? data : data ? JSON.stringify(data) : error?.message;
+  const truncatedDetail = detail ? String(detail).slice(0, 300) : "";
+  const hint = getHttpErrorHint(status, truncatedDetail, summary);
+  return new Error(`${summary}${status ? `：HTTP ${status}` : ""}${truncatedDetail ? `，${truncatedDetail}` : ""}${hint ? `。${hint}` : ""}`);
 };
 
 const getReferenceLimit = (
@@ -421,10 +556,22 @@ const buildAtlasVideoPayload = (config: VideoConfig, model: VideoModel) => {
 // 适配器函数
 // ============================================================
 
-const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3) => {
+const normalizeReasoningEffort = (value: ReasoningEffort | undefined, fallback: ReasoningEffort): ReasoningEffort => {
+  return value === "none" || value === "low" || value === "medium" || value === "high" || value === "xhigh" ? value : fallback;
+};
+
+const legacyReasoningEffort = (thinkLevel: 0 | 1 | 2 | 3): ReasoningEffort => {
+  if (thinkLevel === 1) return "low";
+  if (thinkLevel === 2) return "medium";
+  if (thinkLevel === 3) return "high";
+  return "low";
+};
+
+const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3, reasoningEffort?: ReasoningEffort) => {
   if (!vendor.inputValues.apiKey) throw new Error("缺少 API Key");
   const apiKey = vendor.inputValues.apiKey.replace(/^Bearer\s+/i, "");
-  const effortMap: Record<number, string> = { 0: "minimal", 1: "low", 2: "medium", 3: "high" };
+  const effort = normalizeReasoningEffort(reasoningEffort, think ? legacyReasoningEffort(thinkLevel) : "none");
+  const enableThinking = model.think && think && effort !== "none";
 
   return createOpenAICompatible({
     name: "atlascloud",
@@ -432,11 +579,11 @@ const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3
     apiKey,
     fetch: async (url: string, options?: RequestInit) => {
       const rawBody = JSON.parse((options?.body as string) ?? "{}");
-      const body = think
+      const body = enableThinking
         ? {
           ...rawBody,
           thinking: { type: "enabled" },
-          reasoning_effort: effortMap[thinkLevel],
+          reasoning_effort: effort,
         }
         : rawBody;
       return await fetch(url, { ...options, body: JSON.stringify(body) });
@@ -446,13 +593,17 @@ const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3
 
 const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<string> => {
   const headers = getHeaders();
+  const imageRefs = (config.referenceList || []).map((ref) => ref.base64).filter(Boolean);
+  if (!shouldUseAtlasCloudImageApi(model.modelName)) {
+    return await requestOpenAiCompatibleImage(config, model, imageRefs);
+  }
+
   const url = joinUrl(getMediaBaseUrl(), "/model/generateImage");
   const sizeToResolution: Record<ImageConfig["size"], string> = {
     "1K": "1k",
     "2K": "2k",
     "4K": "4k",
   };
-  const imageRefs = (config.referenceList || []).map((ref) => ref.base64).filter(Boolean);
   const resolvedModelName = resolveAtlasImageModelName(model.modelName, imageRefs.length > 0);
   const isNanoModel = /^google\/nano-banana-(pro|2)\//.test(resolvedModelName);
   const supportsImageConditioning = /^(openai\/gpt-image-2\/text-to-image|google\/nano-banana-(pro|2)\/edit)$/.test(resolvedModelName);
@@ -470,7 +621,12 @@ const imageRequest = async (config: ImageConfig, model: ImageModel): Promise<str
   }
 
   logger(`[AtlasCloud 图片] 提交任务: ${model.modelName} -> ${resolvedModelName}, refs=${imageRefs.length}`);
-  const submitResp = await axios.post(url, body, { headers });
+  let submitResp: any;
+  try {
+    submitResp = await axios.post(url, body, { headers });
+  } catch (error) {
+    throw formatHttpError(error, `AtlasCloud 图片接口调用失败 ${url}`);
+  }
   const submitData = submitResp.data;
 
   // 同步返回（直接拿图）

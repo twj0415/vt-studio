@@ -1,4 +1,5 @@
 import type { AssetTaskStatus } from './assets';
+import type { ScriptExtractAssetsResult } from './script';
 import {
   DEPENDENCY_STATUSES,
   DEPENDENCY_STATUS_VALUES,
@@ -58,6 +59,14 @@ export interface ProductionProjectPayload {
 export interface ProductionScriptPayload extends ProductionProjectPayload {
   scriptId: number;
 }
+
+export interface ProductionContentPayload extends ProductionProjectPayload {
+  contentId: number;
+}
+
+export interface ProductionExtractResourcesPayload extends ProductionContentPayload {}
+
+export interface ProductionExtractResourcesResult extends ScriptExtractAssetsResult {}
 
 export interface ProductionFlowPosition {
   x: number;

@@ -51,6 +51,42 @@ export interface ModelRequestDiagnosticError {
   msgKey?: string;
 }
 
+export type ModelRequestTraceData =
+  | null
+  | boolean
+  | number
+  | string
+  | ModelRequestTraceData[]
+  | { [key: string]: ModelRequestTraceData };
+
+export interface ModelRequestTraceSection {
+  title: string;
+  data: ModelRequestTraceData;
+  recordedAt: string;
+}
+
+export interface ModelRequestHttpTrace {
+  id: string;
+  url: string;
+  method: string;
+  status: number | null;
+  ok: boolean | null;
+  durationMs: number | null;
+  requestHeaders?: Record<string, string>;
+  requestBody?: ModelRequestTraceData;
+  responseHeaders?: Record<string, string>;
+  responseBody?: ModelRequestTraceData;
+  error?: ModelRequestDiagnosticError | null;
+  recordedAt: string;
+}
+
+export interface ModelRequestDiagnosticTrace {
+  input: ModelRequestTraceSection | null;
+  normalizedInput: ModelRequestTraceSection | null;
+  output: ModelRequestTraceSection | null;
+  http: ModelRequestHttpTrace[];
+}
+
 export interface ModelRequestDiagnosticItem {
   requestId: string;
   taskId: number | null;
@@ -71,6 +107,7 @@ export interface ModelRequestDiagnosticItem {
   lastRetryAt: string | null;
   lastRetryWaitMs: number | null;
   error: ModelRequestDiagnosticError | null;
+  trace: ModelRequestDiagnosticTrace | null;
 }
 
 export interface RequestDiagnosticsResult {

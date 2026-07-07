@@ -5,6 +5,7 @@ import {
   VIDEO_REFERENCE_MODE_PREFIX_VALUES,
   VIDEO_SIMPLE_MODE_VALUES,
 } from '@shared/constants/dictionaries';
+import { getTextReasoningCapability } from '@shared/constants/model-capabilities';
 import { createError } from '../result';
 import type { ImageMode, VendorInput, VendorManifest, VendorModelConfig, VideoMode, VideoReferenceMode } from './types';
 
@@ -86,7 +87,17 @@ function normalizeModel(value: unknown): VendorModelConfig {
   };
 
   if (type === 'text') {
-    return { ...base, type, think: Boolean(value.think) };
+    const think = Boolean(value.think);
+    return {
+      ...base,
+      type,
+      think,
+      reasoning: getTextReasoningCapability({
+        modelName: base.modelName,
+        think,
+        reasoning: isRecord(value.reasoning) ? value.reasoning : undefined,
+      }),
+    };
   }
 
   if (type === 'image') {

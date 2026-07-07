@@ -44,11 +44,11 @@ const agentConfigPath = 'src/renderer/src/features/settings/components/AgentConf
 const requestDiagnosticsPath = 'src/renderer/src/features/settings/components/RequestDiagnostics.vue';
 const stylePath = 'src/renderer/src/styles/index.scss';
 
-for (const expected of ['<t-tooltip :content="t(\'layout.brandHome\')"', '<t-tooltip v-for="menu in localizedGlobalMenus"', '<t-tooltip v-if="showSettingsShortcut"', 'topbar-info', 'projectContextTooltip']) {
+for (const expected of ['<t-tooltip :content="t(\'layout.brandHome\')"', '<t-tooltip v-for="menu in localizedGlobalMenus"', 'class="nav-item-label"']) {
   assertIncludes(workbenchPath, expected);
 }
 
-for (const unexpected of [':title="t(\'layout.brandHome\')"', ':title="menu.title"', ':title="t(\'common.settings\')"', ':title="t(\'layout.backToProjects\')"']) {
+for (const unexpected of [':title="t(\'layout.brandHome\')"', ':title="menu.title"', ':title="t(\'common.settings\')"', ':title="t(\'layout.backToProjects\')"', 'class="topbar"', 'topbar-info', 'showSettingsShortcut', 'projectContextTooltip', 'InfoCircleIcon']) {
   assertNotIncludes(workbenchPath, unexpected);
 }
 
@@ -69,8 +69,12 @@ assertNotIncludes(modelServicePath, '<AgentConfig ref="agentConfigRef" />');
 assertIncludes(agentConfigPath, '<t-button class="agent-advanced-toggle"');
 assertIncludes(requestDiagnosticsPath, '<t-tooltip :content="item.path">');
 
-for (const expected of ['.settings-layout', '.settings-nav-panel', '.settings-nav-link.t-button', '.topbar-info', '.production-track-icon-action']) {
+for (const expected of ['.settings-layout', '.settings-nav-panel', '.settings-nav-link.t-button', '.production-track-icon-action']) {
   assertIncludes(stylePath, expected);
+}
+
+for (const unexpected of ['.topbar-info', '.topbar-icon-action']) {
+  assertNotIncludes(stylePath, unexpected);
 }
 
 const vueFiles = listVueFiles(join(root, 'src/renderer/src'));

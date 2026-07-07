@@ -36,6 +36,8 @@ import {
   type ProductionDerivedAssetDeletePayload,
   type ProductionDerivedAssetPollResult,
   type ProductionDerivedAssetSavePayload,
+  type ProductionExtractResourcesPayload,
+  type ProductionExtractResourcesResult,
   type ProductionGenerateAcceptedResult,
   type ProductionGenerateDerivedAssetsPayload,
   type ProductionGenerateStoryboardsPayload,
@@ -90,6 +92,7 @@ import { formatManualPromptSection, readManualPromptBundle, toManualPromptSnapsh
 import { getBusinessSettings } from '../settings/business-settings';
 import { resolveModelPromptTemplate } from '../settings/model-prompt';
 import { getEffectivePromptByType } from '../settings/prompt';
+import { extractScriptAssets } from '../script';
 import { stripThink } from '../socket/stripThink';
 import { createTask, failTask, isTaskCancelled, succeedTask } from '../task';
 import {
@@ -432,6 +435,27 @@ function assertProductionContext(payload: ProductionScriptPayload): { project: P
     project: assertProject(projectId),
     script: assertScript(projectId, scriptId),
   };
+}
+
+export function extractProductionResources(payload: ProductionExtractResourcesPayload): ProductionExtractResourcesResult {
+  const projectId = normalizeProjectId(payload.projectId);
+  const contentId = Number(payload.contentId);
+  if (!Number.isInteger(contentId) || contentId <= 0) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '内容 ID 无效');
+  }
+  assertProject(projectId);
+  try {
+    assertScript(projectId, contentId);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) {
+      throw createError(VT_STATUS.NOT_FOUND, '内容不存在');
+    }
+    throw error;
+  }
+  return extractScriptAssets({
+    projectId,
+    scriptIds: [contentId],
+  });
 }
 
 function assertScriptEditableForAgent(projectId: number, scriptId: number): void {

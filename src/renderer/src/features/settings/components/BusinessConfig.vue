@@ -118,11 +118,7 @@ onMounted(loadConfig);
 
 <template>
   <section class="business-config-section">
-    <div class="business-config-head">
-      <div>
-        <strong>{{ t('settings.businessConfig.title') }}</strong>
-        <p>{{ t('settings.businessConfig.hint') }}</p>
-      </div>
+    <div class="settings-inline-toolbar">
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadConfig">
           <template #icon><RefreshIcon /></template>
@@ -139,34 +135,62 @@ onMounted(loadConfig);
       </div>
     </div>
 
-    <t-form class="business-config-form" layout="vertical">
-      <t-form-item :label="t('settings.businessConfig.field.chapterReg')">
-        <t-textarea v-model="form.chapterReg" :autosize="{ minRows: 2, maxRows: 4 }" :placeholder="t('settings.businessConfig.field.chapterRegPlaceholder')" />
-      </t-form-item>
+    <t-form class="business-config-form settings-row-list" layout="vertical">
+      <div class="settings-row business-config-textarea-row">
+        <div>
+          <span class="settings-row-title">{{ t('settings.businessConfig.field.chapterReg') }}</span>
+        </div>
+        <div class="settings-row-control">
+          <t-textarea v-model="form.chapterReg" :autosize="{ minRows: 2, maxRows: 4 }" :placeholder="t('settings.businessConfig.field.chapterRegPlaceholder')" />
+        </div>
+      </div>
 
-      <div class="business-config-grid">
-        <t-form-item :label="t('settings.businessConfig.field.requestTimeoutSeconds')">
+      <div class="settings-row">
+        <div>
+          <span class="settings-row-title">{{ t('settings.businessConfig.field.requestTimeoutSeconds') }}</span>
+        </div>
+        <div class="settings-row-control">
           <t-input v-model="form.requestTimeoutSeconds" />
-        </t-form-item>
+        </div>
+      </div>
 
-        <t-form-item :label="t('settings.businessConfig.field.canvasWheelMode')">
+      <div class="settings-row">
+        <div>
+          <span class="settings-row-title">{{ t('settings.businessConfig.field.canvasWheelMode') }}</span>
+        </div>
+        <div class="settings-row-control">
           <t-radio-group v-model="form.canvasWheelMode" variant="default-filled">
             <t-radio-button value="zoom">{{ t('settings.businessConfig.wheelMode.zoom') }}</t-radio-button>
             <t-radio-button value="scroll">{{ t('settings.businessConfig.wheelMode.scroll') }}</t-radio-button>
           </t-radio-group>
-        </t-form-item>
+        </div>
+      </div>
 
-        <t-form-item :label="t('settings.businessConfig.field.showInteractionState')">
+      <div class="settings-row">
+        <div>
+          <span class="settings-row-title">{{ t('settings.businessConfig.field.showInteractionState') }}</span>
+        </div>
+        <div class="settings-row-control">
           <t-switch v-model="form.showInteractionState" />
-        </t-form-item>
+        </div>
+      </div>
 
-        <t-form-item :label="t('settings.businessConfig.field.assetsBatchGenerateSize')">
+      <div class="settings-row">
+        <div>
+          <span class="settings-row-title">{{ t('settings.businessConfig.field.assetsBatchGenerateSize') }}</span>
+        </div>
+        <div class="settings-row-control">
           <t-input v-model="form.assetsBatchGenerateSize" />
-        </t-form-item>
+        </div>
+      </div>
 
-        <t-form-item :label="t('settings.businessConfig.field.scriptEpisodeLength')">
+      <div class="settings-row">
+        <div>
+          <span class="settings-row-title">{{ t('settings.businessConfig.field.scriptEpisodeLength') }}</span>
+        </div>
+        <div class="settings-row-control">
           <t-input v-model="form.scriptEpisodeLength" />
-        </t-form-item>
+        </div>
       </div>
     </t-form>
   </section>

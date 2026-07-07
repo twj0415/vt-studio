@@ -4,6 +4,7 @@ import type { VtStudioApi } from '@shared/contracts/preload';
 const api: VtStudioApi = {
   app: {
     getInfo: () => ipcRenderer.invoke('app:get-info'),
+    reportRendererError: (payload) => ipcRenderer.invoke('app:renderer-error', payload),
   },
   shell: {
     listExternalLinks: () => ipcRenderer.invoke('shell:list-external-links'),
@@ -118,6 +119,7 @@ const api: VtStudioApi = {
   production: {
     getWorkspace: (payload) => ipcRenderer.invoke('production:workspace:get', payload),
     saveWorkspace: (payload) => ipcRenderer.invoke('production:workspace:save', payload),
+    extractResources: (payload) => ipcRenderer.invoke('production:resources:extract', payload),
     agent: {
       getTools: () => ipcRenderer.invoke('production:agent:tools'),
       getContext: (payload) => ipcRenderer.invoke('production:agent:context', payload),
@@ -157,6 +159,10 @@ const api: VtStudioApi = {
       save: (payload) => ipcRenderer.invoke('settings:api:save', payload),
       delete: (payload) => ipcRenderer.invoke('settings:api:delete', payload),
       test: (payload) => ipcRenderer.invoke('settings:api:test', payload),
+    },
+    modelTest: {
+      openFileLocation: (payload) => ipcRenderer.invoke('settings:model-test:open-file-location', payload),
+      saveFileAs: (payload) => ipcRenderer.invoke('settings:model-test:save-file-as', payload),
     },
     resource: {
       get: () => ipcRenderer.invoke('settings:resource:get'),

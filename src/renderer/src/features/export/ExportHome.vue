@@ -4,6 +4,9 @@ import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { CheckIcon, ErrorCircleIcon, FileExportIcon, FolderOpenIcon, RefreshIcon, SearchIcon } from 'tdesign-icons-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import WorkflowNextStepHint from '@renderer/features/shared/WorkflowNextStepHint.vue';
 import { useVtRequest } from '@renderer/composables/useVtRequest';
 import { useAppStore } from '@renderer/stores/app';
@@ -405,7 +408,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="export-page">
     <WorkflowNextStepHint hint-key="export" next-route-name="project-overview" />
 
     <section class="rounded-lg border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-5 shadow-sm">
@@ -420,20 +423,20 @@ onMounted(() => {
           <strong class="truncate text-base text-[var(--vt-text-primary)]">{{ currentProject?.name ?? t('common.noProject') }}</strong>
           <p class="m-0 text-sm text-[var(--vt-text-secondary)]">{{ t('exportCenter.projectHint') }}</p>
           <div class="flex flex-wrap gap-2">
-            <t-button size="small" variant="outline" :loading="scriptLoading" @click="loadScripts">
+            <VtButton size="small" variant="outline" :loading="scriptLoading" @click="loadScripts">
               <template #icon><RefreshIcon /></template>
               {{ t('exportCenter.refresh') }}
-            </t-button>
-            <t-button size="small" variant="outline" @click="goProduction">
+            </VtButton>
+            <VtButton size="small" variant="outline" @click="goProduction">
               {{ t('exportCenter.goProduction') }}
-            </t-button>
+            </VtButton>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <aside class="grid content-start gap-4 rounded-lg border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-4 shadow-sm">
+    <section class="export-layout grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <aside class="export-side-panel grid content-start gap-4 rounded-lg border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-4 shadow-sm">
         <div>
           <h4 class="m-0 text-base font-semibold text-[var(--vt-text-primary)]">{{ t('exportCenter.selectTitle') }}</h4>
           <p class="m-0 mt-1 text-sm leading-6 text-[var(--vt-text-secondary)]">{{ t('exportCenter.selectHint') }}</p>
@@ -466,21 +469,21 @@ onMounted(() => {
         </div>
 
         <div class="grid gap-2">
-          <t-button theme="primary" :disabled="!selectedScriptId" :loading="validationLoading" @click="validateAssets">
+          <VtButton theme="primary" variant="base" :disabled="!selectedScriptId" :loading="validationLoading" @click="validateAssets">
             <template #icon><SearchIcon /></template>
             {{ t('exportCenter.checkAssets') }}
-          </t-button>
-          <t-button variant="outline" :disabled="!selectedScriptId" :loading="timelineLoading" @click="buildTimeline">
+          </VtButton>
+          <VtButton variant="outline" :disabled="!selectedScriptId" :loading="timelineLoading" @click="buildTimeline">
             {{ t('exportCenter.buildTimeline') }}
-          </t-button>
-          <t-button theme="primary" :disabled="!canExport" :loading="exportLoading" @click="createJianyingDraft">
+          </VtButton>
+          <VtButton theme="primary" variant="base" :disabled="!canExport" :loading="exportLoading" @click="createJianyingDraft">
             <template #icon><FileExportIcon /></template>
             {{ validation?.valid ? t('exportCenter.startExport') : t('exportCenter.needCheckFirst') }}
-          </t-button>
+          </VtButton>
         </div>
       </aside>
 
-      <section class="grid content-start gap-4">
+      <section class="export-main-panel grid content-start gap-4">
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-4">
             <p class="m-0 text-xs font-medium text-[var(--vt-text-tertiary)]">{{ t('exportCenter.statScripts') }}</p>
@@ -534,7 +537,7 @@ onMounted(() => {
                 <h4 class="m-0 text-base font-semibold text-[var(--vt-text-primary)]">{{ t('exportCenter.failureTitle') }}</h4>
                 <p class="m-0 mt-1 text-sm text-[var(--vt-text-secondary)]">{{ t('exportCenter.failureHint') }}</p>
               </div>
-              <t-button size="small" variant="outline" @click="goProduction">{{ t('exportCenter.fixInProduction') }}</t-button>
+              <VtButton size="small" variant="outline" @click="goProduction">{{ t('exportCenter.fixInProduction') }}</VtButton>
             </div>
 
             <div v-if="latestFailures.length" class="grid gap-2">
@@ -551,7 +554,7 @@ onMounted(() => {
                 <code class="break-words rounded bg-[var(--vt-fill-subtle)] px-2 py-1 text-xs text-[var(--vt-text-primary)]">{{ failure.path || t('exportCenter.emptyValue') }}</code>
               </article>
             </div>
-            <t-empty v-else :description="validation ? t('exportCenter.noFailures') : t('exportCenter.noCheckYet')" />
+            <VtEmptyState v-else :description="validation ? t('exportCenter.noFailures') : t('exportCenter.noCheckYet')" />
           </section>
 
           <aside class="grid content-start gap-3 rounded-lg border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-4 shadow-sm">
@@ -593,22 +596,22 @@ onMounted(() => {
             </dl>
 
             <div class="grid gap-2">
-              <t-button theme="primary" :disabled="!resultPath" :loading="openDirectoryLoading" @click="openExportDirectory">
+              <VtButton theme="primary" variant="base" :disabled="!resultPath" :loading="openDirectoryLoading" @click="openExportDirectory">
                 <template #icon><FolderOpenIcon /></template>
                 {{ t('exportCenter.openDirectory') }}
-              </t-button>
-              <t-button variant="outline" :disabled="!resultPath" @click="copyOutputPath">
+              </VtButton>
+              <VtButton variant="outline" :disabled="!resultPath" @click="copyOutputPath">
                 <template #icon><CheckIcon /></template>
                 {{ t('exportCenter.copyPath') }}
-              </t-button>
-              <t-button variant="outline" :disabled="!resultTaskId" @click="copyTaskId">
+              </VtButton>
+              <VtButton variant="outline" :disabled="!resultTaskId" @click="copyTaskId">
                 <template #icon><CheckIcon /></template>
                 {{ t('exportCenter.copyTaskId') }}
-              </t-button>
-              <t-button variant="outline" @click="goTaskCenter">
+              </VtButton>
+              <VtButton variant="outline" @click="goTaskCenter">
                 <template #icon><ErrorCircleIcon /></template>
                 {{ t('exportCenter.goTaskCenter') }}
-              </t-button>
+              </VtButton>
             </div>
           </aside>
         </div>
@@ -621,10 +624,10 @@ onMounted(() => {
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <t-tag variant="light">{{ t('exportCenter.historyTotal', { count: historyTotal }) }}</t-tag>
-              <t-button size="small" variant="outline" :loading="historyLoading" @click="loadHistory">
+              <VtButton size="small" variant="outline" :loading="historyLoading" @click="loadHistory">
                 <template #icon><RefreshIcon /></template>
                 {{ t('exportCenter.refreshHistory') }}
-              </t-button>
+              </VtButton>
             </div>
           </div>
 
@@ -645,14 +648,14 @@ onMounted(() => {
                   </p>
                 </div>
                 <div class="flex flex-wrap gap-2">
-                  <t-button size="small" variant="outline" :loading="historyDetailLoading" @click="showHistoryDetail(history)">
+                  <VtButton size="small" variant="outline" :loading="historyDetailLoading" @click="showHistoryDetail(history)">
                     <template #icon><SearchIcon /></template>
                     {{ t('exportCenter.viewHistoryDetail') }}
-                  </t-button>
-                  <t-button size="small" variant="outline" @click="rerunHistory(history)">
+                  </VtButton>
+                  <VtButton size="small" variant="outline" @click="rerunHistory(history)">
                     <template #icon><RefreshIcon /></template>
                     {{ t('exportCenter.rerunHistory') }}
-                  </t-button>
+                  </VtButton>
                 </div>
               </div>
 
@@ -681,31 +684,31 @@ onMounted(() => {
               </div>
 
               <div class="flex flex-wrap gap-2">
-                <t-button size="small" variant="outline" :disabled="!history.outputPath" :loading="openDirectoryLoading" @click="openHistoryDirectory(history)">
+                <VtButton size="small" variant="outline" :disabled="!history.outputPath" :loading="openDirectoryLoading" @click="openHistoryDirectory(history)">
                   <template #icon><FolderOpenIcon /></template>
                   {{ t('exportCenter.openDirectory') }}
-                </t-button>
-                <t-button size="small" variant="outline" :disabled="!history.outputPath" @click="copyHistoryPath(history)">
+                </VtButton>
+                <VtButton size="small" variant="outline" :disabled="!history.outputPath" @click="copyHistoryPath(history)">
                   <template #icon><CheckIcon /></template>
                   {{ t('exportCenter.copyPath') }}
-                </t-button>
-                <t-button size="small" variant="outline" :disabled="!history.taskId" @click="copyHistoryTaskId(history)">
+                </VtButton>
+                <VtButton size="small" variant="outline" :disabled="!history.taskId" @click="copyHistoryTaskId(history)">
                   <template #icon><CheckIcon /></template>
                   {{ t('exportCenter.copyTaskId') }}
-                </t-button>
-                <t-button size="small" variant="outline" @click="goTaskCenter">
+                </VtButton>
+                <VtButton size="small" variant="outline" @click="goTaskCenter">
                   <template #icon><ErrorCircleIcon /></template>
                   {{ t('exportCenter.goTaskCenter') }}
-                </t-button>
+                </VtButton>
               </div>
             </article>
           </div>
-          <t-empty v-else :description="historyLoading ? t('exportCenter.historyLoading') : t('exportCenter.historyEmpty')" />
+          <VtEmptyState v-else :description="historyLoading ? t('exportCenter.historyLoading') : t('exportCenter.historyEmpty')" />
         </section>
       </section>
     </section>
 
-    <t-dialog :visible="historyDetailVisible" :header="t('exportCenter.historyDetailTitle')" width="920px" :footer="false" @update:visible="(value) => (historyDetailVisible = value)">
+    <VtDialog :visible="historyDetailVisible" :title="t('exportCenter.historyDetailTitle')" width="920px" :footer="false" @update:visible="(value) => (historyDetailVisible = value)">
       <div v-if="activeHistory" class="grid max-h-[72vh] gap-4 overflow-auto pr-1">
         <section class="grid gap-2 rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
@@ -748,7 +751,7 @@ onMounted(() => {
               <p class="m-0 break-words">{{ t('exportCenter.historyMd5', { md5: file.md5 || t('exportCenter.emptyValue') }) }}</p>
             </article>
           </div>
-          <t-empty v-else :description="t('exportCenter.historyNoMedia')" />
+          <VtEmptyState v-else :description="t('exportCenter.historyNoMedia')" />
         </section>
 
         <section class="grid gap-2">
@@ -764,7 +767,7 @@ onMounted(() => {
               <code class="mt-2 block break-words rounded bg-[var(--vt-fill-subtle)] px-2 py-1 text-xs text-[var(--vt-text-primary)]">{{ failure.path || t('exportCenter.emptyValue') }}</code>
             </article>
           </div>
-          <t-empty v-else :description="t('exportCenter.historyNoFailures')" />
+          <VtEmptyState v-else :description="t('exportCenter.historyNoFailures')" />
         </section>
 
         <section class="grid gap-2">
@@ -772,6 +775,6 @@ onMounted(() => {
           <pre class="m-0 max-h-64 overflow-auto rounded-md bg-[var(--vt-fill-subtle)] p-3 text-xs leading-5 text-[var(--vt-text-primary)]">{{ formatJson(activeHistory.timeline) }}</pre>
         </section>
       </div>
-    </t-dialog>
+    </VtDialog>
   </div>
 </template>

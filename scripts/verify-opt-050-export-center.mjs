@@ -76,8 +76,9 @@ const routerMenuPath = 'src/renderer/src/router/menu.ts';
 assertNotIncludes(exportHomePath, 'ModuleScaffold');
 assertNotIncludes(moduleScaffoldPath, 'moduleId');
 assertNotIncludes(workbenchLayoutPath, 'activeMenu?.id');
+assertNotIncludes(routerMenuPath, "titleKey: 'route.projectOverview'");
+assertIncludes(routerMenuPath, 'projectWorkspaceRouteNames');
 assertTextOrder(routerMenuPath, [
-  "routeName: 'project-overview'",
   "routeName: 'novel'",
   "routeName: 'script-agent'",
   "routeName: 'script'",

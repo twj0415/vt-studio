@@ -1,5 +1,5 @@
-import type { ImageGenerationMode, VideoGenerationMode } from '../constants/dictionaries';
-import type { ModelAudioSupport } from '../constants/model-capabilities';
+import type { ImageGenerationMode, ProjectImageQuality, ProjectVideoRatio, VideoGenerationMode } from '../constants/dictionaries';
+import type { ModelAudioSupport, ReasoningEffort, TextReasoningCapability } from '../constants/model-capabilities';
 import type { ModelCapabilityMatrixItem } from './model-capability';
 import type { VendorModelType } from './vendor';
 
@@ -11,6 +11,8 @@ export type ApiServiceType =
   | 'claude'
   | 'deepseek'
   | 'gemini'
+  | 'minimax'
+  | 'klingai'
   | 'local-workflow'
   | 'advanced';
 
@@ -31,6 +33,7 @@ export interface RegisteredModel {
   modelName: string;
   type: ModelCapability;
   think?: boolean;
+  reasoning?: TextReasoningCapability;
   imageModes?: ImageGenerationMode[];
   videoModes?: VideoGenerationMode[];
   durationOptions?: number[];
@@ -50,9 +53,12 @@ export interface ApiConnection {
   protocolType: ApiProtocolType;
   baseUrl: string;
   apiKey: string;
+  secretKey?: string;
   workflowManifest?: string;
   apiKeyConfigured?: boolean;
   apiKeyMasked?: string;
+  secretKeyConfigured?: boolean;
+  secretKeyMasked?: string;
   capabilities: ModelCapability[];
   models: RegisteredModel[];
   status: ApiConnectionStatus;
@@ -67,6 +73,7 @@ export interface ApiConnectionDraft {
   serviceType: ApiServiceType;
   baseUrl: string;
   apiKey: string;
+  secretKey?: string;
   workflowManifest?: string;
   capabilities: ModelCapability[];
   models: RegisteredModel[];
@@ -114,6 +121,17 @@ export interface ApiConnectionTestPayload {
   connectionId: string;
   modelName: string;
   prompt: string;
+  reasoningEnabled?: boolean;
+  reasoningEffort?: ReasoningEffort;
+  imageMode?: ImageGenerationMode;
+  imageSize?: ProjectImageQuality;
+  aspectRatio?: string;
+  videoMode?: string;
+  duration?: number;
+  resolution?: string;
+  videoAspectRatio?: ProjectVideoRatio;
+  audio?: boolean;
+  referenceImages?: string[];
 }
 
 export interface ApiConnectionTestResult {
@@ -121,6 +139,19 @@ export interface ApiConnectionTestResult {
   thinking?: string;
   filePath?: string;
   durationMs: number;
+}
+
+export interface ModelTestFilePayload {
+  filePath: string;
+}
+
+export interface ModelTestOpenFileResult {
+  filePath: string;
+}
+
+export interface ModelTestSaveFileResult {
+  sourcePath: string;
+  savedPath: string | null;
 }
 
 export interface ResourceConfigResult {
@@ -142,6 +173,17 @@ export interface ResourceBindingSaveResult {
 export interface ResourceTestPayload {
   capability: ModelCapability;
   prompt: string;
+  reasoningEnabled?: boolean;
+  reasoningEffort?: ReasoningEffort;
+  imageMode?: ImageGenerationMode;
+  imageSize?: ProjectImageQuality;
+  aspectRatio?: string;
+  videoMode?: string;
+  duration?: number;
+  resolution?: string;
+  videoAspectRatio?: ProjectVideoRatio;
+  audio?: boolean;
+  referenceImages?: string[];
 }
 
 export type ResourceTestResult = ApiConnectionTestResult;

@@ -2,8 +2,10 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { MessagePlugin } from 'tdesign-vue-next';
-import { CodeIcon, RefreshIcon, SaveIcon, SystemCodeIcon } from 'tdesign-icons-vue-next';
-import type { ProductionAgentContextResult, ProductionAgentToolDescriptor, ProductionAgentWorkspacePatchField } from '@shared/types/production';
+import { RefreshIcon, SaveIcon, SystemCodeIcon } from 'tdesign-icons-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import type { ProductionAgentContextResult, ProductionAgentWorkspacePatchField } from '@shared/types/production';
 
 const props = defineProps<{
   visible: boolean;
@@ -26,8 +28,6 @@ const patchForm = reactive({
   content: '',
 });
 
-const readyTools = computed(() => context.value?.tools.filter((tool) => tool.status === 'ready') ?? []);
-const reservedTools = computed(() => context.value?.tools.filter((tool) => tool.status === 'reserved') ?? []);
 const contextStats = computed(() => {
   const flowData = context.value?.flowData;
   return [
@@ -37,6 +37,13 @@ const contextStats = computed(() => {
     { label: t('production.agent.stats.videos'), value: flowData?.videoTracks.reduce((total, track) => total + track.videos.length, 0) ?? 0 },
   ];
 });
+const actionCards = computed(() => [
+  { key: 'assets', title: t('production.agent.action.assets.title'), desc: t('production.agent.action.assets.desc'), target: t('production.node.assets.title') },
+  { key: 'director', title: t('production.agent.action.director.title'), desc: t('production.agent.action.director.desc'), target: t('production.node.scriptPlan.title') },
+  { key: 'storyboardTable', title: t('production.agent.action.storyboardTable.title'), desc: t('production.agent.action.storyboardTable.desc'), target: t('production.node.storyboardTable.title') },
+  { key: 'storyboard', title: t('production.agent.action.storyboard.title'), desc: t('production.agent.action.storyboard.desc'), target: t('production.node.storyboard.title') },
+  { key: 'video', title: t('production.agent.action.video.title'), desc: t('production.agent.action.video.desc'), target: t('production.node.workbench.title') },
+]);
 
 function isOk(response: { code: number; msg: string }): boolean {
   return response.code === 200;
@@ -44,10 +51,6 @@ function isOk(response: { code: number; msg: string }): boolean {
 
 function close(): void {
   emit('update:visible', false);
-}
-
-function getToolTitle(tool: ProductionAgentToolDescriptor): string {
-  return t(`production.agent.tool.${tool.name}`);
 }
 
 function syncPatchContent(): void {
@@ -136,7 +139,7 @@ watch(
 </script>
 
 <template>
-  <t-dialog :visible="visible" :header="t('production.agent.title')" width="1180px" :footer="false" @update:visible="(value) => emit('update:visible', value)">
+  <VtDialog :visible="visible" :title="t('production.agent.title')" width="1180px" :footer="false" @update:visible="(value) => emit('update:visible', value)">
     <div class="production-agent-shell">
       <aside class="production-agent-side">
         <div>
@@ -155,13 +158,13 @@ watch(
           <span>{{ t('production.agent.boundary') }}</span>
         </div>
         <div class="production-agent-actions">
-          <t-button variant="outline" :loading="loading" @click="loadContext">
+          <VtButton variant="outline" :loading="loading" @click="loadContext">
             <template #icon><RefreshIcon /></template>
             {{ t('production.refresh') }}
-          </t-button>
-          <t-button variant="outline" @click="close">
+          </VtButton>
+          <VtButton variant="outline" @click="close">
             {{ t('production.cancel') }}
-          </t-button>
+          </VtButton>
         </div>
       </aside>
 
@@ -170,46 +173,15 @@ watch(
           <section class="production-agent-section">
             <header>
               <div>
-                <h4>{{ t('production.agent.toolsTitle') }}</h4>
-                <span>{{ t('production.agent.toolsHint') }}</span>
+                <h4>{{ t('production.agent.actionsTitle') }}</h4>
+                <span>{{ t('production.agent.actionsHint') }}</span>
               </div>
-              <t-tag theme="success" variant="light">{{ t('production.agent.readyCount', { count: readyTools.length }) }}</t-tag>
             </header>
-            <div class="production-agent-tool-grid">
-              <article v-for="tool in readyTools" :key="tool.name" class="production-agent-tool-card">
-                <strong>{{ getToolTitle(tool) }}</strong>
-                <small>{{ tool.name }}</small>
-                <p>{{ t('production.agent.writes') }}：{{ tool.writes.length ? tool.writes.join(', ') : t('production.agent.readonly') }}</p>
-                <p>{{ t('production.agent.inputs') }}：{{ tool.inputKeys.join(', ') }}</p>
-              </article>
-            </div>
-          </section>
-
-          <section class="production-agent-section">
-            <header>
-              <div>
-                <h4>{{ t('production.agent.reservedTitle') }}</h4>
-                <span>{{ t('production.agent.reservedHint') }}</span>
-              </div>
-              <t-tag theme="warning" variant="light">{{ t('production.agent.reservedCount', { count: reservedTools.length }) }}</t-tag>
-            </header>
-            <div class="production-agent-reserved-list">
-              <t-tag v-for="tool in reservedTools" :key="tool.name" variant="light">{{ getToolTitle(tool) }}</t-tag>
-            </div>
-          </section>
-
-          <section class="production-agent-section">
-            <header>
-              <div>
-                <h4>{{ t('production.agent.xmlTitle') }}</h4>
-                <span>{{ t('production.agent.xmlHint') }}</span>
-              </div>
-              <CodeIcon />
-            </header>
-            <div class="production-agent-xml-grid">
-              <article v-for="tag in context?.xmlTags ?? []" :key="tag.tag">
-                <code>&lt;{{ tag.tag }}&gt;</code>
-                <span>{{ t('production.agent.xmlWrites') }}：{{ tag.writes }}</span>
+            <div class="production-agent-action-grid">
+              <article v-for="card in actionCards" :key="card.key" class="production-agent-action-card">
+                <strong>{{ card.title }}</strong>
+                <p>{{ card.desc }}</p>
+                <t-tag size="small" variant="light">{{ card.target }}</t-tag>
               </article>
             </div>
           </section>
@@ -220,10 +192,10 @@ watch(
                 <h4>{{ t('production.agent.patchTitle') }}</h4>
                 <span>{{ t('production.agent.patchHint') }}</span>
               </div>
-              <t-button theme="primary" :loading="applying" :disabled="!context" @click="applyPatch">
+              <VtButton theme="primary" variant="base" :loading="applying" :disabled="!context" @click="applyPatch">
                 <template #icon><SaveIcon /></template>
                 {{ t('production.agent.applyPatch') }}
-              </t-button>
+              </VtButton>
             </header>
             <div class="production-agent-patch-grid">
               <label>
@@ -243,5 +215,5 @@ watch(
         </t-loading>
       </main>
     </div>
-  </t-dialog>
+  </VtDialog>
 </template>

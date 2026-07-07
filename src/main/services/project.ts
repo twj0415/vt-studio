@@ -6,6 +6,8 @@ import {
   GENERATION_TASK_STATUSES,
   PROJECT_IMAGE_QUALITY_VALUES,
   PROJECT_SOURCE_TYPE_VALUES,
+  PROJECT_TEMPLATE_TYPES,
+  PROJECT_TEMPLATE_TYPE_VALUES,
   PROJECT_VIDEO_RATIO_VALUES,
   SCRIPT_EXTRACT_STATUSES,
   SOURCE_EVENT_STATUSES,
@@ -55,6 +57,7 @@ import type {
   ProjectSavePayload,
   ProjectSaveResult,
   ProjectSourceType,
+  ProjectTemplateType,
   ProjectUpdateRecentRoutePayload,
   ProjectUpdateRecentRouteResult,
   ProjectSummary,
@@ -186,10 +189,12 @@ const PROJECT_ROUTE_NAMES: ProjectRouteName[] = [
   'production',
   'export',
 ];
+const DEFAULT_PROJECT_TEMPLATE_TYPE = PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA;
 
 interface StoredRecentProject {
   projectId: number;
   projectName: string;
+  templateType: ProjectTemplateType;
   sourceType: ProjectSourceType;
   lastRoute: ProjectRouteName;
   openedAt: number;
@@ -216,12 +221,12 @@ function getManualTabs(kind: ProjectManualKind): readonly ManualTabConfig[] {
   return getProjectManualTabs(kind);
 }
 
-function assertProjectSourceType(value: string): ProjectSourceType {
-  if (PROJECT_SOURCE_TYPE_VALUES.includes(value as ProjectSourceType)) {
-    return value as ProjectSourceType;
+function assertProjectTemplateType(value: unknown): ProjectTemplateType {
+  if (PROJECT_TEMPLATE_TYPE_VALUES.includes(value as ProjectTemplateType)) {
+    return value as ProjectTemplateType;
   }
 
-  throw createError(VT_STATUS.INVALID_PARAMS, '项目来源类型无效');
+  throw createError(VT_STATUS.INVALID_PARAMS, '作品类型无效');
 }
 
 function assertImageQuality(value: string): ProjectImageQuality {
@@ -1040,8 +1045,16 @@ function isProjectRouteName(value: unknown): value is ProjectRouteName {
   return typeof value === 'string' && PROJECT_ROUTE_NAMES.includes(value as ProjectRouteName);
 }
 
-function normalizeProjectRouteName(value: unknown): ProjectRouteName {
-  return isProjectRouteName(value) ? value : 'project-overview';
+function getProjectEntryRoute(): ProjectRouteName {
+  return 'production';
+}
+
+function normalizeProjectRouteName(value: unknown, _sourceType: ProjectSourceType = 'novel'): ProjectRouteName {
+  if (value === 'project-overview') {
+    return getProjectEntryRoute();
+  }
+
+  return isProjectRouteName(value) ? value : getProjectEntryRoute();
 }
 
 function readRecentProjectSetting(): StoredRecentProject | null {
@@ -1056,11 +1069,15 @@ function readRecentProjectSetting(): StoredRecentProject | null {
       return null;
     }
 
+    const sourceType = PROJECT_SOURCE_TYPE_VALUES.includes(parsed.sourceType as ProjectSourceType) ? (parsed.sourceType as ProjectSourceType) : 'script';
+    const templateType = PROJECT_TEMPLATE_TYPE_VALUES.includes(parsed.templateType as ProjectTemplateType) ? (parsed.templateType as ProjectTemplateType) : DEFAULT_PROJECT_TEMPLATE_TYPE;
+
     return {
       projectId: parsed.projectId,
       projectName: typeof parsed.projectName === 'string' ? parsed.projectName : '',
-      sourceType: PROJECT_SOURCE_TYPE_VALUES.includes(parsed.sourceType as ProjectSourceType) ? (parsed.sourceType as ProjectSourceType) : 'script',
-      lastRoute: normalizeProjectRouteName(parsed.lastRoute),
+      templateType,
+      sourceType,
+      lastRoute: normalizeProjectRouteName(parsed.lastRoute, sourceType),
       openedAt: typeof parsed.openedAt === 'number' ? parsed.openedAt : Date.now(),
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
     };
@@ -1097,6 +1114,7 @@ function toCurrentProjectContext(project: ProjectRow): ProjectCurrentContext {
   return {
     id: String(project.id),
     name: project.name,
+    templateType: DEFAULT_PROJECT_TEMPLATE_TYPE,
     sourceType: project.source_type,
   };
 }
@@ -1106,6 +1124,7 @@ function toProjectRecentContext(stored: StoredRecentProject): ProjectRecentConte
     project: {
       id: String(stored.projectId),
       name: stored.projectName,
+      templateType: stored.templateType,
       sourceType: stored.sourceType,
     },
     lastRoute: stored.lastRoute,
@@ -1118,8 +1137,9 @@ function writeRecentProjectContext(project: ProjectRow, routeName: ProjectRouteN
   const recent: StoredRecentProject = {
     projectId: project.id,
     projectName: project.name,
+    templateType: DEFAULT_PROJECT_TEMPLATE_TYPE,
     sourceType: project.source_type,
-    lastRoute: normalizeProjectRouteName(routeName),
+    lastRoute: normalizeProjectRouteName(routeName, project.source_type),
     openedAt,
     updatedAt: Date.now(),
   };
@@ -1289,7 +1309,8 @@ function resolveProjectModelOption(modelId: string, type: 'image' | 'video'): Pr
 }
 
 function validateProjectPayload(payload: ProjectSavePayload): Omit<ProjectSavePayload, 'id'> {
-  const sourceType = assertProjectSourceType(payload.sourceType);
+  const templateType = assertProjectTemplateType(payload.templateType ?? DEFAULT_PROJECT_TEMPLATE_TYPE);
+  const sourceType: ProjectSourceType = 'script';
   const name = assertNonEmpty(payload.name, '项目名称');
   const genre = assertNonEmpty(payload.genre, '题材/类型');
   const description = assertNonEmpty(payload.description, '项目简介');
@@ -1307,6 +1328,7 @@ function validateProjectPayload(payload: ProjectSavePayload): Omit<ProjectSavePa
   getManualById('director', payload.directorManualId);
 
   return {
+    templateType,
     sourceType,
     name,
     genre,
@@ -1352,6 +1374,7 @@ function mapProjectSummary(row: ProjectRow): ProjectSummary {
 
   return {
     id: row.id,
+    templateType: DEFAULT_PROJECT_TEMPLATE_TYPE,
     sourceType: row.source_type,
     name: row.name,
     genre: row.genre,
@@ -1782,7 +1805,7 @@ export function deleteProject(payload: ProjectDeletePayload): ProjectDeleteResul
 
 export function openProject(payload: ProjectOpenPayload): ProjectOpenResult {
   const project = assertProjectRestorable(assertProjectId(payload.projectId));
-  const targetRoute = 'project-overview';
+  const targetRoute = getProjectEntryRoute();
   const context = toCurrentProjectContext(project);
   writeRecentProjectContext(project, targetRoute);
 
@@ -1805,7 +1828,7 @@ export function restoreRecentProject(): ProjectRestoreRecentResult {
 
   try {
     const project = assertProjectRestorable(recent.projectId);
-    const restored = writeRecentProjectContext(project, recent.lastRoute, recent.openedAt);
+    const restored = writeRecentProjectContext(project, getProjectEntryRoute(), recent.openedAt);
     return {
       project: restored.project,
       targetRoute: restored.lastRoute,
@@ -1823,7 +1846,6 @@ export function restoreRecentProject(): ProjectRestoreRecentResult {
 
 export function updateRecentProjectRoute(payload: ProjectUpdateRecentRoutePayload): ProjectUpdateRecentRouteResult {
   const projectId = assertProjectId(payload.projectId);
-  const routeName = normalizeProjectRouteName(payload.routeName);
   const recent = readRecentProjectSetting();
   if (!recent || recent.projectId !== projectId) {
     return {
@@ -1832,6 +1854,7 @@ export function updateRecentProjectRoute(payload: ProjectUpdateRecentRoutePayloa
     };
   }
 
+  const routeName = normalizeProjectRouteName(payload.routeName, recent.sourceType);
   const next: StoredRecentProject = {
     ...recent,
     lastRoute: routeName,
@@ -1867,6 +1890,7 @@ export function getProjectFlowStats(payload: ProjectFlowStatsPayload): ProjectFl
 
   return {
     projectId,
+    templateType: DEFAULT_PROJECT_TEMPLATE_TYPE,
     sourceType: project.source_type,
     sourceChapterCount: countRows('source_chapters', 'project_id = ?', [projectId]),
     sourceEventSucceededCount: countRows('source_chapters', 'project_id = ? AND event_status = ?', [projectId, SOURCE_EVENT_STATUSES.SUCCEEDED]),

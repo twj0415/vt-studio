@@ -119,7 +119,7 @@ export function getScriptAgentModelCapability(): ScriptAgentModelCapabilityResul
         configured: false,
         supportsThink: false,
         modelName: model.name,
-        error: '剧本 Agent 当前模型不是文本模型',
+        error: '改编助手当前模型不是文本模型',
       };
     }
 

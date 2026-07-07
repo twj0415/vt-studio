@@ -21,7 +21,10 @@ const DEFAULT_POSITIONS: Record<ProductionNodeType, ProductionFlowPosition> = {
   storyboardTable: { x: 760, y: 0 },
   storyboard: { x: 1140, y: 0 },
   workbench: { x: 1520, y: 0 },
+  export: { x: 1900, y: 0 },
 };
+
+const CANVAS_NODE_TYPES: readonly ProductionNodeType[] = ['script', 'assets', 'scriptPlan', 'storyboardTable', 'storyboard', 'workbench', 'export'];
 
 const EDGE_STYLE = {
   stroke: '#2f6f63',
@@ -45,7 +48,7 @@ export function buildProductionNodes(flowData: ProductionFlowData | null, positi
     return [];
   }
 
-  return PRODUCTION_NODE_TYPES.map((nodeType) => ({
+  return CANVAS_NODE_TYPES.map((nodeType) => ({
     id: nodeType,
     type: 'productionNode',
     dragHandle: '.production-node-drag-handle',
@@ -70,6 +73,7 @@ export function buildProductionEdges(flowData: ProductionFlowData | null): Produ
     createEdge('scriptPlan-storyboardTable', 'scriptPlan', 'storyboardTable', 'scriptPlan-source', 'storyboardTable-target'),
     createEdge('storyboardTable-storyboard', 'storyboardTable', 'storyboard', 'storyboardTable-source', 'storyboard-target'),
     createEdge('storyboard-workbench', 'storyboard', 'workbench', 'storyboard-source', 'workbench-target'),
+    createEdge('workbench-export', 'workbench', 'export', 'workbench-source', 'export-target'),
   ];
 }
 
@@ -89,7 +93,7 @@ export function layoutProductionPositions(nodes: Array<{ id: string; dimensions?
   const measured = new Map(nodes.map((node) => [node.id, node.dimensions ?? {}]));
   const gap = 84;
   const positions: ProductionFlowPositions = {};
-  const mainChain: ProductionNodeType[] = ['script', 'scriptPlan', 'storyboardTable', 'storyboard', 'workbench'];
+  const mainChain: ProductionNodeType[] = ['script', 'scriptPlan', 'storyboardTable', 'storyboard', 'workbench', 'export'];
   let x = 0;
 
   for (const nodeType of mainChain) {
@@ -127,7 +131,7 @@ function createHandleIds(nodeType: ProductionNodeType): ProductionCanvasNodeData
       assets: 'script-assets',
     };
   }
-  if (nodeType === 'assets' || nodeType === 'workbench') {
+  if (nodeType === 'assets' || nodeType === 'export') {
     return {
       target: `${nodeType}-target`,
     };

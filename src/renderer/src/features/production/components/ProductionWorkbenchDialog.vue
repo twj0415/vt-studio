@@ -39,6 +39,9 @@ import {
   serializeVideoMode,
   VIDEO_MODE_PRESETS,
 } from '@shared/constants/model-capabilities';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import type { ExportCreateJianyingDraftResult, ExportStoryboardImagesResult, ExportValidationFailure } from '@shared/types/export';
 import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
 
@@ -298,6 +301,27 @@ const hasExportFailures = computed(() => exportResultFailures.value.length > 0);
 const runningPromptTrackIds = computed(() => tracks.value.filter((track) => track.status === PRODUCTION_TASK_STATUS.RUNNING).map((track) => track.id));
 const runningVideoIds = computed(() => tracks.value.flatMap((track) => track.videos).filter((video) => video.status === PRODUCTION_TASK_STATUS.RUNNING).map((video) => video.id));
 const currentSelectedVideo = computed(() => currentTrack.value?.videos.find((video) => video.id === currentTrack.value?.selectedVideoId) ?? null);
+const editorStoryboardMedia = computed(() => storyboards.value.filter((storyboard) => storyboard.imageUrl));
+const editorAssetMedia = computed(() => flattenAssets(assets.value).filter((asset) => asset.imageUrl || asset.type === 'clip' || asset.type === 'audio'));
+const editorSelectedVideoMedia = computed(() => tracks.value
+  .map((track) => ({
+    track,
+    video: getTrackSelectedVideo(track),
+  }))
+  .filter((item): item is { track: ProductionVideoTrackItem; video: ProductionVideoItem } => Boolean(item.video)));
+const editorTimelineRows = computed(() => tracks.value.map((track) => {
+  const selectedVideo = getTrackSelectedVideo(track);
+  return {
+    track,
+    selectedVideo,
+    storyboards: track.storyboardIds
+      .map((storyboardId) => storyboards.value.find((storyboard) => storyboard.id === storyboardId))
+      .filter((storyboard): storyboard is ProductionStoryboardItem => Boolean(storyboard)),
+    duration: selectedVideo?.duration ?? track.duration,
+    isReady: Boolean(selectedVideo?.videoUrl && selectedVideo.status === PRODUCTION_TASK_STATUS.SUCCEEDED),
+  };
+}));
+const editorReadyTrackCount = computed(() => editorTimelineRows.value.filter((row) => row.isReady).length);
 const selectedStoryboardTotalDuration = computed(() => selectedPreviewStoryboardIds.value.reduce((total, id) => {
   const storyboard = storyboards.value.find((item) => item.id === id);
   return total + (storyboard?.duration ?? 0);
@@ -686,6 +710,10 @@ function setCurrentTrack(trackId: number): void {
   syncTrackForm(currentTrack.value);
 }
 
+function openWorkbenchTab(tab: WorkbenchTab): void {
+  activeTab.value = tab;
+}
+
 async function createTrackFromSelection(): Promise<void> {
   if (!props.projectId || !props.scriptId) {
     return;
@@ -947,7 +975,7 @@ function openDraftDialog(): void {
     exportCheckVisible.value = true;
     return;
   }
-  draftForm.draftName = `script-${props.scriptId}`;
+  draftForm.draftName = `content-${props.scriptId}`;
   draftForm.copyAssets = true;
   draftDialogVisible.value = true;
 }
@@ -1051,7 +1079,7 @@ async function pollVideoPrompts(): Promise<void> {
   const response = await window.vtStudio.production.pollVideoPrompts({
     projectId: props.projectId,
     scriptId: props.scriptId,
-    ids: runningPromptTrackIds.value,
+    ids: [...runningPromptTrackIds.value],
   });
   if (isOk(response) && response.data.tracks.length > 0) {
     await loadWorkbench(true);
@@ -1068,7 +1096,7 @@ async function pollVideos(): Promise<void> {
   const response = await window.vtStudio.production.pollVideos({
     projectId: props.projectId,
     scriptId: props.scriptId,
-    ids: runningVideoIds.value,
+    ids: [...runningVideoIds.value],
   });
   if (isOk(response) && response.data.tracks.length > 0) {
     await loadWorkbench(true);
@@ -1393,9 +1421,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <t-dialog
+  <VtDialog
     :visible="visible"
-    :header="t('production.workbench.title')"
+    :title="t('production.workbench.title')"
     width="96vw"
     :footer="false"
     destroy-on-close
@@ -1440,18 +1468,18 @@ onUnmounted(() => {
               {{ exportReady ? t('production.workbench.exportReadyHint') : t('production.workbench.exportBlockedHint') }}
             </p>
           </div>
-          <t-button block theme="primary" :loading="saving" @click="createEmptyTrack">
+          <VtButton block theme="primary" variant="base" :loading="saving" @click="createEmptyTrack">
             <template #icon><AddIcon /></template>
             {{ t('production.node.workbench.createTrack') }}
-          </t-button>
-          <t-button block theme="primary" variant="outline" :loading="jianyingExporting" :disabled="tracks.length === 0" @click="handleExportAction">
+          </VtButton>
+          <VtButton block theme="primary" variant="outline" :loading="jianyingExporting" :disabled="tracks.length === 0" @click="handleExportAction">
             <template #icon><FileExportIcon /></template>
             {{ exportReady ? t('production.workbench.exportJianyingDraft') : t('production.workbench.exportCheck') }}
-          </t-button>
-          <t-button block variant="outline" :disabled="selectedTrackCount === 0" @click="downloadSelectedVideos">
+          </VtButton>
+          <VtButton block variant="outline" :disabled="selectedTrackCount === 0" @click="downloadSelectedVideos">
             <template #icon><DownloadIcon /></template>
             {{ t('production.workbench.downloadSelectedVideos') }}
-          </t-button>
+          </VtButton>
         </div>
       </aside>
 
@@ -1465,16 +1493,16 @@ onUnmounted(() => {
               </div>
               <div class="production-preview-controls">
                 <t-tooltip :content="t('production.workbench.previous')">
-                  <t-button shape="square" variant="text" :aria-label="t('production.workbench.previous')" @click="stepPreview(-1)">‹</t-button>
+                  <VtButton shape="square" variant="text" icon-only :min-width="0" :aria-label="t('production.workbench.previous')" @click="stepPreview(-1)">‹</VtButton>
                 </t-tooltip>
                 <t-tooltip :content="previewPlaying ? t('production.workbench.pause') : t('production.workbench.play')">
-                  <t-button shape="square" variant="text" :aria-label="previewPlaying ? t('production.workbench.pause') : t('production.workbench.play')" @click="togglePreviewPlayback">
+                  <VtButton shape="square" variant="text" icon-only :min-width="0" :aria-label="previewPlaying ? t('production.workbench.pause') : t('production.workbench.play')" @click="togglePreviewPlayback">
                     <PauseCircleIcon v-if="previewPlaying" />
                     <PlayCircleIcon v-else />
-                  </t-button>
+                  </VtButton>
                 </t-tooltip>
                 <t-tooltip :content="t('production.workbench.next')">
-                  <t-button shape="square" variant="text" :aria-label="t('production.workbench.next')" @click="stepPreview(1)">›</t-button>
+                  <VtButton shape="square" variant="text" icon-only :min-width="0" :aria-label="t('production.workbench.next')" @click="stepPreview(1)">›</VtButton>
                 </t-tooltip>
                 <t-slider class="production-preview-slider" :model-value="previewProgressPercent" :min="0" :max="100" :step="0.1" @change="handlePreviewProgressChange" />
               </div>
@@ -1500,16 +1528,16 @@ onUnmounted(() => {
                 <span>{{ currentPreviewStoryboard?.shouldGenerateImage ? t('production.node.storyboard.shouldGenerateOn') : t('production.node.storyboard.shouldGenerateOff') }}</span>
               </div>
               <div class="production-workbench-actions">
-                <t-button size="small" variant="outline" @click="selectAllPreviewStoryboards">{{ t('production.node.storyboard.selectAll') }}</t-button>
-                <t-button size="small" variant="outline" @click="clearPreviewStoryboardSelection">{{ t('production.node.storyboard.clearSelection') }}</t-button>
-                <t-button size="small" variant="outline" :loading="storyboardExporting" :disabled="selectedPreviewStoryboardIds.length === 0" @click="downloadSelectedStoryboards">
+                <VtButton size="small" variant="outline" @click="selectAllPreviewStoryboards">{{ t('production.node.storyboard.selectAll') }}</VtButton>
+                <VtButton size="small" variant="outline" @click="clearPreviewStoryboardSelection">{{ t('production.node.storyboard.clearSelection') }}</VtButton>
+                <VtButton size="small" variant="outline" :loading="storyboardExporting" :disabled="selectedPreviewStoryboardIds.length === 0" @click="downloadSelectedStoryboards">
                   <template #icon><DownloadIcon /></template>
                   {{ t('production.workbench.downloadStoryboards') }}
-                </t-button>
-                <t-button size="small" theme="primary" :disabled="storyboards.length === 0" :loading="saving" @click="createTrackFromSelection">
+                </VtButton>
+                <VtButton size="small" theme="primary" variant="base" :disabled="storyboards.length === 0" :loading="saving" @click="createTrackFromSelection">
                   <template #icon><VideoIcon /></template>
                   {{ t('production.workbench.createTrackFromSelection') }}
-                </t-button>
+                </VtButton>
               </div>
             </aside>
 
@@ -1535,11 +1563,11 @@ onUnmounted(() => {
                   <span v-else>{{ t('production.workbench.noPreviewImage') }}</span>
                 </button>
                 <div>
-                  <t-button size="small" variant="text" @click="movePreviewStoryboard(storyboard.id, -1)">↑</t-button>
-                  <t-button size="small" variant="text" @click="movePreviewStoryboard(storyboard.id, 1)">↓</t-button>
+                  <VtButton size="small" variant="text" :min-width="0" @click="movePreviewStoryboard(storyboard.id, -1)">↑</VtButton>
+                  <VtButton size="small" variant="text" :min-width="0" @click="movePreviewStoryboard(storyboard.id, 1)">↓</VtButton>
                 </div>
               </article>
-              <t-button size="small" variant="outline" @click="resetPreviewOrder">{{ t('production.workbench.resetOrder') }}</t-button>
+              <VtButton size="small" variant="outline" @click="resetPreviewOrder">{{ t('production.workbench.resetOrder') }}</VtButton>
             </section>
           </div>
 
@@ -1550,7 +1578,7 @@ onUnmounted(() => {
                   <strong>{{ t('production.workbench.trackList') }}</strong>
                   <span>{{ t('production.workbench.trackSelection', { count: selectedTrackCount }) }}</span>
                 </div>
-                <t-button size="small" variant="outline" @click="toggleAllTracks">{{ isAllTracksSelected ? t('production.node.storyboard.clearSelection') : t('production.node.storyboard.selectAll') }}</t-button>
+                <VtButton size="small" variant="outline" @click="toggleAllTracks">{{ isAllTracksSelected ? t('production.node.storyboard.clearSelection') : t('production.node.storyboard.selectAll') }}</VtButton>
               </div>
               <div class="production-workbench-track-list">
                 <article v-for="track in tracks" :key="track.id" class="production-workbench-track-item" :class="{ active: track.id === currentTrack?.id }">
@@ -1591,7 +1619,7 @@ onUnmounted(() => {
                   </t-tooltip>
                 </article>
               </div>
-              <t-empty v-if="tracks.length === 0" :description="t('production.node.workbench.empty')" />
+              <VtEmptyState v-if="tracks.length === 0" size="small" :description="t('production.node.workbench.empty')" />
             </aside>
 
             <section v-if="currentTrack" class="production-workbench-editor">
@@ -1601,22 +1629,22 @@ onUnmounted(() => {
                   <span>{{ t('production.workbench.trackId', { id: currentTrack.id }) }} / {{ formatMode(currentTrack.mode) }}</span>
                 </div>
                 <div class="production-workbench-actions">
-                  <t-button variant="outline" :loading="saving" @click="saveCurrentTrack()">
+                  <VtButton variant="outline" :loading="saving" @click="saveCurrentTrack()">
                     <template #icon><SaveIcon /></template>
                     {{ t('production.save') }}
-                  </t-button>
-                  <t-button variant="outline" :loading="promptGenerating" :disabled="selectedTrackCount === 0" @click="generatePromptsForSelected">
+                  </VtButton>
+                  <VtButton variant="outline" :loading="promptGenerating" :disabled="selectedTrackCount === 0" @click="generatePromptsForSelected">
                     <template #icon><SaveIcon /></template>
                     {{ t('production.node.workbench.promptSelected') }}
-                  </t-button>
-                  <t-button theme="primary" :loading="videoGenerating" @click="generateVideoForTracks([currentTrack.id])">
+                  </VtButton>
+                  <VtButton theme="primary" variant="base" :loading="videoGenerating" @click="generateVideoForTracks([currentTrack.id])">
                     <template #icon><PlayCircleIcon /></template>
                     {{ t('production.workbench.generateCurrentVideo') }}
-                  </t-button>
-                  <t-button variant="outline" :loading="videoGenerating" :disabled="selectedTrackCount === 0" @click="generateVideoForTracks([...selectedTrackIds])">
+                  </VtButton>
+                  <VtButton variant="outline" :loading="videoGenerating" :disabled="selectedTrackCount === 0" @click="generateVideoForTracks([...selectedTrackIds])">
                     <template #icon><VideoIcon /></template>
                     {{ t('production.node.workbench.videoSelected') }}
-                  </t-button>
+                  </VtButton>
                 </div>
               </div>
 
@@ -1687,7 +1715,7 @@ onUnmounted(() => {
                     <strong>{{ t('production.workbench.candidates') }}</strong>
                     <span>{{ t('production.workbench.candidatesHint') }}</span>
                   </div>
-                  <t-button v-if="currentSelectedVideo" size="small" variant="outline" @click="selectVideo(currentTrack, null)">{{ t('production.workbench.clearSelectedVideo') }}</t-button>
+                  <VtButton v-if="currentSelectedVideo" size="small" variant="outline" @click="selectVideo(currentTrack, null)">{{ t('production.workbench.clearSelectedVideo') }}</VtButton>
                 </div>
                 <div class="production-workbench-candidate-grid">
                   <article v-for="video in currentTrack.videos" :key="video.id" class="production-workbench-candidate-card" :class="{ selected: currentTrack.selectedVideoId === video.id }">
@@ -1735,58 +1763,163 @@ onUnmounted(() => {
                     </div>
                   </article>
                 </div>
-                <t-empty v-if="currentTrack.videos.length === 0" :description="t('production.workbench.noCandidates')" />
+                <VtEmptyState v-if="currentTrack.videos.length === 0" size="small" :description="t('production.workbench.noCandidates')" />
               </section>
             </section>
 
-            <t-empty v-else :description="t('production.node.workbench.empty')">
+            <VtEmptyState v-else :description="t('production.node.workbench.empty')">
               <template #action>
-                <t-button theme="primary" :loading="saving" @click="createEmptyTrack">
+                <VtButton theme="primary" variant="base" :loading="saving" @click="createEmptyTrack">
                   <template #icon><AddIcon /></template>
                   {{ t('production.node.workbench.createTrack') }}
-                </t-button>
+                </VtButton>
               </template>
-            </t-empty>
+            </VtEmptyState>
           </div>
 
-          <div v-else class="production-workbench-editor-placeholder">
-            <div>
-              <p class="eyebrow">P10 Ready</p>
-              <h4>{{ t('production.workbench.editorTitle') }}</h4>
-              <p>{{ t('production.workbench.editorHint') }}</p>
-            </div>
-            <div class="production-workbench-editor-lanes">
-              <section>
-                <strong>{{ t('production.workbench.editorTracks') }}</strong>
-                <span>{{ tracks.length }}</span>
+          <div v-else class="production-workbench-editor-canvas">
+            <header class="production-workbench-editor-top">
+              <div>
+                <p class="eyebrow">{{ t('production.workbench.editorEyebrow') }}</p>
+                <h4>{{ t('production.workbench.editorTitle') }}</h4>
+                <p>{{ t('production.workbench.editorHint') }}</p>
+              </div>
+              <div class="production-workbench-actions">
+                <VtButton size="small" variant="outline" @click="openWorkbenchTab('preview')">{{ t('production.workbench.tabs.preview') }}</VtButton>
+                <VtButton size="small" variant="outline" @click="openWorkbenchTab('generate')">{{ t('production.workbench.tabs.generate') }}</VtButton>
+                <VtButton size="small" theme="primary" variant="base" @click="handleExportAction">{{ t('production.workbench.exportCheck') }}</VtButton>
+              </div>
+            </header>
+
+            <div class="production-workbench-editor-grid">
+              <aside class="production-workbench-media-library">
+                <div class="production-workbench-panel-head">
+                  <div>
+                    <strong>{{ t('production.workbench.mediaLibrary') }}</strong>
+                    <span>{{ t('production.workbench.mediaLibraryHint') }}</span>
+                  </div>
+                </div>
+
+                <section class="production-workbench-media-section">
+                  <strong>{{ t('production.workbench.storyboardMedia') }}</strong>
+                  <div class="production-workbench-media-grid">
+                    <article v-for="storyboard in editorStoryboardMedia" :key="`storyboard-${storyboard.id}`" class="production-workbench-media-card">
+                      <img :src="storyboard.imageUrl || ''" :alt="storyboard.videoDesc" />
+                      <span>{{ storyboardLabel(storyboard) }}</span>
+                    </article>
+                  </div>
+                  <VtEmptyState v-if="editorStoryboardMedia.length === 0" size="small" :description="t('production.workbench.noStoryboardMedia')" />
+                </section>
+
+                <section class="production-workbench-media-section">
+                  <strong>{{ t('production.workbench.assetMedia') }}</strong>
+                  <div class="production-workbench-media-grid">
+                    <article v-for="asset in editorAssetMedia" :key="`asset-${asset.id}`" class="production-workbench-media-card">
+                      <img v-if="asset.imageUrl" :src="asset.imageUrl" :alt="asset.name" />
+                      <span v-else>{{ t(`production.assetType.${asset.type}`) }}</span>
+                      <span>{{ asset.name }}</span>
+                    </article>
+                  </div>
+                  <VtEmptyState v-if="editorAssetMedia.length === 0" size="small" :description="t('production.workbench.noAssetMedia')" />
+                </section>
+
+                <section class="production-workbench-media-section">
+                  <strong>{{ t('production.workbench.selectedVideoMedia') }}</strong>
+                  <div class="production-workbench-media-grid">
+                    <article v-for="item in editorSelectedVideoMedia" :key="`video-${item.video.id}`" class="production-workbench-media-card">
+                      <video v-if="item.video.videoUrl" :src="item.video.videoUrl" muted />
+                      <span v-else>{{ t(`production.status.${item.video.status}`) }}</span>
+                      <span>{{ t('production.node.workbench.trackName', { index: item.track.sortIndex + 1 }) }}</span>
+                    </article>
+                  </div>
+                  <VtEmptyState v-if="editorSelectedVideoMedia.length === 0" size="small" :description="t('production.workbench.noSelectedVideo')" />
+                </section>
+              </aside>
+
+              <section class="production-workbench-timeline">
+                <div class="production-workbench-panel-head">
+                  <div>
+                    <strong>{{ t('production.workbench.timelineTitle') }}</strong>
+                    <span>{{ t('production.workbench.timelineHint', { ready: editorReadyTrackCount, total: tracks.length }) }}</span>
+                  </div>
+                </div>
+                <div class="production-workbench-timeline-list">
+                  <article v-for="row in editorTimelineRows" :key="row.track.id" class="production-workbench-timeline-row" :class="{ ready: row.isReady }">
+                    <div class="production-workbench-timeline-preview" :class="{ empty: !row.selectedVideo?.videoUrl }">
+                      <video v-if="row.selectedVideo?.videoUrl" :src="row.selectedVideo.videoUrl" muted />
+                      <span v-else>{{ row.track.sortIndex + 1 }}</span>
+                    </div>
+                    <div class="production-workbench-timeline-main">
+                      <div>
+                        <strong>{{ t('production.node.workbench.trackName', { index: row.track.sortIndex + 1 }) }}</strong>
+                        <t-tag size="small" :theme="row.isReady ? 'success' : 'warning'" variant="light">
+                          {{ row.isReady ? t('production.workbench.selectedVideoReady') : t('production.workbench.selectedVideoMissing') }}
+                        </t-tag>
+                      </div>
+                      <p>{{ previewText(row.track.prompt, 120) }}</p>
+                      <div class="production-workbench-timeline-shots">
+                        <span v-for="storyboard in row.storyboards" :key="storyboard.id">{{ storyboardLabel(storyboard) }}</span>
+                        <span v-if="row.storyboards.length === 0">{{ t('production.workbench.noLinkedStoryboards') }}</span>
+                      </div>
+                    </div>
+                    <div class="production-workbench-timeline-actions">
+                      <span>{{ t('production.node.storyboard.durationValue', { count: row.duration }) }}</span>
+                      <VtButton size="small" variant="outline" @click="setCurrentTrack(row.track.id); openWorkbenchTab('generate')">{{ t('production.workbench.locateTrack') }}</VtButton>
+                      <VtButton size="small" variant="outline" :disabled="!row.selectedVideo?.videoUrl" @click="row.selectedVideo && openVideoPreview(row.selectedVideo)">{{ t('production.workbench.previewVideo') }}</VtButton>
+                    </div>
+                  </article>
+                </div>
+                <VtEmptyState v-if="editorTimelineRows.length === 0" :description="t('production.workbench.timelineEmpty')">
+                  <template #action>
+                    <VtButton theme="primary" variant="base" :loading="saving" @click="createEmptyTrack">
+                      <template #icon><AddIcon /></template>
+                      {{ t('production.node.workbench.createTrack') }}
+                    </VtButton>
+                  </template>
+                </VtEmptyState>
               </section>
-              <section>
-                <strong>{{ t('production.workbench.editorSelectedVideos') }}</strong>
-                <span>{{ selectedVideoCount }}</span>
-              </section>
-              <section>
-                <strong>{{ t('production.workbench.editorNext') }}</strong>
-                <span>{{ t('production.workbench.editorNextHint') }}</span>
-              </section>
+
+              <aside class="production-workbench-export-panel">
+                <div class="production-workbench-panel-head">
+                  <div>
+                    <strong>{{ t('production.workbench.exportCheckTitle') }}</strong>
+                    <span>{{ t('production.workbench.selectedVideoRatio', { selected: selectedVideoCount, total: tracks.length }) }}</span>
+                  </div>
+                </div>
+                <t-alert :theme="exportReady ? 'success' : 'warning'" :message="exportReady ? t('production.workbench.exportReadyHint') : t('production.workbench.exportCheckHint')" />
+                <section v-if="exportBlockers.length > 0" class="production-workbench-export-failures compact">
+                  <article v-for="blocker in exportBlockers.slice(0, 6)" :key="`editor-${blocker.trackId}-${blocker.reasonKey}`">
+                    <strong>{{ blocker.trackLabel }}</strong>
+                    <span>{{ t(`production.workbench.exportBlockerReason.${blocker.reasonKey}`) }}</span>
+                    <small>{{ blocker.message }}</small>
+                    <VtButton size="small" variant="outline" @click="focusExportBlocker(blocker.trackId)">{{ t('production.workbench.locateTrack') }}</VtButton>
+                  </article>
+                </section>
+                <VtEmptyState v-else size="small" :description="t('production.workbench.exportReadyHint')" />
+                <div class="production-workbench-actions">
+                  <VtButton variant="outline" @click="openWorkbenchTab('generate')">{{ t('production.workbench.tabs.generate') }}</VtButton>
+                  <VtButton theme="primary" variant="base" :disabled="tracks.length === 0" @click="handleExportAction">{{ t('production.workbench.startExport') }}</VtButton>
+                </div>
+              </aside>
             </div>
           </div>
         </t-loading>
       </section>
     </div>
 
-    <t-dialog
+    <VtDialog
       :visible="previewVideoVisible"
-      :header="t('production.workbench.previewVideo')"
+      :title="t('production.workbench.previewVideo')"
       width="820px"
       :footer="false"
       @update:visible="(value) => (previewVideoVisible = value)">
       <video v-if="previewVideo?.videoUrl" class="production-workbench-video-modal" :src="previewVideo.videoUrl" controls autoplay />
-      <t-empty v-else :description="t('production.workbench.noSelectedVideo')" />
-    </t-dialog>
+      <VtEmptyState v-else :description="t('production.workbench.noSelectedVideo')" />
+    </VtDialog>
 
-    <t-dialog
+    <VtDialog
       :visible="exportCheckVisible"
-      :header="t('production.workbench.exportCheckTitle')"
+      :title="t('production.workbench.exportCheckTitle')"
       width="720px"
       :footer="false"
       @update:visible="(value) => (exportCheckVisible = value)">
@@ -1802,25 +1935,25 @@ onUnmounted(() => {
             <span>{{ t(`production.workbench.exportBlockerReason.${blocker.reasonKey}`) }}</span>
             <small>{{ blocker.message }}</small>
             <div class="production-workbench-actions">
-              <t-button size="small" variant="outline" @click="focusExportBlocker(blocker.trackId)">
+              <VtButton size="small" variant="outline" @click="focusExportBlocker(blocker.trackId)">
                 {{ t('production.workbench.locateTrack') }}
-              </t-button>
+              </VtButton>
             </div>
           </article>
         </section>
         <div class="production-workbench-actions">
-          <t-button variant="outline" @click="exportCheckVisible = false">{{ t('production.cancel') }}</t-button>
-          <t-button theme="primary" :disabled="!exportReady" @click="openDraftDialog">{{ t('production.workbench.startExport') }}</t-button>
+          <VtButton variant="outline" @click="exportCheckVisible = false">{{ t('production.cancel') }}</VtButton>
+          <VtButton theme="primary" variant="base" :disabled="!exportReady" @click="openDraftDialog">{{ t('production.workbench.startExport') }}</VtButton>
         </div>
       </div>
-    </t-dialog>
+    </VtDialog>
 
-    <t-dialog
+    <VtDialog
       :visible="draftDialogVisible"
-      :header="t('production.workbench.exportJianyingDraft')"
+      :title="t('production.workbench.exportJianyingDraft')"
       width="620px"
-      :confirm-btn="t('production.workbench.startExport')"
-      :cancel-btn="t('production.cancel')"
+      :confirm-text="t('production.workbench.startExport')"
+      :cancel-text="t('production.cancel')"
       :confirm-loading="jianyingExporting"
       @update:visible="(value) => (draftDialogVisible = value)"
       @confirm="createJianyingDraft">
@@ -1841,11 +1974,11 @@ onUnmounted(() => {
           <span>{{ t('production.workbench.selectedVideos', { count: selectedVideoCount }) }}</span>
         </div>
       </div>
-    </t-dialog>
+    </VtDialog>
 
-    <t-dialog
+    <VtDialog
       :visible="exportResultVisible"
-      :header="exportResultTitle"
+      :title="exportResultTitle"
       width="760px"
       :footer="false"
       @update:visible="(value) => (exportResultVisible = value)">
@@ -1873,31 +2006,31 @@ onUnmounted(() => {
             <small>{{ failure.message }}</small>
             <code>{{ failure.path || t('production.emptyText') }}</code>
             <div v-if="failure.trackId" class="production-workbench-actions">
-              <t-button size="small" variant="outline" @click="focusExportBlocker(failure.trackId)">
+              <VtButton size="small" variant="outline" @click="focusExportBlocker(failure.trackId)">
                 {{ t('production.workbench.locateTrack') }}
-              </t-button>
+              </VtButton>
             </div>
           </article>
         </section>
         <div v-if="exportResultPath || exportResultTaskId" class="production-workbench-actions">
-          <t-button theme="primary" :disabled="!exportResultPath" @click="openExportDirectory">
+          <VtButton theme="primary" variant="base" :disabled="!exportResultPath" @click="openExportDirectory">
             <template #icon><FolderOpenIcon /></template>
             {{ t('production.workbench.openExportDirectory') }}
-          </t-button>
-          <t-button variant="outline" :disabled="!exportResultPath" @click="copyExportPath">
+          </VtButton>
+          <VtButton variant="outline" :disabled="!exportResultPath" @click="copyExportPath">
             <template #icon><CheckIcon /></template>
             {{ t('production.workbench.copyExportPath') }}
-          </t-button>
-          <t-button variant="outline" :disabled="!exportResultTaskId" @click="copyExportTaskId">
+          </VtButton>
+          <VtButton variant="outline" :disabled="!exportResultTaskId" @click="copyExportTaskId">
             <template #icon><CheckIcon /></template>
             {{ t('production.workbench.copyTaskId') }}
-          </t-button>
-          <t-button variant="outline" @click="goTaskCenter">
+          </VtButton>
+          <VtButton variant="outline" @click="goTaskCenter">
             <template #icon><ErrorCircleIcon /></template>
             {{ t('production.workbench.goTaskCenter') }}
-          </t-button>
+          </VtButton>
         </div>
       </div>
-    </t-dialog>
-  </t-dialog>
+    </VtDialog>
+  </VtDialog>
 </template>

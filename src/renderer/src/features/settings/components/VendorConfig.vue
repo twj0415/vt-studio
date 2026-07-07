@@ -9,15 +9,52 @@ import {
   IMAGE_GENERATION_MODE_VALUES,
   MODEL_CAPABILITIES,
   VIDEO_SIMPLE_MODES,
+  type ImageGenerationMode,
+  type ProjectImageQuality,
+  type ProjectVideoRatio,
   type VideoGenerationMode,
 } from '@shared/constants/dictionaries';
 import {
+  MODEL_AUDIO_SUPPORTS,
   parseVideoModeKey,
   serializeVideoMode,
   VIDEO_MODE_PRESETS,
+  type ModelAudioSupport,
   type VideoModePresetValue,
 } from '@shared/constants/model-capabilities';
+import type { ReasoningEffort, TextReasoningCapability } from '@shared/constants/model-capabilities';
+import type { ApiConnectionTestResult, ModelCapability } from '@shared/types/model-config';
 import type { VendorListItem, VendorModel, VendorModelType } from '@shared/types/vendor';
+import ModelTestDialog from './ModelTestDialog.vue';
+
+interface ModelTestDialogModel {
+  label: string;
+  modelName: string;
+  type: ModelCapability;
+  think?: boolean;
+  reasoning?: TextReasoningCapability;
+  imageModes?: ImageGenerationMode[];
+  videoModes?: VideoGenerationMode[];
+  durationOptions?: number[];
+  resolutionOptions?: string[];
+  audioSupport?: ModelAudioSupport;
+}
+
+interface ModelTestSubmitPayload {
+  modelName: string;
+  prompt: string;
+  reasoningEnabled: boolean;
+  reasoningEffort: ReasoningEffort;
+  imageMode?: ImageGenerationMode;
+  imageSize?: ProjectImageQuality;
+  aspectRatio?: string;
+  videoMode?: string;
+  duration?: number;
+  resolution?: string;
+  videoAspectRatio?: ProjectVideoRatio;
+  audio?: boolean;
+  referenceImages?: string[];
+}
 
 const MODEL_TYPE_OPTIONS: Array<{ labelKey: string; value: VendorModelType }> = [
   { labelKey: 'settings.vendorConfig.modelType.text', value: MODEL_CAPABILITIES.TEXT },
@@ -25,13 +62,6 @@ const MODEL_TYPE_OPTIONS: Array<{ labelKey: string; value: VendorModelType }> = 
   { labelKey: 'settings.vendorConfig.modelType.video', value: MODEL_CAPABILITIES.VIDEO },
   { labelKey: 'settings.vendorConfig.modelType.tts', value: MODEL_CAPABILITIES.TTS },
 ];
-
-const MODEL_TYPE_LABEL_KEYS: Record<VendorModelType, string> = {
-  text: 'settings.vendorConfig.modelType.text',
-  image: 'settings.vendorConfig.modelType.image',
-  video: 'settings.vendorConfig.modelType.video',
-  tts: 'settings.vendorConfig.modelType.tts',
-};
 
 const IMAGE_MODE_VALUES = IMAGE_GENERATION_MODE_VALUES;
 type ImageModeValue = (typeof IMAGE_MODE_VALUES)[number];
@@ -82,9 +112,8 @@ const editingModelName = ref('');
 const modelForm = reactive<ModelForm>(createEmptyModelForm());
 
 const testDialogVisible = ref(false);
-const testPrompt = ref('');
 const testing = ref(false);
-const testResult = ref('');
+const testResult = ref<ApiConnectionTestResult | null>(null);
 const testModel = ref<VendorModel | null>(null);
 
 const codeDialogVisible = ref(false);
@@ -126,17 +155,22 @@ const modelsByType = computed(() => {
   };
 
   for (const model of selectedVendor.value?.models ?? []) {
-    groups[model.type].push(model);
+    const group = groups[model.type as VendorModelType];
+    if (group) {
+      group.push(model);
+    }
   }
 
   return groups;
 });
+const testDialogModels = computed<ModelTestDialogModel[]>(() => (testModel.value ? [toModelTestDialogModel(testModel.value)] : []));
+const testDialogTitle = computed(() => t('settings.modelTestDialog.title'));
 
 watch(
   selectedVendor,
   (vendor) => {
     resetInputDraft(vendor);
-    testResult.value = '';
+    testResult.value = null;
   },
   { immediate: true },
 );
@@ -176,9 +210,9 @@ function resetModelForm(model?: VendorModel): void {
   }
 
   if (model.type === 'video') {
-    modelForm.videoModeKeys = model.mode.map((mode) => serializeVideoMode(mode) as VideoModePresetValue);
+    modelForm.videoModeKeys = (Array.isArray(model.mode) ? model.mode : []).map((mode) => serializeVideoMode(mode) as VideoModePresetValue);
     modelForm.audio = model.audio === 'optional' ? 'optional' : model.audio ? 'true' : 'false';
-    const first = model.durationResolutionMap[0];
+    const first = Array.isArray(model.durationResolutionMap) ? model.durationResolutionMap[0] : null;
     modelForm.durationText = first?.duration.join(',') ?? [COMMON_VIDEO_DURATIONS[2], COMMON_VIDEO_DURATIONS[5]].join(',');
     modelForm.resolutionText = first?.resolution.join(',') ?? [COMMON_VIDEO_RESOLUTIONS[0], COMMON_VIDEO_RESOLUTIONS[1]].join(',');
   }
@@ -226,10 +260,6 @@ function getResponseOk(response: { code: number; msg: string }): boolean {
   return response.code === 200;
 }
 
-function getModelTypeLabel(type: VendorModelType): string {
-  return t(MODEL_TYPE_LABEL_KEYS[type]);
-}
-
 function getImageModeLabel(value: string): string {
   const key = IMAGE_MODE_LABEL_KEYS[value];
   return key ? t(key) : value;
@@ -238,6 +268,30 @@ function getImageModeLabel(value: string): string {
 function getVideoModeLabel(value: string): string {
   const key = VIDEO_MODE_LABEL_KEYS[value];
   return key ? t(key) : value;
+}
+
+function toModelTestDialogModel(model: VendorModel): ModelTestDialogModel {
+  const videoModeList = model.type === 'video' && Array.isArray(model.mode) ? model.mode : [];
+  const durationResolutionMap = model.type === 'video' && Array.isArray(model.durationResolutionMap) ? model.durationResolutionMap : [];
+
+  return {
+    label: `${model.name} (${model.modelName})`,
+    modelName: model.modelName,
+    type: model.type,
+    think: model.type === 'text' ? model.think : undefined,
+    reasoning: model.type === 'text' ? model.reasoning : undefined,
+    imageModes: model.type === 'image' ? [...(Array.isArray(model.mode) ? model.mode : [])] : undefined,
+    videoModes: model.type === 'video' ? videoModeList.map((mode) => (Array.isArray(mode) ? [...mode] : mode)) : undefined,
+    durationOptions: model.type === 'video' ? durationResolutionMap.flatMap((item) => (Array.isArray(item.duration) ? item.duration : [])) : undefined,
+    resolutionOptions: model.type === 'video' ? durationResolutionMap.flatMap((item) => (Array.isArray(item.resolution) ? item.resolution : [])) : undefined,
+    audioSupport: model.type === 'video'
+      ? model.audio === true
+        ? MODEL_AUDIO_SUPPORTS.REQUIRED
+        : model.audio === false
+          ? MODEL_AUDIO_SUPPORTS.NONE
+          : MODEL_AUDIO_SUPPORTS.OPTIONAL
+      : undefined,
+  };
 }
 
 function getReadonlyProjectionMessage(): string {
@@ -281,10 +335,6 @@ function getAdapterKindText(vendor: VendorListItem): string {
   return vendor.codeReady ? t('settings.vendorConfig.status.customAdapter') : t('settings.vendorConfig.status.builtinAdapter');
 }
 
-function formatTestDuration(durationMs: number): string {
-  return t('settings.vendorConfig.testResult.duration', { duration: durationMs });
-}
-
 async function loadVendors(): Promise<void> {
   loading.value = true;
   try {
@@ -294,10 +344,12 @@ async function loadVendors(): Promise<void> {
       return;
     }
 
-    vendors.value = response.data.vendors;
+    vendors.value = Array.isArray(response.data.vendors) ? response.data.vendors : [];
     if (!selectedVendorId.value || !vendors.value.some((vendor) => vendor.id === selectedVendorId.value)) {
       selectedVendorId.value = vendors.value[0]?.id ?? '';
     }
+  } catch (error) {
+    MessagePlugin.error(error instanceof Error ? error.message : t('settings.vendorConfig.message.loadFailed'));
   } finally {
     loading.value = false;
   }
@@ -342,7 +394,7 @@ async function saveInputsForTest(vendor: VendorListItem): Promise<boolean> {
   const missing = vendor.inputs.find((input) => isMissingRequiredInput(vendor, input));
   if (missing) {
     const message = getRequiredMessage(missing.label);
-    testResult.value = message;
+    testResult.value = { content: message, durationMs: 0 };
     MessagePlugin.warning(message);
     return false;
   }
@@ -353,7 +405,7 @@ async function saveInputsForTest(vendor: VendorListItem): Promise<boolean> {
   });
 
   if (!getResponseOk(response)) {
-    testResult.value = response.msg;
+    testResult.value = { content: response.msg, durationMs: 0 };
     MessagePlugin.error(response.msg);
     return false;
   }
@@ -539,12 +591,11 @@ function confirmDeleteModel(model: VendorModel): void {
 
 function openTestDialog(model: VendorModel): void {
   testModel.value = model;
-  testResult.value = '';
-  testPrompt.value = t('settings.vendorConfig.testPrompt.default');
+  testResult.value = null;
   testDialogVisible.value = true;
 }
 
-async function runModelTest(): Promise<void> {
+async function runModelTest(payload: ModelTestSubmitPayload): Promise<void> {
   const vendor = selectedVendor.value;
   const model = testModel.value;
   if (!vendor || !model) {
@@ -552,7 +603,7 @@ async function runModelTest(): Promise<void> {
   }
 
   testing.value = true;
-  testResult.value = '';
+  testResult.value = null;
   try {
     const saved = await saveInputsForTest(vendor);
     if (!saved) {
@@ -562,48 +613,63 @@ async function runModelTest(): Promise<void> {
     if (model.type === 'text') {
       const response = await window.vtStudio.settings.vendor.testText({
         vendorId: vendor.id,
-        modelName: model.modelName,
-        prompt: testPrompt.value,
+        modelName: payload.modelName,
+        prompt: payload.prompt,
+        reasoningEnabled: payload.reasoningEnabled,
+        reasoningEffort: payload.reasoningEffort,
       });
       if (!getResponseOk(response)) {
-        testResult.value = response.msg;
+        testResult.value = { content: response.msg, durationMs: 0 };
         MessagePlugin.error(response.msg);
         return;
       }
 
-      testResult.value = `${response.data.content}\n\n${formatTestDuration(response.data.durationMs)}`;
+      testResult.value = response.data;
       return;
     }
 
     if (model.type === 'image') {
       const response = await window.vtStudio.settings.vendor.testImage({
         vendorId: vendor.id,
-        modelName: model.modelName,
-        prompt: testPrompt.value,
+        modelName: payload.modelName,
+        prompt: payload.prompt,
+        imageMode: payload.imageMode,
+        imageSize: payload.imageSize,
+        aspectRatio: payload.aspectRatio,
+        referenceImages: payload.referenceImages,
       });
-      testResult.value = getResponseOk(response) ? t('settings.vendorConfig.testResult.imageSuccess', { path: response.data.filePath }) : response.msg;
       if (!getResponseOk(response)) {
+        testResult.value = { content: response.msg, durationMs: 0 };
         MessagePlugin.error(response.msg);
+        return;
       }
+      testResult.value = response.data;
       return;
     }
 
     if (model.type === 'video') {
-      const modeKeys = model.mode.map(serializeVideoMode);
+      const modeKeys = (Array.isArray(model.mode) ? model.mode : []).map(serializeVideoMode);
       const response = await window.vtStudio.settings.vendor.testVideo({
         vendorId: vendor.id,
-        modelName: model.modelName,
-        mode: modeKeys.includes('text') ? 'text' : String(modeKeys[0] ?? 'text'),
-        prompt: testPrompt.value,
+        modelName: payload.modelName,
+        mode: payload.videoMode || (modeKeys.includes('text') ? 'text' : String(modeKeys[0] ?? 'text')),
+        prompt: payload.prompt,
+        duration: payload.duration,
+        resolution: payload.resolution,
+        aspectRatio: payload.videoAspectRatio,
+        audio: payload.audio,
+        referenceImages: payload.referenceImages,
       });
-      testResult.value = getResponseOk(response) ? t('settings.vendorConfig.testResult.videoSuccess', { path: response.data.filePath }) : response.msg;
       if (!getResponseOk(response)) {
+        testResult.value = { content: response.msg, durationMs: 0 };
         MessagePlugin.error(response.msg);
+        return;
       }
+      testResult.value = response.data;
       return;
     }
 
-    testResult.value = t('settings.vendorConfig.testResult.ttsPending');
+    testResult.value = { content: t('settings.vendorConfig.testResult.ttsPending'), durationMs: 0 };
   } finally {
     testing.value = false;
   }
@@ -702,11 +768,19 @@ function getCapabilityLabel(capability: string): string {
 }
 
 function formatAdapterUpdatedAt(timestamp: number): string {
-  if (!timestamp) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
     return t('settings.vendorConfig.unknown');
   }
 
   return new Date(timestamp).toLocaleString();
+}
+
+function getVendorName(vendor: VendorListItem): string {
+  return vendor.name || vendor.id || t('settings.vendorConfig.unknown');
+}
+
+function getVendorLogo(vendor: VendorListItem): string {
+  return getVendorName(vendor).slice(0, 2).toUpperCase();
 }
 
 onMounted(loadVendors);
@@ -745,9 +819,9 @@ onMounted(loadVendors);
           :class="{ 'is-active': vendor.id === selectedVendorId }"
           @click="selectedVendorId = vendor.id"
         >
-          <span class="vendor-logo">{{ vendor.name.slice(0, 2).toUpperCase() }}</span>
+          <span class="vendor-logo">{{ getVendorLogo(vendor) }}</span>
           <span class="vendor-list-main">
-            <strong>{{ vendor.name }}</strong>
+            <strong>{{ getVendorName(vendor) }}</strong>
             <small>{{ getVendorListSummary(vendor) }}</small>
           </span>
           <t-tag size="small" :theme="vendor.status === 'ready' ? 'success' : 'warning'" variant="light">{{ vendor.status === 'ready' ? t('settings.vendorConfig.status.ready') : t('settings.vendorConfig.status.pending') }}</t-tag>
@@ -757,7 +831,7 @@ onMounted(loadVendors);
       <main v-if="selectedVendor" class="vendor-detail">
         <div class="vendor-title-row">
           <div>
-            <h4>{{ selectedVendor.name }}</h4>
+            <h4>{{ getVendorName(selectedVendor) }}</h4>
             <p>{{ selectedVendor.description || t('settings.vendorConfig.noDescription') }}</p>
           </div>
           <t-switch :model-value="selectedVendor.enabled" size="large" :disabled="selectedVendor.readOnly" @change="(value) => setEnabled(selectedVendor!, Boolean(value))" />
@@ -923,16 +997,16 @@ onMounted(loadVendors);
     </t-form>
   </t-dialog>
 
-  <t-dialog v-model:visible="testDialogVisible" :header="testModel ? t('settings.vendorConfig.testDialog.titleWithType', { type: getModelTypeLabel(testModel.type) }) : t('settings.vendorConfig.testDialog.title')" width="640px" :confirm-btn="t('settings.vendorConfig.testDialog.start')" :confirm-loading="testing" @confirm="runModelTest">
-    <t-form layout="vertical">
-      <t-form-item label="Prompt">
-        <t-textarea v-model="testPrompt" :autosize="{ minRows: 4, maxRows: 8 }" />
-      </t-form-item>
-      <t-form-item v-if="testResult" :label="t('settings.vendorConfig.testDialog.result')">
-        <pre class="test-result">{{ testResult }}</pre>
-      </t-form-item>
-    </t-form>
-  </t-dialog>
+  <ModelTestDialog
+    v-model:visible="testDialogVisible"
+    :header="testDialogTitle"
+    :models="testDialogModels"
+    :initial-model-name="testModel?.modelName"
+    :default-prompt="t('settings.vendorConfig.testPrompt.default')"
+    :loading="testing"
+    :result="testResult"
+    @submit="runModelTest"
+  />
 
   <t-dialog v-model:visible="codeDialogVisible" :header="codeDialogMode === 'add' ? t('settings.vendorConfig.codeDialog.addTitle') : t('settings.vendorConfig.codeDialog.editTitle')" width="860px" :confirm-btn="t('settings.vendorConfig.codeDialog.save')" :confirm-loading="codeSaving" @confirm="saveCode">
     <div class="vendor-warning compact">

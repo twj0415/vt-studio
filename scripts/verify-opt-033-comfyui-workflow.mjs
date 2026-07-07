@@ -48,7 +48,7 @@ assertIncludes('src/main/services/settings/model-config.ts', 'workflowManifest: 
 assertIncludes('src/main/services/settings/model-config.ts', "workflow: connection.workflowManifest ?? ''");
 assertIncludes('src/main/services/settings/model-config.ts', "'workflowManifest'");
 
-assertIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', 'Workflow Manifest');
+assertIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', 'settings.modelService.form.workflowManifest');
 assertIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', 'serviceForm.workflowManifest');
 assertIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', 'settings.modelService.validation.endpointRequired');
 assertIncludes('src/renderer/src/i18n/messages.ts', "endpointRequired: 'ComfyUI Endpoint 不能为空'");

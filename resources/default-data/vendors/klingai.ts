@@ -1,6 +1,6 @@
 /**
  * Toonflow AI供应商模板 - 可灵AI
- * @version 2.0
+ * @version 2.1
  */
 
 // ============================================================
@@ -78,7 +78,7 @@ interface VideoConfig {
   prompt: string;
   referenceList?: ReferenceList[];
   audio?: boolean;
-  mode: VideoMode[];
+  mode: VideoMode[] | VideoMode | string;
 }
 
 interface TTSConfig {
@@ -133,7 +133,7 @@ declare const exports: {
 
 const vendor: VendorConfig = {
   id: "klingai",
-  version: "2.0",
+  version: "2.1",
   author: "Toonflow",
   name: "可灵AI",
   description:
@@ -150,7 +150,7 @@ const vendor: VendorConfig = {
       name: "kling-video-o1 标准",
       modelName: "kling-video-o1:std",
       type: "video",
-      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7", "videoReference:1"]],
+      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7"]],
       audio: false,
       durationResolutionMap: [{ duration: [5, 10], resolution: ["720p"] }],
     },
@@ -158,7 +158,7 @@ const vendor: VendorConfig = {
       name: "kling-video-o1 专家",
       modelName: "kling-video-o1:pro",
       type: "video",
-      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7", "videoReference:1"]],
+      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7"]],
       audio: false,
       durationResolutionMap: [{ duration: [5, 10], resolution: ["720p"] }],
     },
@@ -167,7 +167,7 @@ const vendor: VendorConfig = {
       name: "kling-v3-omni 标准",
       modelName: "kling-v3-omni:std",
       type: "video",
-      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7", "videoReference:1"]],
+      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7"]],
       audio: false,
       durationResolutionMap: [{ duration: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["720p"] }],
     },
@@ -175,7 +175,7 @@ const vendor: VendorConfig = {
       name: "kling-v3-omni 专家",
       modelName: "kling-v3-omni:pro",
       type: "video",
-      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7", "videoReference:1"]],
+      mode: ["text", "singleImage", "startEndRequired", ["imageReference:7"]],
       audio: false,
       durationResolutionMap: [{ duration: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["720p"] }],
     },
@@ -343,7 +343,7 @@ const generateAuthToken = (): string => {
  * 获取基础请求地址
  */
 const getBaseUrl = (): string => {
-  return vendor.inputValues.baseUrl || "https://api-beijing.klingai.com";
+  return trimTrailingSlash(vendor.inputValues.baseUrl || "https://api-beijing.klingai.com");
 };
 
 /**
@@ -360,6 +360,113 @@ const extractRawBase64 = (ref: ReferenceList): string => {
  */
 const extractImageUrl = (ref: ReferenceList): string => {
   return ref.base64.startsWith("data:") ? ref.base64 : `data:image/jpeg;base64,${ref.base64}`;
+};
+
+const trimTrailingSlash = (value: string): string => {
+  return value.trim().replace(/\/+$/, "");
+};
+
+const isReferenceModeToken = (value: unknown): value is `videoReference:${number}` | `imageReference:${number}` | `audioReference:${number}` => {
+  return typeof value === "string" && /^(videoReference|imageReference|audioReference):\d+$/.test(value);
+};
+
+const hasReferenceModeShape = (value: unknown): value is string => {
+  return typeof value === "string" && /^[a-zA-Z]+Reference:\d+$/.test(value);
+};
+
+const parseKlingReferenceModeGroup = (tokens: unknown[]): (`videoReference:${number}` | `imageReference:${number}` | `audioReference:${number}`)[] => {
+  const normalized = tokens.map((item) => String(item).trim()).filter(Boolean);
+  const unsupported = normalized.filter((item) => !isReferenceModeToken(item));
+  if (unsupported.length > 0) {
+    throw new Error(`可灵AI adapter 不支持参考模式：${unsupported.join("、")}`);
+  }
+
+  return normalized as (`videoReference:${number}` | `imageReference:${number}` | `audioReference:${number}`)[];
+};
+
+const normalizeKlingVideoMode = (mode: VideoConfig["mode"]): VideoMode => {
+  if (typeof mode === "string") {
+    const normalized = mode.trim();
+    if (normalized.includes(",")) {
+      return parseKlingReferenceModeGroup(normalized.split(","));
+    }
+
+    if (hasReferenceModeShape(normalized)) {
+      return parseKlingReferenceModeGroup([normalized]);
+    }
+
+    return normalized as VideoMode;
+  }
+
+  if (Array.isArray(mode)) {
+    if (mode.length === 0) {
+      return "text";
+    }
+
+    if (mode.every(hasReferenceModeShape)) {
+      return parseKlingReferenceModeGroup(mode);
+    }
+
+    const selected = mode[0];
+    if (Array.isArray(selected)) {
+      return parseKlingReferenceModeGroup(selected);
+    }
+
+    return selected as VideoMode;
+  }
+
+  return "text";
+};
+
+const isReferenceModeGroup = (mode: VideoMode): mode is (`videoReference:${number}` | `imageReference:${number}` | `audioReference:${number}`)[] => {
+  return Array.isArray(mode);
+};
+
+const getKlingErrorMessage = (payload: any): string => {
+  return (
+    payload?.message ||
+    payload?.msg ||
+    payload?.error?.message ||
+    payload?.error_msg ||
+    payload?.data?.message ||
+    payload?.data?.task_status_msg ||
+    JSON.stringify(payload)
+  );
+};
+
+const isKlingOk = (payload: any): boolean => {
+  return payload?.code === 0 || payload?.code === "0" || payload?.code === undefined;
+};
+
+const getTaskId = (payload: any): string => {
+  return payload?.data?.task_id || payload?.data?.taskId || payload?.task_id || payload?.taskId || payload?.id || "";
+};
+
+const getTaskStatus = (taskData: any): string => {
+  return String(taskData?.task_status || taskData?.status || taskData?.state || "").toLowerCase();
+};
+
+const getVideoUrl = (taskData: any): string => {
+  return (
+    taskData?.task_result?.videos?.[0]?.url ||
+    taskData?.task_result?.video_url ||
+    taskData?.task_result?.url ||
+    taskData?.videos?.[0]?.url ||
+    taskData?.video_url ||
+    taskData?.url ||
+    ""
+  );
+};
+
+const ensureNoUnsupportedReferences = (mode: VideoMode, videoRefs: ReferenceList[], audioRefs: ReferenceList[]): void => {
+  const modeTokens = isReferenceModeGroup(mode) ? mode : [];
+  if (modeTokens.some((item) => item.startsWith("videoReference:")) || videoRefs.length > 0) {
+    throw new Error("可灵AI adapter 当前未实现视频参考输入，请改用文生视频、图片参考、单图或首尾帧模式");
+  }
+
+  if (modeTokens.some((item) => item.startsWith("audioReference:")) || audioRefs.length > 0) {
+    throw new Error("可灵AI adapter 当前未实现音频参考输入，请关闭音频参考后再生成");
+  }
 };
 
 /**
@@ -385,11 +492,14 @@ const submitAndPoll = async (submitUrl: string, queryUrlBase: string, requestBod
     },
   });
 
-  if (submitResp.data.code !== 0) {
-    throw new Error(`提交任务失败: ${submitResp.data.message || JSON.stringify(submitResp.data)}`);
+  if (!isKlingOk(submitResp.data)) {
+    throw new Error(`提交任务失败: ${getKlingErrorMessage(submitResp.data)}`);
   }
 
-  const taskId = submitResp.data.data.task_id;
+  const taskId = getTaskId(submitResp.data);
+  if (!taskId) {
+    throw new Error(`提交任务成功但未返回任务ID: ${JSON.stringify(submitResp.data)}`);
+  }
   logger(`任务已提交，任务ID: ${taskId}`);
 
   const result = await pollTask(
@@ -401,24 +511,24 @@ const submitAndPoll = async (submitUrl: string, queryUrlBase: string, requestBod
         },
       });
 
-      if (queryResp.data.code !== 0) {
-        return { completed: true, error: `查询任务失败: ${queryResp.data.message}` };
+      if (!isKlingOk(queryResp.data)) {
+        return { completed: true, error: `查询任务失败: ${getKlingErrorMessage(queryResp.data)}` };
       }
 
       const taskData = queryResp.data.data;
-      const status = taskData.task_status;
+      const status = getTaskStatus(taskData);
       logger(`轮询中... 任务状态: ${status}`);
 
-      if (status === "succeed") {
-        const videoUrl = taskData.task_result?.videos?.[0]?.url;
+      if (["succeed", "success", "completed", "finished"].includes(status)) {
+        const videoUrl = getVideoUrl(taskData);
         if (!videoUrl) {
           return { completed: true, error: "任务完成但未获取到视频URL" };
         }
         return { completed: true, data: videoUrl };
       }
 
-      if (status === "failed") {
-        return { completed: true, error: `视频生成失败: ${taskData.task_status_msg || "未知错误"}` };
+      if (["failed", "failure", "error", "cancelled", "canceled"].includes(status)) {
+        return { completed: true, error: `视频生成失败: ${taskData?.task_status_msg || taskData?.message || taskData?.fail_reason || "未知错误"}` };
       }
 
       return { completed: false };
@@ -458,18 +568,21 @@ const videoRequest = async (config: VideoConfig, model: VideoModel): Promise<str
   // 判断是否为 Omni 模型
   const isOmniModel = modelName === "kling-video-o1" || modelName === "kling-v3-omni";
 
-  // 判断当前选中的视频生成模式
-  const currentMode = config.mode;
-  const isText = currentMode.includes("text");
-  const isSingleImage = currentMode.includes("singleImage");
-  const isStartEndRequired = currentMode.includes("startEndRequired");
-  const isEndFrameOptional = currentMode.includes("endFrameOptional");
-  const isStartFrameOptional = currentMode.includes("startFrameOptional");
-  const hasMultiRef = Array.isArray(currentMode) && currentMode.some((m) => Array.isArray(m));
+  // 判断当前选中的视频生成模式。运行时可能传入字符串、序列化后的组合模式或数组。
+  const currentMode = normalizeKlingVideoMode(config.mode);
+  const isText = currentMode === "text";
+  const isSingleImage = currentMode === "singleImage";
+  const isStartEndRequired = currentMode === "startEndRequired";
+  const isEndFrameOptional = currentMode === "endFrameOptional";
+  const isStartFrameOptional = currentMode === "startFrameOptional";
+  const hasMultiRef = isReferenceModeGroup(currentMode);
 
   // 提取不同类型的引用
   const imageRefs = (config.referenceList || []).filter((r) => r.type === "image");
   const videoRefs = (config.referenceList || []).filter((r) => r.type === "video");
+  const audioRefs = (config.referenceList || []).filter((r) => r.type === "audio");
+
+  ensureNoUnsupportedReferences(currentMode, videoRefs, audioRefs);
 
   // =====================================================
   // Omni 模型 —— 使用 /v1/videos/omni-video 接口

@@ -3,7 +3,40 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { AddIcon, DeleteIcon, EditIcon, PlayCircleIcon, RefreshIcon, SwapIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
+import type { ModelAudioSupport, ReasoningEffort, TextReasoningCapability } from '@shared/constants/model-capabilities';
+import type { ImageGenerationMode, ProjectImageQuality, ProjectVideoRatio, VideoGenerationMode } from '@shared/constants/dictionaries';
 import type { ApiConnection, ApiConnectionDraft, ApiConnectionTestResult, ApiServiceType, CapabilitySummary, ModelCapability, RegisteredModel } from '@shared/types/model-config';
+import ModelTestDialog from './ModelTestDialog.vue';
+
+interface ModelTestDialogModel {
+  label: string;
+  modelName: string;
+  type: ModelCapability;
+  think?: boolean;
+  reasoning?: TextReasoningCapability;
+  imageModes?: ImageGenerationMode[];
+  videoModes?: VideoGenerationMode[];
+  durationOptions?: number[];
+  resolutionOptions?: string[];
+  aspectRatioOptions?: string[];
+  audioSupport?: ModelAudioSupport;
+}
+
+interface ModelTestSubmitPayload {
+  modelName: string;
+  prompt: string;
+  reasoningEnabled: boolean;
+  reasoningEffort: ReasoningEffort;
+  imageMode?: ImageGenerationMode;
+  imageSize?: ProjectImageQuality;
+  aspectRatio?: string;
+  videoMode?: string;
+  duration?: number;
+  resolution?: string;
+  videoAspectRatio?: ProjectVideoRatio;
+  audio?: boolean;
+  referenceImages?: string[];
+}
 
 interface ServiceTemplate {
   serviceType: ApiServiceType;
@@ -20,7 +53,7 @@ const CAPABILITY_OPTIONS: Array<{ labelKey: string; value: ModelCapability }> = 
   { labelKey: 'settings.modelService.capability.tts', value: 'tts' },
 ];
 
-const SERVICE_ORDER: ApiServiceType[] = ['openai-gateway', 'openai-official', 'claude', 'deepseek', 'gemini', 'local-workflow', 'advanced'];
+const SERVICE_ORDER: ApiServiceType[] = ['openai-gateway', 'openai-official', 'claude', 'deepseek', 'gemini', 'minimax', 'klingai', 'local-workflow', 'advanced'];
 
 const { t } = useI18n();
 const emit = defineEmits<{
@@ -28,22 +61,38 @@ const emit = defineEmits<{
 }>();
 const loading = ref(false);
 const saving = ref(false);
-const testingConnectionId = ref('');
-const testingCapability = ref<ModelCapability | ''>('');
 const connections = ref<ApiConnection[]>([]);
 const capabilities = ref<CapabilitySummary[]>([]);
 const templates = ref<ServiceTemplate[]>([]);
 const serviceDialogVisible = ref(false);
 const bindingDialogVisible = ref(false);
+const modelTestDialogVisible = ref(false);
+const modelTestLoading = ref(false);
 const editingId = ref('');
 const activeCapability = ref<ModelCapability>('text');
-const testResult = ref('');
 const testPrompt = ref('');
+const modelTestTitle = ref('');
+const modelTestInitialModelName = ref('');
+const modelTestDefaultPrompt = ref('');
+const modelTestModels = ref<ModelTestDialogModel[]>([]);
+const modelTestResult = ref<ApiConnectionTestResult | null>(null);
+const modelTestContext = ref<
+  | {
+      type: 'connection';
+      connection: ApiConnection;
+    }
+  | {
+      type: 'capability';
+      summary: CapabilitySummary;
+    }
+  | null
+>(null);
 const serviceForm = reactive({
   name: '',
   serviceType: 'openai-gateway' as ApiServiceType,
   baseUrl: '',
   apiKey: '',
+  secretKey: '',
   workflowManifest: '',
   selectedModelNames: [] as string[],
 });
@@ -96,6 +145,14 @@ function getConnectionStatusText(connection: ApiConnection): string {
     return t('settings.modelService.connectionStatus.ready');
   }
 
+  if (connection.serviceType === 'klingai' && !connection.apiKeyConfigured) {
+    return t('settings.modelService.connectionStatus.missingAccessKey');
+  }
+
+  if (connection.serviceType === 'klingai' && !connection.secretKeyConfigured) {
+    return t('settings.modelService.connectionStatus.missingSecretKey');
+  }
+
   if (connection.serviceType !== 'local-workflow' && !connection.apiKeyConfigured) {
     return t('settings.modelService.connectionStatus.missingApiKey');
   }
@@ -135,20 +192,140 @@ function getModelsByType(type: ModelCapability): RegisteredModel[] {
   return selectableModels.value.filter((model) => model.type === type);
 }
 
-function getConnectionTestModel(connection: ApiConnection): RegisteredModel | null {
-  return connection.models.find((model) => ['text', 'image', 'video'].includes(model.type)) ?? null;
+function getConnectionTestModels(connection: ApiConnection): RegisteredModel[] {
+  return connection.models.filter((model) => ['text', 'image', 'video'].includes(model.type));
 }
 
-function getConnectionCapabilities(connection: ApiConnection): ModelCapability[] {
-  return [...new Set(connection.models.map((model) => model.type))] as ModelCapability[];
+function toModelTestDialogModel(model: RegisteredModel): ModelTestDialogModel {
+  return {
+    label: `${model.displayName} (${model.modelName})`,
+    modelName: model.modelName,
+    type: model.type,
+    think: model.think,
+    reasoning: model.reasoning,
+    imageModes: model.imageModes ? [...model.imageModes] : undefined,
+    videoModes: cloneVideoModes(model.videoModes),
+    durationOptions: model.durationOptions ? [...model.durationOptions] : undefined,
+    resolutionOptions: model.resolutionOptions ? [...model.resolutionOptions] : undefined,
+    aspectRatioOptions: model.aspectRatioOptions ? [...model.aspectRatioOptions] : undefined,
+    audioSupport: model.audioSupport,
+  };
+}
+
+function cloneReasoning(reasoning: TextReasoningCapability | undefined): TextReasoningCapability | undefined {
+  if (!reasoning) {
+    return undefined;
+  }
+
+  return {
+    supported: Boolean(reasoning.supported),
+    defaultEffort: reasoning.defaultEffort,
+    efforts: [...reasoning.efforts],
+  };
+}
+
+function cloneVideoModes(modes: RegisteredModel['videoModes']): RegisteredModel['videoModes'] {
+  return modes?.map((mode) => (Array.isArray(mode) ? [...mode] : mode));
+}
+
+function toSerializableRegisteredModel(model: RegisteredModel): RegisteredModel {
+  const base: RegisteredModel = {
+    id: model.id,
+    displayName: model.displayName,
+    modelName: model.modelName,
+    type: model.type,
+  };
+
+  if (model.type === 'text') {
+    return {
+      ...base,
+      think: Boolean(model.think),
+      reasoning: cloneReasoning(model.reasoning),
+    };
+  }
+
+  if (model.type === 'image') {
+    return {
+      ...base,
+      imageModes: model.imageModes ? [...model.imageModes] : undefined,
+      aspectRatioOptions: model.aspectRatioOptions ? [...model.aspectRatioOptions] : undefined,
+    };
+  }
+
+  if (model.type === 'video') {
+    return {
+      ...base,
+      videoModes: cloneVideoModes(model.videoModes),
+      durationOptions: model.durationOptions ? [...model.durationOptions] : undefined,
+      resolutionOptions: model.resolutionOptions ? [...model.resolutionOptions] : undefined,
+      aspectRatioOptions: model.aspectRatioOptions ? [...model.aspectRatioOptions] : undefined,
+      audioSupport: model.audioSupport,
+    };
+  }
+
+  return {
+    ...base,
+    voices: model.voices?.map((voice) => ({
+      title: voice.title,
+      voice: voice.voice,
+    })),
+  };
 }
 
 function hasConfiguredApiKey(connection: ApiConnection | null): boolean {
   return Boolean(connection?.apiKeyConfigured);
 }
 
+function hasConfiguredSecretKey(connection: ApiConnection | null): boolean {
+  return Boolean(connection?.secretKeyConfigured);
+}
+
 function isLocalWorkflowService(): boolean {
   return serviceForm.serviceType === 'local-workflow';
+}
+
+function isKlingAiService(): boolean {
+  return serviceForm.serviceType === 'klingai';
+}
+
+function isMiniMaxService(): boolean {
+  return serviceForm.serviceType === 'minimax';
+}
+
+function getBaseUrlLabel(): string {
+  if (isLocalWorkflowService()) {
+    return t('settings.modelService.form.comfyEndpoint');
+  }
+
+  return t('settings.modelService.form.baseUrl');
+}
+
+function getBaseUrlPlaceholder(): string {
+  if (isLocalWorkflowService()) {
+    return 'http://127.0.0.1:8188';
+  }
+
+  if (isKlingAiService()) {
+    return 'https://api-beijing.klingai.com';
+  }
+
+  if (isMiniMaxService()) {
+    return 'https://api.minimaxi.com';
+  }
+
+  return t('settings.modelService.form.baseUrlPlaceholder');
+}
+
+function getApiKeyLabel(): string {
+  return isKlingAiService() ? t('settings.modelService.form.accessKey') : t('settings.modelService.form.apiKey');
+}
+
+function getApiKeyPlaceholder(): string {
+  return isKlingAiService() ? t('settings.modelService.form.accessKeyPlaceholder') : t('settings.modelService.form.apiKeyPlaceholder');
+}
+
+function getApiKeySavedHint(): string {
+  return isKlingAiService() ? t('settings.modelService.form.accessKeySavedHint') : t('settings.modelService.form.apiKeySavedHint');
 }
 
 function getStatusTheme(status: CapabilitySummary['status']): 'success' | 'warning' | 'danger' {
@@ -175,30 +352,10 @@ function getCapabilityTestPrompt(capability: ModelCapability): string {
   return testPrompt.value.trim() || t('settings.modelService.testPrompt.text');
 }
 
-function formatTestResult(title: string, capability: ModelCapability, result: ApiConnectionTestResult): string {
-  const lines = [title];
-
-  if ((capability === 'image' || capability === 'video') && result.filePath) {
-    lines.push(t('settings.modelService.testResult.capabilityFile', { capability: getCapabilityLabel(capability), path: result.filePath }));
-  } else if (result.content) {
-    lines.push(result.content);
-  } else if (result.filePath) {
-    lines.push(t('settings.modelService.testResult.file', { path: result.filePath }));
-  } else {
-    lines.push(t('settings.modelService.testResult.noContent'));
-  }
-
-  if (result.thinking) {
-    lines.push('', t('settings.modelService.testResult.thinking', { thinking: result.thinking }));
-  }
-
-  lines.push('', t('settings.modelService.testResult.duration', { duration: result.durationMs }));
-  return lines.join('\n');
-}
-
 function applyTemplate(template: ServiceTemplate): void {
   serviceForm.name = template.name;
   serviceForm.baseUrl = template.defaultBaseUrl;
+  serviceForm.secretKey = '';
   serviceForm.workflowManifest = '';
   serviceForm.selectedModelNames = template.models.map((model) => model.modelName);
 }
@@ -243,7 +400,7 @@ function openCreateServiceDialog(): void {
     applyTemplate(template);
   }
   serviceForm.apiKey = '';
-  testResult.value = '';
+  serviceForm.secretKey = '';
   serviceDialogVisible.value = true;
 }
 
@@ -253,9 +410,9 @@ function openEditServiceDialog(connection: ApiConnection): void {
   serviceForm.serviceType = connection.serviceType;
   serviceForm.baseUrl = connection.baseUrl;
   serviceForm.apiKey = '';
+  serviceForm.secretKey = '';
   serviceForm.workflowManifest = connection.workflowManifest ?? '';
   serviceForm.selectedModelNames = connection.models.map((model) => model.modelName);
-  testResult.value = '';
   serviceDialogVisible.value = true;
 }
 
@@ -264,7 +421,6 @@ function openBindingDialog(summary: CapabilitySummary): void {
   bindingForm.connectionId = summary.binding?.connectionId ?? availableConnections.value[0]?.id ?? '';
   const connection = availableConnections.value.find((item) => item.id === bindingForm.connectionId);
   bindingForm.modelName = summary.binding?.modelName ?? connection?.models.find((model) => model.type === summary.capability)?.modelName ?? '';
-  testResult.value = '';
   bindingDialogVisible.value = true;
 }
 
@@ -275,7 +431,12 @@ function buildDraft(): ApiConnectionDraft | null {
   }
 
   if (!serviceForm.apiKey.trim() && serviceForm.serviceType !== 'local-workflow' && !hasConfiguredApiKey(editingConnection.value)) {
-    MessagePlugin.warning(t('settings.modelService.validation.apiKeyRequired'));
+    MessagePlugin.warning(isKlingAiService() ? t('settings.modelService.validation.accessKeyRequired') : t('settings.modelService.validation.apiKeyRequired'));
+    return null;
+  }
+
+  if (isKlingAiService() && !serviceForm.secretKey.trim() && !hasConfiguredSecretKey(editingConnection.value)) {
+    MessagePlugin.warning(t('settings.modelService.validation.secretKeyRequired'));
     return null;
   }
 
@@ -303,9 +464,10 @@ function buildDraft(): ApiConnectionDraft | null {
     serviceType: serviceForm.serviceType,
     baseUrl: serviceForm.baseUrl.trim(),
     apiKey: serviceForm.apiKey.trim(),
+    secretKey: serviceForm.secretKey.trim(),
     workflowManifest: serviceForm.workflowManifest.trim(),
     capabilities: capabilitiesFromModels,
-    models: selectedModels.value.map((model) => ({ ...model })),
+    models: selectedModels.value.map(toSerializableRegisteredModel),
   };
 }
 
@@ -360,55 +522,98 @@ async function saveBinding(): Promise<void> {
   emit('modelServiceUpdated');
 }
 
-async function testConnection(connection: ApiConnection): Promise<void> {
-  const model = getConnectionTestModel(connection);
+function openConnectionTestDialog(connection: ApiConnection): void {
+  const models = getConnectionTestModels(connection);
+  if (models.length === 0) {
+    MessagePlugin.warning(t('settings.modelService.validation.noTestableModel'));
+    return;
+  }
+
+  const model = models[0];
+  modelTestContext.value = { type: 'connection', connection };
+  modelTestModels.value = models.map(toModelTestDialogModel);
+  modelTestInitialModelName.value = model.modelName;
+  modelTestTitle.value = t('settings.modelTestDialog.title');
+  modelTestDefaultPrompt.value = getCapabilityTestPrompt(model.type);
+  modelTestResult.value = null;
+  modelTestDialogVisible.value = true;
+}
+
+function openCapabilityTestDialog(summary: CapabilitySummary): void {
+  if (summary.status !== 'configured' || !summary.binding) {
+    return;
+  }
+
+  const connection = connections.value.find((item) => item.id === summary.binding?.connectionId);
+  const model = connection?.models.find((item) => item.modelName === summary.binding?.modelName);
   if (!model) {
     MessagePlugin.warning(t('settings.modelService.validation.noTestableModel'));
     return;
   }
 
-  testingConnectionId.value = connection.id;
-  testResult.value = '';
-  try {
-    const response = await window.vtStudio.settings.api.test({
-      connectionId: connection.id,
-      modelName: model.modelName,
-      prompt: getCapabilityTestPrompt(model.type),
-    });
-
-    if (!isOk(response)) {
-      testResult.value = response.msg;
-      MessagePlugin.error(response.msg);
-      return;
-    }
-
-    testResult.value = formatTestResult(`${connection.name} / ${model.displayName}`, model.type, response.data);
-    MessagePlugin.success(t('settings.modelService.message.modelTestSuccess', { capability: getCapabilityLabel(model.type) }));
-  } finally {
-    testingConnectionId.value = '';
-  }
+  modelTestContext.value = { type: 'capability', summary };
+  modelTestModels.value = [toModelTestDialogModel(model)];
+  modelTestInitialModelName.value = model.modelName;
+  modelTestTitle.value = t('settings.modelTestDialog.title');
+  modelTestDefaultPrompt.value = getCapabilityTestPrompt(summary.capability);
+  modelTestResult.value = null;
+  modelTestDialogVisible.value = true;
 }
 
-async function runCapabilityTest(summary: CapabilitySummary): Promise<void> {
-  testingCapability.value = summary.capability;
-  testResult.value = '';
+async function runModelTest(payload: ModelTestSubmitPayload): Promise<void> {
+  const context = modelTestContext.value;
+  if (!context) {
+    return;
+  }
+
+  modelTestLoading.value = true;
+  modelTestResult.value = null;
   try {
-    const response = await window.vtStudio.settings.resource.test({
-      capability: summary.capability,
-      prompt: getCapabilityTestPrompt(summary.capability),
-    });
+    const response =
+      context.type === 'connection'
+        ? await window.vtStudio.settings.api.test({
+            connectionId: context.connection.id,
+            modelName: payload.modelName,
+            prompt: payload.prompt,
+            reasoningEnabled: payload.reasoningEnabled,
+            reasoningEffort: payload.reasoningEffort,
+            imageMode: payload.imageMode,
+            imageSize: payload.imageSize,
+            aspectRatio: payload.aspectRatio,
+            videoMode: payload.videoMode,
+            duration: payload.duration,
+            resolution: payload.resolution,
+            videoAspectRatio: payload.videoAspectRatio,
+            audio: payload.audio,
+            referenceImages: payload.referenceImages,
+          })
+        : await window.vtStudio.settings.resource.test({
+            capability: context.summary.capability,
+            prompt: payload.prompt,
+            reasoningEnabled: payload.reasoningEnabled,
+            reasoningEffort: payload.reasoningEffort,
+            imageMode: payload.imageMode,
+            imageSize: payload.imageSize,
+            aspectRatio: payload.aspectRatio,
+            videoMode: payload.videoMode,
+            duration: payload.duration,
+            resolution: payload.resolution,
+            videoAspectRatio: payload.videoAspectRatio,
+            audio: payload.audio,
+            referenceImages: payload.referenceImages,
+          });
 
     if (!isOk(response)) {
       MessagePlugin.error(response.msg);
-      testResult.value = response.msg;
       return;
     }
 
-    const capabilityLabel = getCapabilityLabel(summary.capability);
-    testResult.value = formatTestResult(`${capabilityLabel} / ${summary.modelDisplayName}`, summary.capability, response.data);
-    MessagePlugin.success(t('settings.modelService.message.capabilityTestSuccess', { capability: capabilityLabel }));
+    modelTestResult.value = response.data;
+    const testedModel = modelTestModels.value.find((model) => model.modelName === payload.modelName);
+    const capability = context.type === 'capability' ? context.summary.capability : testedModel?.type ?? 'text';
+    MessagePlugin.success(t('settings.modelService.message.modelTestSuccess', { capability: getCapabilityLabel(capability) }));
   } finally {
-    testingCapability.value = '';
+    modelTestLoading.value = false;
   }
 }
 
@@ -462,11 +667,7 @@ onMounted(loadModelService);
 
 <template>
   <section class="settings-section model-service-section">
-    <div class="settings-section-head">
-      <div>
-        <p class="eyebrow">{{ t('settings.modelService.eyebrow') }}</p>
-        <h3>{{ t('settings.modelService.title') }}</h3>
-      </div>
+    <div class="settings-inline-toolbar">
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadModelService">
           <template #icon><RefreshIcon /></template>
@@ -479,28 +680,21 @@ onMounted(loadModelService);
       </div>
     </div>
 
-    <div class="model-service-summary">
-      <article v-for="summary in capabilities" :key="summary.capability" class="capability-card">
-        <div class="capability-card-head">
+    <div class="model-service-summary settings-row-list">
+      <article v-for="summary in capabilities" :key="summary.capability" class="settings-row capability-card" :class="{ 'is-muted': summary.status !== 'configured' }">
+        <div class="capability-card-head settings-row-main">
           <div>
-            <strong>{{ getCapabilityLabel(summary.capability) }}</strong>
-            <small>{{ getCapabilityConnectionName(summary) }}</small>
+            <span class="settings-row-title">{{ getCapabilityLabel(summary.capability) }}</span>
+            <span class="settings-row-note">{{ getCapabilityConnectionName(summary) }} / {{ getCapabilityModelDisplayName(summary) }}</span>
           </div>
           <t-tag :theme="getStatusTheme(summary.status)" variant="light">{{ getCapabilityStatusText(summary) }}</t-tag>
         </div>
-
-        <div class="capability-model">
-          <span>{{ t('settings.modelService.defaultModel') }}</span>
-          <b>{{ getCapabilityModelDisplayName(summary) }}</b>
-          <small v-if="summary.modelName">{{ summary.modelName }}</small>
-        </div>
-
-        <div class="capability-actions">
+        <div class="settings-row-control capability-actions">
           <t-button variant="outline" @click="openBindingDialog(summary)">
             <template #icon><SwapIcon /></template>
             {{ t('settings.modelService.change') }}
           </t-button>
-          <t-button theme="primary" :loading="testingCapability === summary.capability" :disabled="summary.status !== 'configured'" @click="runCapabilityTest(summary)">
+          <t-button theme="primary" :disabled="summary.status !== 'configured'" @click="openCapabilityTestDialog(summary)">
             <template #icon><PlayCircleIcon /></template>
             {{ t('settings.modelService.test') }}
           </t-button>
@@ -508,34 +702,20 @@ onMounted(loadModelService);
       </article>
     </div>
 
-    <div class="model-service-block-head">
-      <div>
-        <strong>{{ t('settings.modelService.connectedServices') }}</strong>
-        <p>{{ t('settings.modelService.connectedHint') }}</p>
-      </div>
-    </div>
+    <div class="settings-list-title">{{ t('settings.modelService.connectedServices') }}</div>
 
-    <div v-if="connections.length" class="connection-grid">
-      <article v-for="connection in connections" :key="connection.id" class="connection-card">
-        <div class="connection-card-head">
+    <div v-if="connections.length" class="connection-grid settings-row-list">
+      <article v-for="connection in connections" :key="connection.id" class="settings-row connection-card">
+        <div class="connection-card-head settings-row-main">
           <div>
-            <strong>{{ connection.name }}</strong>
-            <small>{{ getServiceName(connection.serviceType) }} · {{ connection.baseUrl || t('settings.modelService.defaultAddress') }}</small>
+            <span class="settings-row-title">{{ connection.name }}</span>
+            <span class="settings-row-note">{{ getServiceName(connection.serviceType) }} / {{ connection.baseUrl || t('settings.modelService.defaultAddress') }}</span>
           </div>
           <t-tag :theme="connection.status === 'ready' ? 'success' : 'warning'" variant="light">{{ getConnectionStatusText(connection) }}</t-tag>
         </div>
-
-        <div class="connection-meta">
-          <t-tag v-for="capability in getConnectionCapabilities(connection)" :key="capability" variant="light">{{ getCapabilityLabel(capability) }}</t-tag>
-        </div>
-
-        <div class="connection-models">
-          <span v-for="model in connection.models" :key="model.modelName">{{ model.displayName }}</span>
-        </div>
-
-        <div class="connection-actions">
+        <div class="settings-row-control connection-actions">
           <t-tooltip :content="t('settings.modelService.tooltip.testConnection')">
-            <t-button shape="square" variant="text" :aria-label="t('settings.modelService.tooltip.testConnection')" :loading="testingConnectionId === connection.id" @click="testConnection(connection)">
+            <t-button shape="square" variant="text" :aria-label="t('settings.modelService.tooltip.testConnection')" @click="openConnectionTestDialog(connection)">
               <PlayCircleIcon />
             </t-button>
           </t-tooltip>
@@ -555,11 +735,18 @@ onMounted(loadModelService);
 
     <t-empty v-else :description="t('settings.modelService.empty')" />
 
-    <div v-if="testResult" class="resource-test-result">
-      <strong>{{ t('settings.modelService.testResult.title') }}</strong>
-      <pre>{{ testResult }}</pre>
-    </div>
   </section>
+
+  <ModelTestDialog
+    v-model:visible="modelTestDialogVisible"
+    :header="modelTestTitle"
+    :models="modelTestModels"
+    :initial-model-name="modelTestInitialModelName"
+    :default-prompt="modelTestDefaultPrompt"
+    :loading="modelTestLoading"
+    :result="modelTestResult"
+    @submit="runModelTest"
+  />
 
   <t-dialog v-model:visible="serviceDialogVisible" :header="editingId ? t('settings.modelService.dialog.editTitle') : t('settings.modelService.dialog.createTitle')" width="720px" :confirm-btn="t('settings.modelService.dialog.save')" :confirm-loading="saving" @confirm="saveService">
     <t-form layout="vertical">
@@ -574,14 +761,18 @@ onMounted(loadModelService);
         </t-form-item>
       </div>
 
-      <t-form-item :label="isLocalWorkflowService() ? 'ComfyUI Endpoint' : 'Base URL'">
-        <t-input v-model="serviceForm.baseUrl" :placeholder="isLocalWorkflowService() ? 'http://127.0.0.1:8188' : t('settings.modelService.form.baseUrlPlaceholder')" />
+      <t-form-item :label="getBaseUrlLabel()">
+        <t-input v-model="serviceForm.baseUrl" :placeholder="getBaseUrlPlaceholder()" />
       </t-form-item>
-      <t-form-item v-if="!isLocalWorkflowService()" label="API Key">
-        <t-input v-model="serviceForm.apiKey" type="password" :placeholder="t('settings.modelService.form.apiKeyPlaceholder')" />
-        <small v-if="hasConfiguredApiKey(editingConnection)" class="settings-hint">{{ t('settings.modelService.form.apiKeySavedHint') }}</small>
+      <t-form-item v-if="!isLocalWorkflowService()" :label="getApiKeyLabel()">
+        <t-input v-model="serviceForm.apiKey" type="password" :placeholder="getApiKeyPlaceholder()" />
+        <small v-if="hasConfiguredApiKey(editingConnection)" class="settings-hint">{{ getApiKeySavedHint() }}</small>
       </t-form-item>
-      <t-form-item v-else label="Workflow Manifest">
+      <t-form-item v-if="isKlingAiService()" :label="t('settings.modelService.form.secretKey')">
+        <t-input v-model="serviceForm.secretKey" type="password" :placeholder="t('settings.modelService.form.secretKeyPlaceholder')" />
+        <small v-if="hasConfiguredSecretKey(editingConnection)" class="settings-hint">{{ t('settings.modelService.form.secretKeySavedHint') }}</small>
+      </t-form-item>
+      <t-form-item v-else-if="isLocalWorkflowService()" :label="t('settings.modelService.form.workflowManifest')">
         <t-textarea v-model="serviceForm.workflowManifest" class="workflow-manifest-textarea" :placeholder="t('settings.modelService.form.workflowPlaceholder')" :autosize="{ minRows: 7, maxRows: 14 }" />
         <small v-if="editingConnection?.workflowManifest" class="settings-hint">{{ t('settings.modelService.form.workflowSavedHint') }}</small>
       </t-form-item>

@@ -29,7 +29,6 @@ assertIncludes(componentFile, "router.push({ name: routeName })");
 assertNoChinese(componentFile);
 
 const pageHints = [
-  ['src/renderer/src/features/novel/NovelHome.vue', 'hint-key="source"', 'next-route-name="script-agent"'],
   ['src/renderer/src/features/script-agent/ScriptAgentHome.vue', 'hint-key="scriptAgent"', 'next-route-name="script"'],
   ['src/renderer/src/features/script/ScriptHome.vue', 'hint-key="script"', 'next-route-name="assets"'],
   ['src/renderer/src/features/assets/AssetsHome.vue', 'hint-key="assets"', 'next-route-name="corner-scape"'],
@@ -44,6 +43,11 @@ for (const [file, hintKey, nextRoute] of pageHints) {
   assertIncludes(file, nextRoute);
 }
 
+assertIncludes('src/renderer/src/features/novel/NovelHome.vue', 'class="source-table-section"');
+if (read('src/renderer/src/features/novel/NovelHome.vue').includes('WorkflowNextStepHint')) {
+  throw new Error('NovelHome.vue should keep the source page focused on the chapter table card without a top next-step hint');
+}
+
 const messagesFile = 'src/renderer/src/i18n/messages.ts';
 assertIncludes(messagesFile, "workflowHint: {");
 assertIncludes(messagesFile, "overviewAction: '流程总览'");
@@ -55,7 +59,7 @@ assertIncludes(messagesFile, "summary: 'Pause to replace or regenerate unsuitabl
 
 const taskFile = 'docs/tasks/OPT-051-项目流程总览和流程驱动交互.md';
 assertIncludes(taskFile, '第二批');
-assertIncludes(taskFile, '业务页顶部轻量下一步提示');
+assertIncludes(taskFile, '原文页保持为单一卡片入口');
 
 const verifyFile = 'scripts/verify.mjs';
 assertIncludes(verifyFile, "'verify-opt-051-next-step-hints.mjs'");

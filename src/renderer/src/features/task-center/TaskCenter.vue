@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import { RefreshIcon } from 'tdesign-icons-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
 import { useVtRequest } from '@renderer/composables/useVtRequest';
 import type { TaskListItem, TaskProjectOption, TaskStatus } from '@shared/types/task';
 
@@ -15,8 +16,8 @@ const tasks = ref<TaskListItem[]>([]);
 const total = ref(0);
 const projectOptions = ref<TaskProjectOption[]>([]);
 const categoryOptions = ref<string[]>([]);
-const failDetailTask = ref<TaskListItem | null>(null);
-const failDetailVisible = ref(false);
+const taskDetailTask = ref<TaskListItem | null>(null);
+const taskDetailVisible = ref(false);
 const failReasonCopied = ref(false);
 
 const filters = reactive({
@@ -31,6 +32,8 @@ const pagination = reactive({
 });
 
 const pageSizeOptions = [10, 20, 50, 100];
+const MODEL_DIAGNOSTIC_KEYS = ['modelDiagnostics'] as const;
+const MODEL_DIAGNOSTIC_STATUS_VALUES = ['running', 'returned', 'parse_failed', 'normalized', 'failed'] as const;
 const taskRequest = useVtRequest({ loading });
 const refreshRequest = useVtRequest({ loading: refreshing });
 const optionRequest = useVtRequest();
@@ -43,6 +46,22 @@ const statusOptions: Array<{ value: '' | TaskStatus; labelKey: string }> = [
   { value: 'cancelled', labelKey: 'taskCenter.status.cancelled' },
 ];
 const summaryStatusValues: TaskStatus[] = ['waiting', 'running', 'succeeded', 'failed', 'cancelled'];
+
+interface TaskModelDiagnostics {
+  requestId?: string;
+  modelKey?: string;
+  status?: string;
+  rawText?: string;
+  toolCalls?: unknown;
+  toolResults?: unknown;
+  parsed?: unknown;
+  error?: string;
+  recordedAt?: number;
+}
+
+type TaskRelatedObjectMap = Record<string, unknown> & {
+  modelDiagnostics?: TaskModelDiagnostics;
+};
 
 const rangeText = computed(() => {
   if (total.value === 0) {
@@ -60,6 +79,8 @@ const taskStatusSummary = computed(() => summaryStatusValues.map((status) => ({
   count: tasks.value.filter((task) => task.status === status).length,
   theme: getStatusTheme(status),
 })));
+
+const taskModelDiagnostics = computed(() => (taskDetailTask.value ? getTaskModelDiagnostics(taskDetailTask.value) : null));
 
 function toProjectId(value: string): number | null {
   if (!value) {
@@ -223,45 +244,112 @@ function formatTime(value: number | null): string {
   return new Date(value).toLocaleString('zh-CN', { hour12: false });
 }
 
+function parseRelatedObjects(value: string | null): unknown | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatRelatedValue(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value);
+  }
+
+  return JSON.stringify(value) ?? String(value);
+}
+
 function formatRelatedObjects(value: string | null): string {
   if (!value) {
     return '-';
   }
 
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed.map((item) => (typeof item === 'string' ? item : JSON.stringify(item))).join('，');
+  const parsed = parseRelatedObjects(value);
+  if (Array.isArray(parsed)) {
+    return parsed.map(formatRelatedValue).join('，');
+  }
+
+  if (isPlainObject(parsed)) {
+    const entries = Object.entries(parsed).filter(([key]) => !MODEL_DIAGNOSTIC_KEYS.includes(key as (typeof MODEL_DIAGNOSTIC_KEYS)[number]));
+    if (entries.length === 0) {
+      return '-';
     }
 
-    if (parsed && typeof parsed === 'object') {
-      return Object.entries(parsed as Record<string, unknown>)
-        .map(([key, item]) => `${key}: ${typeof item === 'string' || typeof item === 'number' ? item : JSON.stringify(item)}`)
-        .join('，');
-    }
-  } catch {
+    return entries.map(([key, item]) => `${key}: ${formatRelatedValue(item)}`).join('，');
+  }
+
+  if (typeof parsed === 'string') {
     return value;
   }
 
   return value;
 }
 
+function getTaskRelatedObjectMap(task: TaskListItem): TaskRelatedObjectMap | null {
+  const parsed = parseRelatedObjects(task.relatedObjects);
+  return isPlainObject(parsed) ? (parsed as TaskRelatedObjectMap) : null;
+}
+
+function getTaskModelDiagnostics(task: TaskListItem): TaskModelDiagnostics | null {
+  const diagnostics = getTaskRelatedObjectMap(task)?.modelDiagnostics;
+  return isPlainObject(diagnostics) ? diagnostics : null;
+}
+
+function stringifyDiagnosticValue(value: unknown): string {
+  if (value === undefined || value === null) {
+    return '-';
+  }
+
+  if (typeof value === 'string') {
+    return value || '-';
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function getDiagnosticStatusLabel(status: string | undefined): string {
+  if (!status) {
+    return '-';
+  }
+
+  return MODEL_DIAGNOSTIC_STATUS_VALUES.includes(status as (typeof MODEL_DIAGNOSTIC_STATUS_VALUES)[number])
+    ? t(`taskCenter.modelDiagnostics.status.${status}`)
+    : status;
+}
+
+function getTaskDescription(task: TaskListItem): string {
+  return task.description?.trim() || '-';
+}
+
 function getFailReason(task: TaskListItem): string {
   return task.errorReason?.trim() || t('taskCenter.emptyFailReason');
 }
 
-function openFailDetail(task: TaskListItem): void {
-  failDetailTask.value = task;
+function openTaskDetail(task: TaskListItem): void {
+  taskDetailTask.value = task;
   failReasonCopied.value = false;
-  failDetailVisible.value = true;
+  taskDetailVisible.value = true;
 }
 
 async function copyFailReason(): Promise<void> {
-  if (!failDetailTask.value) {
+  if (!taskDetailTask.value) {
     return;
   }
 
-  await navigator.clipboard.writeText(getFailReason(failDetailTask.value));
+  await navigator.clipboard.writeText(getFailReason(taskDetailTask.value));
   failReasonCopied.value = true;
 }
 
@@ -351,10 +439,9 @@ watch(
                 <th>{{ t('taskCenter.table.project') }}</th>
                 <th>{{ t('taskCenter.table.relatedObjects') }}</th>
                 <th>{{ t('taskCenter.table.model') }}</th>
-                <th>{{ t('taskCenter.table.description') }}</th>
-                <th>{{ t('taskCenter.table.failReason') }}</th>
                 <th>{{ t('taskCenter.table.status') }}</th>
                 <th>{{ t('taskCenter.table.startedAt') }}</th>
+                <th>{{ t('taskCenter.table.action') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -363,13 +450,6 @@ watch(
                 <td>{{ task.projectName || '-' }}</td>
                 <td class="text-ellipsis">{{ formatRelatedObjects(task.relatedObjects) }}</td>
                 <td class="text-ellipsis">{{ task.modelName || '-' }}</td>
-                <td class="text-ellipsis">{{ task.description || '-' }}</td>
-                <td>
-                  <t-button v-if="task.status === 'failed'" size="small" variant="text" theme="danger" @click="openFailDetail(task)">
-                    {{ t('taskCenter.failDetail.open') }}
-                  </t-button>
-                  <span v-else>-</span>
-                </td>
                 <td>
                   <t-tooltip v-if="task.status === 'failed'" :content="getFailReason(task)">
                     <t-tag :theme="getStatusTheme(task.status)" variant="light">{{ getStatusLabel(task.status) }}</t-tag>
@@ -377,6 +457,11 @@ watch(
                   <t-tag v-else :theme="getStatusTheme(task.status)" variant="light">{{ getStatusLabel(task.status) }}</t-tag>
                 </td>
                 <td>{{ formatTime(task.startedAt) }}</td>
+                <td>
+                  <VtButton size="small" variant="text" :min-width="0" @click="openTaskDetail(task)">
+                    {{ t('taskCenter.detail.open') }}
+                  </VtButton>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -397,40 +482,114 @@ watch(
     </section>
 
     <t-dialog
-      :visible="failDetailVisible"
-      :header="t('taskCenter.failDetail.title')"
-      width="720px"
-      :confirm-btn="t('taskCenter.failDetail.copy')"
-      :cancel-btn="t('taskCenter.failDetail.close')"
-      @update:visible="(value) => (failDetailVisible = value)"
-      @confirm="copyFailReason"
+      :visible="taskDetailVisible"
+      :header="t('taskCenter.detail.title')"
+      width="820px"
+      :footer="false"
+      @update:visible="(value) => (taskDetailVisible = value)"
     >
-      <div v-if="failDetailTask" class="space-y-4">
-        <dl class="grid gap-3 sm:grid-cols-2">
-          <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3">
-            <dt class="text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.table.category') }}</dt>
-            <dd class="mt-1 text-sm font-medium">{{ failDetailTask.category }}</dd>
+      <div v-if="taskDetailTask" class="max-h-[72vh] space-y-4 overflow-auto pr-1">
+        <section>
+          <h4 class="m-0 mb-2 text-sm font-semibold text-[var(--vt-text-primary)]">{{ t('taskCenter.detail.basicTitle') }}</h4>
+          <t-descriptions bordered size="small" :column="2">
+            <t-descriptions-item :label="t('taskCenter.detail.taskId')">
+              <span class="font-mono text-xs">#{{ taskDetailTask.id }}</span>
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.table.status')">
+              <t-tag :theme="getStatusTheme(taskDetailTask.status)" variant="light">{{ getStatusLabel(taskDetailTask.status) }}</t-tag>
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.table.category')">
+              {{ taskDetailTask.category }}
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.table.project')">
+              {{ taskDetailTask.projectName || '-' }}
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.table.model')" :span="2">
+              <span class="break-words font-mono text-xs">{{ taskDetailTask.modelName || '-' }}</span>
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.table.relatedObjects')" :span="2">
+              <span class="break-words">{{ formatRelatedObjects(taskDetailTask.relatedObjects) }}</span>
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.table.startedAt')">
+              {{ formatTime(taskDetailTask.startedAt) }}
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.detail.finishedAt')">
+              {{ formatTime(taskDetailTask.finishedAt) }}
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.detail.createdAt')">
+              {{ formatTime(taskDetailTask.createdAt) }}
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.detail.updatedAt')">
+              {{ formatTime(taskDetailTask.updatedAt) }}
+            </t-descriptions-item>
+          </t-descriptions>
+        </section>
+
+        <section>
+          <h4 class="m-0 mb-2 text-sm font-semibold text-[var(--vt-text-primary)]">{{ t('taskCenter.detail.descriptionTitle') }}</h4>
+          <pre class="m-0 max-h-[220px] min-h-[44px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-3 text-sm leading-6 text-[var(--vt-text-primary)]">{{ getTaskDescription(taskDetailTask) }}</pre>
+        </section>
+
+        <section v-if="taskDetailTask.status === 'failed'">
+          <div class="mb-2 flex items-center justify-between gap-3">
+            <h4 class="m-0 text-sm font-semibold text-[var(--vt-text-primary)]">{{ t('taskCenter.table.failReason') }}</h4>
+            <VtButton size="small" variant="outline" :min-width="0" @click="copyFailReason">{{ t('taskCenter.detail.copyFailReason') }}</VtButton>
           </div>
-          <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3">
-            <dt class="text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.table.project') }}</dt>
-            <dd class="mt-1 text-sm font-medium">{{ failDetailTask.projectName || '-' }}</dd>
+          <pre class="m-0 max-h-[220px] min-h-[44px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-red-200/80 bg-red-50 p-3 text-sm leading-6 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">{{ getFailReason(taskDetailTask) }}</pre>
+        </section>
+
+        <section v-if="taskModelDiagnostics">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 class="m-0 text-sm font-semibold text-[var(--vt-text-primary)]">{{ t('taskCenter.modelDiagnostics.title') }}</h4>
+              <p class="m-0 mt-1 text-xs text-[var(--vt-text-secondary)]">{{ t('taskCenter.modelDiagnostics.hint') }}</p>
+            </div>
+            <t-tag variant="light">{{ getDiagnosticStatusLabel(taskModelDiagnostics.status) }}</t-tag>
           </div>
-          <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3">
-            <dt class="text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.table.model') }}</dt>
-            <dd class="mt-1 text-sm font-medium">{{ failDetailTask.modelName || '-' }}</dd>
+          <t-descriptions bordered size="small" :column="3">
+            <t-descriptions-item :label="t('taskCenter.modelDiagnostics.requestId')">
+              <span class="font-mono text-xs">{{ taskModelDiagnostics.requestId || '-' }}</span>
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.modelDiagnostics.modelKey')">
+              <span class="font-mono text-xs">{{ taskModelDiagnostics.modelKey || '-' }}</span>
+            </t-descriptions-item>
+            <t-descriptions-item :label="t('taskCenter.modelDiagnostics.recordedAt')">
+              {{ formatTime(taskModelDiagnostics.recordedAt || null) }}
+            </t-descriptions-item>
+          </t-descriptions>
+          <div class="mt-3">
+            <p class="m-0 text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.modelDiagnostics.rawText') }}</p>
+            <pre class="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-3 text-xs leading-5 text-[var(--vt-text-primary)]">{{ stringifyDiagnosticValue(taskModelDiagnostics.rawText) }}</pre>
           </div>
-          <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3">
-            <dt class="text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.table.startedAt') }}</dt>
-            <dd class="mt-1 text-sm font-medium">{{ formatTime(failDetailTask.startedAt) }}</dd>
-          </div>
-        </dl>
-        <div class="rounded-md border border-red-200/80 bg-red-50 p-3 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
-          <p class="text-xs font-medium opacity-80">{{ t('taskCenter.table.failReason') }}</p>
-          <pre class="mt-2 whitespace-pre-wrap break-words text-sm">{{ getFailReason(failDetailTask) }}</pre>
-        </div>
-        <p v-if="failReasonCopied" class="m-0 rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] px-3 py-2 text-sm text-[var(--vt-text-secondary)]">
-          {{ t('taskCenter.failDetail.copied') }}
+          <details class="mt-3">
+            <summary class="cursor-pointer text-sm font-medium text-[var(--vt-text-primary)]">{{ t('taskCenter.modelDiagnostics.more') }}</summary>
+            <div class="mt-3 grid gap-3 lg:grid-cols-2">
+              <div>
+                <p class="m-0 text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.modelDiagnostics.parsed') }}</p>
+                <pre class="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-3 text-xs leading-5 text-[var(--vt-text-primary)]">{{ stringifyDiagnosticValue(taskModelDiagnostics.parsed) }}</pre>
+              </div>
+              <div>
+                <p class="m-0 text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.modelDiagnostics.toolCalls') }}</p>
+                <pre class="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-3 text-xs leading-5 text-[var(--vt-text-primary)]">{{ stringifyDiagnosticValue(taskModelDiagnostics.toolCalls) }}</pre>
+              </div>
+              <div>
+                <p class="m-0 text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.modelDiagnostics.toolResults') }}</p>
+                <pre class="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-3 text-xs leading-5 text-[var(--vt-text-primary)]">{{ stringifyDiagnosticValue(taskModelDiagnostics.toolResults) }}</pre>
+              </div>
+              <div>
+                <p class="m-0 text-xs font-medium text-[var(--vt-text-secondary)]">{{ t('taskCenter.modelDiagnostics.error') }}</p>
+                <pre class="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-3 text-xs leading-5 text-[var(--vt-text-primary)]">{{ stringifyDiagnosticValue(taskModelDiagnostics.error) }}</pre>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <p v-if="failReasonCopied" class="m-0 mt-3 rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] px-3 py-2 text-sm text-[var(--vt-text-secondary)]">
+          {{ t('taskCenter.detail.copied') }}
         </p>
+        <div class="mt-4 flex justify-end gap-2">
+          <VtButton variant="outline" @click="taskDetailVisible = false">{{ t('taskCenter.detail.close') }}</VtButton>
+        </div>
       </div>
     </t-dialog>
   </div>

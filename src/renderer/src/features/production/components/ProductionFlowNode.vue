@@ -2,7 +2,9 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Handle, Position } from '@vue-flow/core';
-import { AddIcon, DeleteIcon, EditIcon, ErrorCircleIcon, FileIcon, ImageIcon, PlayCircleIcon, SaveIcon, VideoIcon } from 'tdesign-icons-vue-next';
+import { AddIcon, DeleteIcon, DownloadIcon, EditIcon, ErrorCircleIcon, FileIcon, ImageIcon, PlayCircleIcon, SaveIcon, UserTalkIcon, VideoIcon } from 'tdesign-icons-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import { PRODUCTION_TASK_STATUS, type ProductionAssetSummary, type ProductionFlowData, type ProductionNodeType, type ProductionStoryboardItem, type ProductionVideoTrackItem } from '@shared/types/production';
 
 const props = defineProps<{
@@ -21,9 +23,13 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  editText: [nodeType: 'scriptPlan' | 'storyboardTable'];
+  editText: [nodeType: 'script' | 'scriptPlan' | 'storyboardTable'];
   saveWorkspace: [];
+  openAgent: [];
+  extractAssets: [];
+  syncStoryboardTable: [];
   createStoryboard: [];
+  insertStoryboard: [afterIndex: number];
   editStoryboard: [storyboard: ProductionStoryboardItem];
   deleteStoryboard: [storyboard: ProductionStoryboardItem];
   toggleStoryboard: [storyboardId: number];
@@ -31,24 +37,31 @@ const emit = defineEmits<{
   clearStoryboardSelection: [];
   batchDeleteStoryboards: [];
   generateStoryboards: [];
+  generateStoryboardOne: [storyboardId: number];
+  previewStoryboards: [];
   showDetail: [title: string, content: string];
   createTrack: [];
   editTrack: [track: ProductionVideoTrackItem];
   deleteTrack: [track: ProductionVideoTrackItem];
   toggleTrack: [trackId: number];
+  selectAllTracks: [];
+  clearTrackSelection: [];
   generateVideoPrompts: [];
   generateVideos: [];
   openWorkbench: [];
+  openExport: [];
+  openExportCheck: [];
   createDerivedAsset: [asset: ProductionAssetSummary];
   deleteDerivedAsset: [asset: ProductionAssetSummary];
   generateDerivedAssets: [assetIds: number[]];
   editImageFlow: [ownerType: 'storyboard' | 'derivedAsset', item: ProductionStoryboardItem | ProductionAssetSummary];
+  selectNode: [nodeType: ProductionNodeType];
 }>();
 
 const { t } = useI18n();
 
-const nodeTitle = computed(() => t(`production.node.${props.nodeType}.title`));
 const nodeHint = computed(() => t(`production.node.${props.nodeType}.hint`));
+const nodeStage = computed(() => t(`production.flow.stage.${props.nodeType}`));
 const scriptPreview = computed(() => previewText(props.flowData.script, 420));
 const scriptPlanPreview = computed(() => previewText(props.flowData.scriptPlan, 260));
 const storyboardTablePreview = computed(() => previewText(props.flowData.storyboardTable, 260));
@@ -59,10 +72,21 @@ const runningTrackCount = computed(() => props.runningTrackIds?.length ?? 0);
 const selectedStoryboardCount = computed(() => props.selectedStoryboardIds.length);
 const selectedTrackCount = computed(() => props.selectedTrackIds.length);
 const failedStoryboardCount = computed(() => props.flowData.storyboards.filter((storyboard) => storyboard.imageStatus === PRODUCTION_TASK_STATUS.FAILED).length);
+const failedDerivedAssetCount = computed(() => derivedAssets.value.filter((asset) => asset.imageStatus === PRODUCTION_TASK_STATUS.FAILED).length);
 const generatedStoryboardCount = computed(() => props.flowData.storyboards.filter((storyboard) => storyboard.imageUrl).length);
 const isAllStoryboardsSelected = computed(() => props.flowData.storyboards.length > 0 && props.flowData.storyboards.every((storyboard) => props.selectedStoryboardIds.includes(storyboard.id)));
 const totalVideoCandidateCount = computed(() => props.flowData.videoTracks.reduce((total, track) => total + track.videos.length, 0));
 const selectedVideoCount = computed(() => props.flowData.videoTracks.filter((track) => track.selectedVideoId).length);
+const failedTrackCount = computed(() => props.flowData.videoTracks.filter((track) => track.status === PRODUCTION_TASK_STATUS.FAILED || track.videos.some((video) => video.status === PRODUCTION_TASK_STATUS.FAILED)).length);
+const isAllTracksSelected = computed(() => props.flowData.videoTracks.length > 0 && props.flowData.videoTracks.every((track) => props.selectedTrackIds.includes(track.id)));
+const exportReady = computed(() => props.flowData.videoTracks.length > 0 && props.flowData.videoTracks.every((track) => {
+  const selectedVideo = track.videos.find((video) => video.id === track.selectedVideoId);
+  return Boolean(selectedVideo?.videoUrl) && selectedVideo?.status === PRODUCTION_TASK_STATUS.SUCCEEDED;
+}));
+const exportBlockerCount = computed(() => props.flowData.videoTracks.filter((track) => {
+  const selectedVideo = track.videos.find((video) => video.id === track.selectedVideoId);
+  return !selectedVideo || selectedVideo.status !== PRODUCTION_TASK_STATUS.SUCCEEDED || !selectedVideo.videoUrl;
+}).length);
 
 function previewText(value: string, limit: number): string {
   const text = value.trim();
@@ -137,17 +161,70 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
 </script>
 
 <template>
-  <article class="production-flow-node" :class="`production-flow-node-${nodeType}`">
+  <article class="production-flow-node" :class="`production-flow-node-${nodeType}`" @click="emit('selectNode', nodeType)">
     <Handle v-if="handleIds.target" class="production-flow-handle target" type="target" :id="handleIds.target" :position="Position.Left" />
     <Handle v-if="handleIds.source" class="production-flow-handle source" type="source" :id="handleIds.source" :position="Position.Right" />
     <Handle v-if="handleIds.assets" class="production-flow-handle source is-assets" type="source" :id="handleIds.assets" :position="Position.Bottom" />
 
     <header class="production-node-head production-node-drag-handle">
       <div>
-        <strong>{{ nodeTitle }}</strong>
+        <strong>{{ nodeStage }}</strong>
         <span>{{ nodeHint }}</span>
       </div>
-      <t-tag size="small" variant="light">{{ t('production.flow.moduleTag') }}</t-tag>
+      <div
+        v-if="nodeType === 'script' || nodeType === 'scriptPlan' || nodeType === 'storyboardTable' || nodeType === 'assets'"
+        class="production-node-actions is-icon-only production-node-head-actions"
+        @click.stop
+        @mousedown.stop>
+        <template v-if="nodeType === 'script'">
+          <t-tooltip :content="t('production.node.script.edit')">
+            <VtButton size="small" variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.node.script.edit')" @click="emit('editText', 'script')">
+              <template #icon><EditIcon /></template>
+            </VtButton>
+          </t-tooltip>
+        </template>
+        <template v-else-if="nodeType === 'scriptPlan'">
+          <t-tooltip :content="t('production.edit')">
+            <VtButton size="small" variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.edit')" @click="emit('editText', 'scriptPlan')">
+              <template #icon><EditIcon /></template>
+            </VtButton>
+          </t-tooltip>
+          <t-tooltip :content="t('production.node.scriptPlan.aiRewrite')">
+            <VtButton size="small" variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.node.scriptPlan.aiRewrite')" @click="emit('openAgent')">
+              <template #icon><UserTalkIcon /></template>
+            </VtButton>
+          </t-tooltip>
+          <t-tooltip :content="t('production.save')">
+            <VtButton size="small" theme="primary" variant="base" shape="square" icon-only :min-width="0" :aria-label="t('production.save')" :loading="saving" @click="emit('saveWorkspace')">
+              <template #icon><SaveIcon /></template>
+            </VtButton>
+          </t-tooltip>
+        </template>
+        <template v-else-if="nodeType === 'storyboardTable'">
+          <t-tooltip :content="t('production.edit')">
+            <VtButton size="small" variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.edit')" @click="emit('editText', 'storyboardTable')">
+              <template #icon><EditIcon /></template>
+            </VtButton>
+          </t-tooltip>
+          <t-tooltip :content="t('production.node.storyboardTable.sync')">
+            <VtButton size="small" variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.node.storyboardTable.sync')" @click="emit('syncStoryboardTable')">
+              <template #icon><AddIcon /></template>
+            </VtButton>
+          </t-tooltip>
+          <t-tooltip :content="t('production.save')">
+            <VtButton size="small" theme="primary" variant="base" shape="square" icon-only :min-width="0" :aria-label="t('production.save')" :loading="saving" @click="emit('saveWorkspace')">
+              <template #icon><SaveIcon /></template>
+            </VtButton>
+          </t-tooltip>
+        </template>
+        <template v-else-if="nodeType === 'assets'">
+          <t-tooltip :content="t('production.node.assets.extract')">
+            <VtButton size="small" theme="primary" variant="base" shape="square" icon-only :min-width="0" :aria-label="t('production.node.assets.extract')" @click="emit('extractAssets')">
+              <template #icon><ImageIcon /></template>
+            </VtButton>
+          </t-tooltip>
+        </template>
+      </div>
     </header>
 
     <section v-if="nodeType === 'script'" class="production-node-body">
@@ -160,36 +237,17 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
 
     <section v-else-if="nodeType === 'scriptPlan'" class="production-node-body">
       <pre class="production-node-text compact">{{ scriptPlanPreview }}</pre>
-      <div class="production-node-actions">
-        <t-button size="small" variant="outline" @click="emit('editText', 'scriptPlan')">
-          <template #icon><EditIcon /></template>
-          {{ t('production.edit') }}
-        </t-button>
-        <t-button size="small" theme="primary" :loading="saving" @click="emit('saveWorkspace')">
-          <template #icon><SaveIcon /></template>
-          {{ t('production.save') }}
-        </t-button>
-      </div>
     </section>
 
     <section v-else-if="nodeType === 'storyboardTable'" class="production-node-body">
       <pre class="production-node-text compact">{{ storyboardTablePreview }}</pre>
-      <div class="production-node-actions">
-        <t-button size="small" variant="outline" @click="emit('editText', 'storyboardTable')">
-          <template #icon><EditIcon /></template>
-          {{ t('production.edit') }}
-        </t-button>
-        <t-button size="small" theme="primary" :loading="saving" @click="emit('saveWorkspace')">
-          <template #icon><SaveIcon /></template>
-          {{ t('production.save') }}
-        </t-button>
-      </div>
     </section>
 
     <section v-else-if="nodeType === 'assets'" class="production-node-body">
       <div class="production-node-toolbar">
         <t-tag variant="light">{{ t('production.node.assets.total', { count: topAssets.length }) }}</t-tag>
         <t-tag variant="light">{{ t('production.node.assets.derived', { count: derivedAssets.length }) }}</t-tag>
+        <t-tag v-if="failedDerivedAssetCount" theme="danger" variant="light">{{ t('production.node.assets.failedCount', { count: failedDerivedAssetCount }) }}</t-tag>
       </div>
       <div class="production-asset-list">
         <article v-for="asset in topAssets" :key="asset.id" class="production-asset-row">
@@ -202,19 +260,24 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
             </div>
           </div>
           <div class="production-node-actions compact">
-            <t-button size="small" variant="text" @click="emit('createDerivedAsset', asset)">
+            <VtButton size="small" variant="text" @click="emit('createDerivedAsset', asset)">
               <template #icon><AddIcon /></template>
               {{ t('production.node.assets.addDerived') }}
-            </t-button>
-            <t-button size="small" variant="text" :disabled="!canGenerateDerived(asset)" @click="emit('generateDerivedAssets', asset.children.map((item) => item.id))">
+            </VtButton>
+            <VtButton size="small" variant="text" :disabled="!canGenerateDerived(asset)" @click="emit('generateDerivedAssets', asset.children.map((item) => item.id))">
               <template #icon><ImageIcon /></template>
               {{ t('production.node.assets.generateDerived') }}
-            </t-button>
+            </VtButton>
           </div>
           <div v-if="asset.children.length" class="production-derived-list">
             <div v-for="child in asset.children" :key="child.id" class="production-derived-row">
               <span>{{ child.name }}</span>
               <t-tag size="small" :theme="getStatusTheme(child.imageStatus)" variant="light">{{ t(`production.status.${child.imageStatus}`) }}</t-tag>
+              <t-tooltip v-if="child.imageStatus === PRODUCTION_TASK_STATUS.FAILED" :content="t('production.node.assets.viewError')">
+                <button type="button" :aria-label="t('production.node.assets.viewError')" @click="emit('showDetail', t('production.node.assets.errorTitle'), child.imageErrorReason || t('production.emptyText'))">
+                  <ErrorCircleIcon />
+                </button>
+              </t-tooltip>
               <t-tooltip :content="t('production.imageFlow.open')">
                 <button type="button" :aria-label="t('production.imageFlow.open')" @click="emit('editImageFlow', 'derivedAsset', child)">
                   <ImageIcon />
@@ -229,7 +292,7 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
           </div>
         </article>
       </div>
-      <t-empty v-if="topAssets.length === 0" :description="t('production.node.assets.empty')" />
+      <VtEmptyState v-if="topAssets.length === 0" size="small" :description="t('production.node.assets.empty')" />
     </section>
 
     <section v-else-if="nodeType === 'storyboard'" class="production-node-body">
@@ -241,21 +304,25 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
         <t-tag v-if="failedStoryboardCount" theme="danger" variant="light">{{ t('production.node.storyboard.failedCount', { count: failedStoryboardCount }) }}</t-tag>
       </div>
       <div class="production-node-actions">
-        <t-button size="small" theme="primary" @click="emit('createStoryboard')">
+        <VtButton size="small" theme="primary" variant="base" @click="emit('createStoryboard')">
           <template #icon><AddIcon /></template>
           {{ t('production.node.storyboard.create') }}
-        </t-button>
-        <t-button size="small" variant="outline" :disabled="flowData.storyboards.length === 0" @click="isAllStoryboardsSelected ? emit('clearStoryboardSelection') : emit('selectAllStoryboards')">
+        </VtButton>
+        <VtButton size="small" variant="outline" :disabled="flowData.storyboards.length === 0" @click="emit('previewStoryboards')">
+          <template #icon><DownloadIcon /></template>
+          {{ t('production.node.storyboard.preview') }}
+        </VtButton>
+        <VtButton size="small" variant="outline" :disabled="flowData.storyboards.length === 0" @click="isAllStoryboardsSelected ? emit('clearStoryboardSelection') : emit('selectAllStoryboards')">
           {{ isAllStoryboardsSelected ? t('production.node.storyboard.clearSelection') : t('production.node.storyboard.selectAll') }}
-        </t-button>
-        <t-button size="small" variant="outline" :disabled="selectedStoryboardCount === 0" @click="emit('generateStoryboards')">
+        </VtButton>
+        <VtButton size="small" variant="outline" :disabled="selectedStoryboardCount === 0" @click="emit('generateStoryboards')">
           <template #icon><ImageIcon /></template>
           {{ t('production.node.storyboard.generateSelected') }}
-        </t-button>
-        <t-button size="small" variant="outline" theme="danger" :disabled="selectedStoryboardCount === 0" @click="emit('batchDeleteStoryboards')">
+        </VtButton>
+        <VtButton size="small" variant="outline" theme="danger" :disabled="selectedStoryboardCount === 0" @click="emit('batchDeleteStoryboards')">
           <template #icon><DeleteIcon /></template>
           {{ t('production.node.storyboard.batchDelete') }}
-        </t-button>
+        </VtButton>
       </div>
       <div class="production-storyboard-grid">
         <article v-for="storyboard in flowData.storyboards" :key="storyboard.id" class="production-storyboard-card">
@@ -289,6 +356,12 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
             <t-tooltip :content="t('production.imageFlow.open')">
               <button type="button" :aria-label="t('production.imageFlow.open')" @click="emit('editImageFlow', 'storyboard', storyboard)"><ImageIcon /></button>
             </t-tooltip>
+            <t-tooltip :content="t('production.node.storyboard.generateOne')">
+              <button type="button" :aria-label="t('production.node.storyboard.generateOne')" @click="emit('generateStoryboardOne', storyboard.id)"><PlayCircleIcon /></button>
+            </t-tooltip>
+            <t-tooltip :content="t('production.node.storyboard.insertAfter')">
+              <button type="button" :aria-label="t('production.node.storyboard.insertAfter')" @click="emit('insertStoryboard', storyboard.index)"><AddIcon /></button>
+            </t-tooltip>
             <t-tooltip :content="t('production.edit')">
               <button type="button" :aria-label="t('production.edit')" @click="emit('editStoryboard', storyboard)"><EditIcon /></button>
             </t-tooltip>
@@ -298,33 +371,37 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
           </div>
         </article>
       </div>
-      <t-empty v-if="flowData.storyboards.length === 0" :description="t('production.node.storyboard.empty')" />
+      <VtEmptyState v-if="flowData.storyboards.length === 0" size="small" :description="t('production.node.storyboard.empty')" />
     </section>
 
-    <section v-else class="production-node-body">
+    <section v-else-if="nodeType === 'workbench'" class="production-node-body">
       <div class="production-node-toolbar">
         <t-tag variant="light">{{ t('production.node.workbench.tracks', { count: flowData.videoTracks.length }) }}</t-tag>
         <t-tag variant="light">{{ t('production.node.workbench.candidates', { count: totalVideoCandidateCount }) }}</t-tag>
         <t-tag variant="light">{{ t('production.workbench.selectedVideos', { count: selectedVideoCount }) }}</t-tag>
         <t-tag v-if="runningTrackCount" theme="primary" variant="light">{{ t('production.runningCount', { count: runningTrackCount }) }}</t-tag>
+        <t-tag v-if="failedTrackCount" theme="danger" variant="light">{{ t('production.node.workbench.failedCount', { count: failedTrackCount }) }}</t-tag>
       </div>
       <div class="production-node-actions">
-        <t-button size="small" theme="primary" @click="emit('openWorkbench')">
+        <VtButton size="small" theme="primary" variant="base" @click="emit('openWorkbench')">
           <template #icon><VideoIcon /></template>
           {{ t('production.node.workbench.open') }}
-        </t-button>
-        <t-button size="small" theme="primary" @click="emit('createTrack')">
+        </VtButton>
+        <VtButton size="small" theme="primary" variant="outline" @click="emit('createTrack')">
           <template #icon><AddIcon /></template>
           {{ t('production.node.workbench.createTrack') }}
-        </t-button>
-        <t-button size="small" variant="outline" :disabled="selectedTrackCount === 0" @click="emit('generateVideoPrompts')">
+        </VtButton>
+        <VtButton size="small" variant="outline" :disabled="flowData.videoTracks.length === 0" @click="isAllTracksSelected ? emit('clearTrackSelection') : emit('selectAllTracks')">
+          {{ isAllTracksSelected ? t('production.node.workbench.clearSelection') : t('production.node.workbench.selectAll') }}
+        </VtButton>
+        <VtButton size="small" variant="outline" :disabled="selectedTrackCount === 0" @click="emit('generateVideoPrompts')">
           <template #icon><SaveIcon /></template>
           {{ t('production.node.workbench.promptSelected') }}
-        </t-button>
-        <t-button size="small" variant="outline" :disabled="selectedTrackCount === 0" @click="emit('generateVideos')">
+        </VtButton>
+        <VtButton size="small" variant="outline" :disabled="selectedTrackCount === 0" @click="emit('generateVideos')">
           <template #icon><PlayCircleIcon /></template>
           {{ t('production.node.workbench.videoSelected') }}
-        </t-button>
+        </VtButton>
       </div>
       <div class="production-track-list">
         <article v-for="track in flowData.videoTracks" :key="track.id" class="production-track-card">
@@ -343,6 +420,9 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
             <t-tooltip v-if="hasTrackGenerationRecord(track)" :content="t('production.generationRecord.action')">
               <button type="button" :aria-label="t('production.generationRecord.action')" @click="showTrackGenerationRecord(track)"><FileIcon /></button>
             </t-tooltip>
+            <t-tooltip v-if="track.errorReason" :content="t('production.node.workbench.viewError')">
+              <button type="button" :aria-label="t('production.node.workbench.viewError')" @click="emit('showDetail', t('production.workbench.promptErrorTitle'), track.errorReason || t('production.emptyText'))"><ErrorCircleIcon /></button>
+            </t-tooltip>
             <t-tooltip :content="t('production.edit')">
               <button type="button" :aria-label="t('production.edit')" @click="emit('editTrack', track)"><EditIcon /></button>
             </t-tooltip>
@@ -352,7 +432,62 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
           </div>
         </article>
       </div>
-      <t-empty v-if="flowData.videoTracks.length === 0" :description="t('production.node.workbench.empty')" />
+      <VtEmptyState v-if="flowData.videoTracks.length === 0" size="small" :description="t('production.node.workbench.empty')" />
+    </section>
+
+    <section v-else-if="nodeType === 'export'" class="production-node-body">
+      <div class="production-node-toolbar">
+        <t-tag :theme="exportReady ? 'success' : 'warning'" variant="light">{{ exportReady ? t('production.node.export.ready') : t('production.node.export.blocked') }}</t-tag>
+        <t-tag variant="light">{{ t('production.node.export.selected', { selected: selectedVideoCount, total: flowData.videoTracks.length }) }}</t-tag>
+        <t-tag v-if="exportBlockerCount" theme="warning" variant="light">{{ t('production.node.export.blockers', { count: exportBlockerCount }) }}</t-tag>
+      </div>
+      <div class="production-node-actions">
+        <VtButton variant="outline" :disabled="flowData.videoTracks.length === 0" @click="emit('openExportCheck')">
+          <template #icon><FileIcon /></template>
+          {{ t('production.node.export.check') }}
+        </VtButton>
+        <VtButton theme="primary" variant="base" :disabled="flowData.videoTracks.length === 0" @click="emit('openExport')">
+          <template #icon><DownloadIcon /></template>
+          {{ t('production.node.export.open') }}
+        </VtButton>
+      </div>
+      <div class="production-node-meta-grid">
+        <span>{{ t('production.node.workbench.tracks', { count: flowData.videoTracks.length }) }}</span>
+        <span>{{ t('production.node.workbench.candidates', { count: totalVideoCandidateCount }) }}</span>
+      </div>
+      <VtEmptyState v-if="flowData.videoTracks.length === 0" size="small" :description="t('production.node.export.empty')" />
     </section>
   </article>
 </template>
+
+<style scoped>
+.production-node-head > div:first-child {
+  overflow: hidden;
+}
+
+.production-node-head strong,
+.production-node-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.production-node-head strong {
+  white-space: nowrap;
+}
+
+.production-node-head-actions {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  justify-content: flex-end;
+}
+
+.production-node-actions.is-icon-only {
+  gap: 6px;
+}
+
+.production-node-head-actions :deep(.vt-button) {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+</style>

@@ -34,8 +34,9 @@ for (const expected of [
   'height: 100dvh;',
   'grid-template-columns: 72px minmax(0, 1fr);',
   'scrollbar-gutter: stable;',
-  '.project-nav {',
-  'overflow-y: auto;',
+  '.project-workspace-nav {',
+  '.project-top-nav {',
+  'overflow-x: auto;',
   '.content-frame {',
   'overflow-x: hidden;',
   '.t-dialog__ctx .t-dialog {',
@@ -53,7 +54,8 @@ for (const expected of [
 assertBlockNotIncludes(stylesPath, '.app-shell {', '.app-shell.has-titlebar', 'min-width: 1180px;');
 
 assertIncludes('src/renderer/src/layouts/WorkbenchLayout.vue', 'class="content-frame"');
-assertIncludes('src/renderer/src/features/settings/SettingsHome.vue', 'scrollIntoView({ behavior: \'smooth\', block: \'start\' })');
+assertIncludes('src/renderer/src/features/settings/SettingsHome.vue', 'activeCategoryKey');
+assertIncludes('src/renderer/src/features/settings/SettingsHome.vue', 'selectCategory');
 assertIncludes('src/renderer/src/features/production/components/ProductionWorkbenchDialog.vue', 'width="96vw"');
 assertIncludes('src/renderer/src/features/production/components/ProductionImageFlowDialog.vue', 'width="96vw"');
 

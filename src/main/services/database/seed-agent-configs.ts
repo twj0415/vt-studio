@@ -11,15 +11,15 @@ interface AgentConfigRow {
 }
 
 const AGENT_CONFIGS: AgentConfigRow[] = [
-  { key: 'scriptAgent', name: '剧本Agent', description: null, temperature: null, maxOutputTokens: null, disabled: false },
+  { key: 'scriptAgent', name: '改编助手', description: null, temperature: null, maxOutputTokens: null, disabled: false },
   { key: 'productionAgent', name: '生产Agent', description: null, temperature: null, maxOutputTokens: null, disabled: false },
   { key: 'universalAi', name: '通用AI', description: null, temperature: null, maxOutputTokens: null, disabled: false },
   { key: 'ttsDubbing', name: 'TTS配音', description: null, temperature: null, maxOutputTokens: null, disabled: true },
-  { key: 'scriptAgent:decisionAgent', name: '剧本Agent:决策层', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
-  { key: 'scriptAgent:supervisionAgent', name: '剧本Agent:监督层', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
-  { key: 'scriptAgent:storySkeletonAgent', name: '剧本Agent:故事骨架', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
-  { key: 'scriptAgent:adaptationStrategyAgent', name: '剧本Agent:改编策略', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
-  { key: 'scriptAgent:scriptAgent', name: '剧本Agent:剧本生成', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
+  { key: 'scriptAgent:decisionAgent', name: '改编助手:决策层', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
+  { key: 'scriptAgent:supervisionAgent', name: '改编助手:监督层', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
+  { key: 'scriptAgent:storySkeletonAgent', name: '改编助手:故事大纲', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
+  { key: 'scriptAgent:adaptationStrategyAgent', name: '改编助手:改编方案', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
+  { key: 'scriptAgent:scriptAgent', name: '改编助手:成稿生成', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
   { key: 'productionAgent:decisionAgent', name: '生产Agent:决策层', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
   { key: 'productionAgent:supervisionAgent', name: '生产Agent:监督层', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },
   { key: 'productionAgent:deriveAssetsAgent', name: '生产Agent:衍生资产', description: null, temperature: 1, maxOutputTokens: 0, disabled: false },

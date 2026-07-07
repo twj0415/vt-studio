@@ -1,10 +1,13 @@
 import type {
   ImageGenerationMode,
   ModelCapability,
+  ProjectImageQuality,
+  ProjectVideoRatio,
   VendorCapability,
   VendorInputType,
   VideoGenerationMode,
 } from '../constants/dictionaries';
+import type { ReasoningEffort, TextReasoningCapability } from '../constants/model-capabilities';
 
 export type VendorModelType = ModelCapability;
 export type { VendorCapability, VendorInputType };
@@ -22,6 +25,7 @@ export interface VendorTextModel {
   modelName: string;
   type: 'text';
   think: boolean;
+  reasoning?: TextReasoningCapability;
 }
 
 export interface VendorImageModel {
@@ -162,6 +166,8 @@ export interface VendorTestTextPayload {
   vendorId: string;
   modelName: string;
   prompt: string;
+  reasoningEnabled?: boolean;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface VendorTestTextResult {
@@ -174,6 +180,10 @@ export interface VendorTestImagePayload {
   vendorId: string;
   modelName: string;
   prompt: string;
+  imageMode?: ImageGenerationMode;
+  imageSize?: ProjectImageQuality;
+  aspectRatio?: string;
+  referenceImages?: string[];
   imageBase64?: string;
 }
 
@@ -188,4 +198,9 @@ export interface VendorTestVideoPayload {
   modelName: string;
   mode: string;
   prompt: string;
+  duration?: number;
+  resolution?: string;
+  aspectRatio?: ProjectVideoRatio;
+  audio?: boolean;
+  referenceImages?: string[];
 }

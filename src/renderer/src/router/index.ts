@@ -2,10 +2,12 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-rou
 import LoginHome from '@renderer/features/auth/LoginHome.vue';
 import WorkbenchLayout from '@renderer/layouts/WorkbenchLayout.vue';
 import ProjectHome from '@renderer/features/project/ProjectHome.vue';
+import AiToolLibraryHome from '@renderer/features/ai-tool-library/index.vue';
+import ResourceLibraryHome from '@renderer/features/resource-library/ResourceLibraryHome.vue';
 import ProjectOverviewHome from '@renderer/features/project-overview/ProjectOverviewHome.vue';
 import TaskCenter from '@renderer/features/task-center/TaskCenter.vue';
 import SettingsHome from '@renderer/features/settings/SettingsHome.vue';
-import NovelHome from '@renderer/features/novel/NovelHome.vue';
+import NovelHome from '@renderer/features/novel/index.vue';
 import ScriptAgentHome from '@renderer/features/script-agent/ScriptAgentHome.vue';
 import ScriptHome from '@renderer/features/script/ScriptHome.vue';
 import CornerScapeHome from '@renderer/features/corner-scape/CornerScapeHome.vue';
@@ -45,6 +47,18 @@ const routes: RouteRecordRaw[] = [
         name: 'projects',
         component: ProjectHome,
         meta: { titleKey: 'route.projects' },
+      },
+      {
+        path: 'ai-tool-library',
+        name: 'ai-tool-library',
+        component: AiToolLibraryHome,
+        meta: { titleKey: 'route.aiToolLibrary' },
+      },
+      {
+        path: 'resource-library',
+        name: 'resource-library',
+        component: ResourceLibraryHome,
+        meta: { titleKey: 'route.resourceLibrary' },
       },
       {
         path: 'tasks',

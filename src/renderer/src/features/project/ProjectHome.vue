@@ -1,28 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, h, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
-import { AddIcon, DeleteIcon, DownloadIcon, EditIcon, FolderOpenIcon, RefreshIcon, UploadIcon } from 'tdesign-icons-vue-next';
+import { AddIcon, DeleteIcon, DownloadIcon, EditIcon, FolderOpenIcon, MoreIcon, RefreshIcon, UploadIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
+import type { DropdownOption } from 'tdesign-vue-next/es/dropdown';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import ProjectFormDialog from './components/ProjectFormDialog.vue';
-import ManualFormDialog from './components/ManualFormDialog.vue';
 import { useAppStore } from '@renderer/stores/app';
 import { PROJECT_IMAGE_QUALITY_VALUES, PROJECT_VIDEO_RATIO_VALUES } from '@shared/constants/dictionaries';
 import type {
   ProjectDeleteImpact,
-  ProjectManualDetail,
-  ProjectManualKind,
+  ProjectFlowStatsResult,
   ProjectPageStateResult,
   ProjectSavePayload,
   ProjectSummary,
 } from '@shared/types/project';
+
+type ProjectCardAction = 'edit' | 'duplicate' | 'import' | 'export' | 'delete';
 
 const router = useRouter();
 const { t, locale } = useI18n();
 const appStore = useAppStore();
 const loading = ref(false);
 const savingProject = ref(false);
-const savingManual = ref(false);
 const pageState = ref<ProjectPageStateResult>({
   projects: [],
   imageModels: [],
@@ -44,10 +47,7 @@ const exportingPackageId = ref<number | null>(null);
 const importDialogVisible = ref(false);
 const importPackagePath = ref('');
 const importingPackage = ref(false);
-
-const manualDialogVisible = ref(false);
-const manualKind = ref<ProjectManualKind>('visual');
-const activeManual = ref<ProjectManualDetail | null>(null);
+const projectStats = ref<Record<number, ProjectFlowStatsResult | null>>({});
 
 const currentProjectId = computed(() => Number(appStore.currentProject?.id ?? 0));
 
@@ -65,9 +65,24 @@ async function loadPageState(): Promise<void> {
     }
 
     pageState.value = response.data;
+    await loadProjectFlowStats(response.data.projects);
   } finally {
     loading.value = false;
   }
+}
+
+async function loadProjectFlowStats(projects: ProjectSummary[]): Promise<void> {
+  const entries = await Promise.all(
+    projects.map(async (project) => {
+      try {
+        const response = await window.vtStudio.project.getFlowStats({ projectId: project.id });
+        return [project.id, isOk(response) ? response.data : null] as const;
+      } catch {
+        return [project.id, null] as const;
+      }
+    })
+  );
+  projectStats.value = Object.fromEntries(entries) as Record<number, ProjectFlowStatsResult | null>;
 }
 
 function openCreateDialog(): void {
@@ -104,6 +119,7 @@ async function saveProject(payload: ProjectSavePayload): Promise<void> {
       appStore.setCurrentProject({
         id: String(response.data.project.id),
         name: response.data.project.name,
+        templateType: response.data.project.templateType,
         sourceType: response.data.project.sourceType,
       });
     }
@@ -111,6 +127,30 @@ async function saveProject(payload: ProjectSavePayload): Promise<void> {
   } finally {
     savingProject.value = false;
   }
+}
+
+async function duplicateProject(project: ProjectSummary): Promise<void> {
+  const response = await window.vtStudio.project.create({
+    templateType: project.templateType,
+    sourceType: project.sourceType,
+    name: t('project.copyName', { name: project.name }),
+    genre: project.genre,
+    description: project.description,
+    imageModelId: project.imageModelId,
+    imageQuality: project.imageQuality,
+    videoModelId: project.videoModelId,
+    videoMode: project.videoMode,
+    videoRatio: project.videoRatio,
+    visualManualId: project.visualManualId,
+    directorManualId: project.directorManualId,
+  });
+  if (!isOk(response)) {
+    MessagePlugin.error(response.msg);
+    return;
+  }
+
+  MessagePlugin.success(t('project.message.duplicated'));
+  await loadPageState();
 }
 
 async function openProject(project: ProjectSummary): Promise<void> {
@@ -225,70 +265,65 @@ async function importProjectPackage(): Promise<void> {
   }
 }
 
-function openCreateManual(kind: ProjectManualKind): void {
-  manualKind.value = kind;
-  activeManual.value = {
-    id: 0,
-    kind,
-    name: '',
-    path: '',
-    coverRelativePath: null,
-    coverUrl: null,
-    referenceCount: 0,
-    updatedAt: Date.now(),
-    tabs: [],
-  };
-  manualDialogVisible.value = true;
+function getProjectActionOptions(project: ProjectSummary): DropdownOption[] {
+  return [
+    {
+      content: t('project.edit'),
+      value: 'edit' satisfies ProjectCardAction,
+      prefixIcon: () => h(EditIcon),
+    },
+    {
+      content: t('project.duplicate'),
+      value: 'duplicate' satisfies ProjectCardAction,
+      prefixIcon: () => h(AddIcon),
+    },
+    {
+      content: t('project.package.importAction'),
+      value: 'import' satisfies ProjectCardAction,
+      prefixIcon: () => h(UploadIcon),
+    },
+    {
+      content: t('project.package.exportAction'),
+      value: 'export' satisfies ProjectCardAction,
+      disabled: exportingPackageId.value === project.id,
+      prefixIcon: () => h(DownloadIcon),
+    },
+    {
+      content: t('project.delete.action'),
+      value: 'delete' satisfies ProjectCardAction,
+      theme: 'error',
+      prefixIcon: () => h(DeleteIcon),
+    },
+  ];
 }
 
-async function openEditManual(kind: ProjectManualKind, id: number): Promise<void> {
-  const response = await window.vtStudio.project.getManual({ kind, id });
-  if (!isOk(response)) {
-    MessagePlugin.error(response.msg);
+function handleProjectCardAction(project: ProjectSummary, dropdownItem: DropdownOption, event: MouseEvent): void {
+  event.stopPropagation();
+  const action = dropdownItem.value as ProjectCardAction;
+
+  if (action === 'edit') {
+    openEditDialog(project);
     return;
   }
 
-  manualKind.value = kind;
-  activeManual.value = response.data.manual;
-  manualDialogVisible.value = true;
-}
-
-async function submitManual(payload: Parameters<typeof window.vtStudio.project.saveManual>[0]): Promise<void> {
-  savingManual.value = true;
-  try {
-    const response = await window.vtStudio.project.saveManual(payload);
-    if (!isOk(response)) {
-      MessagePlugin.error(response.msg);
-      return;
-    }
-
-    MessagePlugin.success(t(payload.kind === 'visual' ? 'project.message.visualManualSaved' : 'project.message.directorManualSaved'));
-    manualDialogVisible.value = false;
-    await loadPageState();
-  } finally {
-    savingManual.value = false;
+  if (action === 'duplicate') {
+    void duplicateProject(project);
+    return;
   }
-}
 
-async function deleteManual(kind: ProjectManualKind, id: number): Promise<void> {
-  const dialog = DialogPlugin.confirm({
-    header: t(kind === 'visual' ? 'project.delete.visualManualTitle' : 'project.delete.directorManualTitle'),
-    body: t('project.delete.manualBody'),
-    confirmBtn: t('project.delete.confirmManual'),
-    cancelBtn: t('project.cancel'),
-    theme: 'danger',
-    async onConfirm() {
-      const response = await window.vtStudio.project.deleteManual({ kind, id });
-      if (!isOk(response)) {
-        MessagePlugin.error(response.msg);
-        return;
-      }
+  if (action === 'import') {
+    openImportPackageDialog();
+    return;
+  }
 
-      MessagePlugin.success(t(kind === 'visual' ? 'project.message.visualManualDeleted' : 'project.message.directorManualDeleted'));
-      dialog.destroy();
-      await loadPageState();
-    },
-  });
+  if (action === 'export') {
+    void exportProjectPackage(project);
+    return;
+  }
+
+  if (action === 'delete') {
+    void confirmDeleteProject(project);
+  }
 }
 
 async function runDeleteProject(): Promise<void> {
@@ -327,55 +362,156 @@ onMounted(() => {
 function formatUpdatedAt(updatedAt: number): string {
   return new Date(updatedAt).toLocaleString(locale.value, { hour12: false });
 }
+
+function getStats(project: ProjectSummary): ProjectFlowStatsResult | null {
+  return projectStats.value[project.id] ?? null;
+}
+
+function getStageKey(project: ProjectSummary): string {
+  const stats = getStats(project);
+  if (!stats || stats.scriptCount === 0) {
+    return 'content';
+  }
+  if (stats.selectedVideoTrackCount > 0 && stats.videoTrackCount > 0 && stats.selectedVideoTrackCount === stats.videoTrackCount) {
+    return 'export';
+  }
+  if (stats.videoTrackCount > 0) {
+    return 'video';
+  }
+  if (stats.storyboardImageReadyCount > 0) {
+    return 'storyboardImage';
+  }
+  if (stats.storyboardCount > 0) {
+    return 'storyboardTable';
+  }
+  if (stats.assetCount > 0) {
+    return 'assets';
+  }
+  return 'directorPlan';
+}
+
+function getStatusKey(project: ProjectSummary): string {
+  const stats = getStats(project);
+  if (!stats) {
+    return 'missing';
+  }
+  if (stats.runningTaskCount > 0 || stats.assetImageRunningCount > 0 || stats.storyboardImageRunningCount > 0 || stats.videoRunningCount > 0) {
+    return 'running';
+  }
+  if (stats.failedTaskCount > 0 || stats.assetImageFailedCount > 0 || stats.storyboardImageFailedCount > 0 || stats.videoFailedCount > 0) {
+    return 'failed';
+  }
+  if (stats.scriptCount === 0 || stats.storyboardCount === 0 || stats.videoTrackCount === 0) {
+    return 'missing';
+  }
+  return 'normal';
+}
+
+function getStatusTheme(project: ProjectSummary): 'default' | 'primary' | 'success' | 'warning' | 'danger' {
+  const status = getStatusKey(project);
+  if (status === 'running') {
+    return 'primary';
+  }
+  if (status === 'failed') {
+    return 'danger';
+  }
+  if (status === 'missing') {
+    return 'warning';
+  }
+  return 'success';
+}
+
+function getCompletion(project: ProjectSummary): number {
+  const stats = getStats(project);
+  if (!stats) {
+    return 0;
+  }
+
+  const checks = [
+    stats.scriptCount > 0,
+    stats.assetCount > 0,
+    stats.storyboardCount > 0,
+    stats.storyboardCount > 0 && stats.storyboardImageReadyCount >= stats.storyboardCount,
+    stats.videoTrackCount > 0,
+    stats.videoTrackCount > 0 && stats.selectedVideoTrackCount >= stats.videoTrackCount,
+  ];
+  return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+}
+
+function getCompletionText(project: ProjectSummary): string {
+  const stats = getStats(project);
+  if (!stats) {
+    return t('project.card.statsLoading');
+  }
+
+  return t('project.card.completionValue', {
+    assets: stats.assetCount,
+    storyboards: stats.storyboardCount,
+    images: stats.storyboardImageReadyCount,
+    videos: stats.selectedVideoTrackCount,
+  });
+}
 </script>
 
 <template>
   <div class="project-page">
     <section class="project-page-head">
       <div>
-        <p class="eyebrow">{{ t('common.global') }}</p>
         <h3>{{ t('project.title') }}</h3>
         <p>{{ t('project.summary') }}</p>
       </div>
-      <div class="settings-actions">
-        <t-button variant="outline" @click="openImportPackageDialog">
+      <div class="project-page-actions">
+        <VtButton variant="outline" @click="openImportPackageDialog">
           <template #icon><UploadIcon /></template>
           {{ t('project.package.importAction') }}
-        </t-button>
-        <t-button variant="outline" :loading="loading" @click="loadPageState">
+        </VtButton>
+        <VtButton variant="outline" :loading="loading" @click="loadPageState">
           <template #icon><RefreshIcon /></template>
           {{ t('project.refresh') }}
-        </t-button>
-        <t-button theme="primary" @click="openCreateDialog">
+        </VtButton>
+        <VtButton theme="primary" @click="openCreateDialog">
           <template #icon><AddIcon /></template>
           {{ t('project.create') }}
-        </t-button>
+        </VtButton>
       </div>
     </section>
 
-    <section class="project-card-grid">
+    <section v-if="pageState.projects.length > 0" class="project-card-grid">
       <article v-for="project in pageState.projects" :key="project.id" class="project-card" @click="openProject(project)">
+        <div class="project-card-cover">
+          <VtEmptyState size="small" />
+          <t-tag class="project-card-ratio" size="small" variant="light">{{ project.videoRatio }}</t-tag>
+          <t-tag class="project-card-status" size="small" :theme="getStatusTheme(project)" variant="light">
+            {{ t(`project.card.status.${getStatusKey(project)}`) }}
+          </t-tag>
+        </div>
         <div class="project-card-head">
-          <div>
+          <div class="project-card-title">
             <strong>{{ project.name }}</strong>
-            <small>{{ t(`project.sourceType.${project.sourceType}`) }} · {{ project.genre }}</small>
+            <small>{{ t(`project.templateType.${project.templateType}`) }} · {{ project.genre }}</small>
           </div>
-          <div class="project-card-actions">
-            <t-button size="small" variant="outline" @click.stop="openEditDialog(project)">
-              <template #icon><EditIcon /></template>
-              {{ t('project.edit') }}
-            </t-button>
-            <t-button size="small" variant="outline" :loading="exportingPackageId === project.id" @click.stop="exportProjectPackage(project)">
-              <template #icon><DownloadIcon /></template>
-              {{ t('project.package.exportAction') }}
-            </t-button>
-            <t-button size="small" variant="outline" @click.stop="confirmDeleteProject(project)">
-              <template #icon><DeleteIcon /></template>
-              {{ t('project.delete.action') }}
-            </t-button>
+          <div class="project-card-actions" @click.stop>
+            <t-dropdown
+              trigger="click"
+              placement="bottom-right"
+              :options="getProjectActionOptions(project)"
+              @click="(dropdownItem, context) => handleProjectCardAction(project, dropdownItem, context.e)"
+            >
+              <VtButton shape="square" size="small" variant="text" icon-only :aria-label="t('project.moreActions')">
+                <template #icon><MoreIcon /></template>
+              </VtButton>
+            </t-dropdown>
           </div>
         </div>
         <p>{{ project.description }}</p>
+        <div class="project-card-progress">
+          <div>
+            <span>{{ t(`project.card.stage.${getStageKey(project)}`) }}</span>
+            <strong>{{ getCompletion(project) }}%</strong>
+          </div>
+          <t-progress :percentage="getCompletion(project)" :show-info="false" size="small" />
+          <small>{{ getCompletionText(project) }}</small>
+        </div>
         <div class="project-card-meta">
           <span>{{ t('project.card.imageMeta', { model: project.imageModelLabel, quality: project.imageQuality }) }}</span>
           <span>{{ t('project.card.videoMeta', { model: project.videoModelLabel, mode: project.videoModeLabel, ratio: project.videoRatio }) }}</span>
@@ -384,66 +520,14 @@ function formatUpdatedAt(updatedAt: number): string {
         </div>
         <div class="project-card-foot">
           <small>{{ formatUpdatedAt(project.updatedAt) }}</small>
-          <t-button size="small" theme="primary" variant="text">
+          <VtButton size="small" theme="primary" variant="text" @click.stop="openProject(project)">
             <template #icon><FolderOpenIcon /></template>
             {{ t('project.open') }}
-          </t-button>
+          </VtButton>
         </div>
       </article>
-      <t-empty v-if="pageState.projects.length === 0" :description="t('project.empty')" />
     </section>
-
-    <section class="project-manual-section">
-      <div class="project-manual-head">
-        <div>
-          <strong>{{ t('project.manual.visual') }}</strong>
-          <p>{{ t('project.manual.visualSummary') }}</p>
-        </div>
-        <t-button theme="primary" variant="outline" @click="openCreateManual('visual')">{{ t('project.manual.addVisual') }}</t-button>
-      </div>
-      <div class="project-manual-grid">
-        <article v-for="manual in pageState.visualManuals" :key="`visual-${manual.id}`" class="project-manual-card">
-          <div class="project-manual-card-head">
-            <div>
-              <strong>{{ manual.name }}</strong>
-              <small>{{ manual.path }}</small>
-            </div>
-            <t-tag variant="light">{{ t('project.manual.referenceCount', { count: manual.referenceCount }) }}</t-tag>
-          </div>
-          <img v-if="manual.coverUrl" :src="manual.coverUrl" :alt="t('project.manual.coverAlt')" class="project-manual-cover" />
-          <div class="project-card-actions">
-            <t-button size="small" variant="outline" @click="openEditManual('visual', manual.id)">{{ t('project.edit') }}</t-button>
-            <t-button size="small" variant="outline" @click="deleteManual('visual', manual.id)">{{ t('project.delete.action') }}</t-button>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section class="project-manual-section">
-      <div class="project-manual-head">
-        <div>
-          <strong>{{ t('project.manual.director') }}</strong>
-          <p>{{ t('project.manual.directorSummary') }}</p>
-        </div>
-        <t-button theme="primary" variant="outline" @click="openCreateManual('director')">{{ t('project.manual.addDirector') }}</t-button>
-      </div>
-      <div class="project-manual-grid">
-        <article v-for="manual in pageState.directorManuals" :key="`director-${manual.id}`" class="project-manual-card">
-          <div class="project-manual-card-head">
-            <div>
-              <strong>{{ manual.name }}</strong>
-              <small>{{ manual.path }}</small>
-            </div>
-            <t-tag variant="light">{{ t('project.manual.referenceCount', { count: manual.referenceCount }) }}</t-tag>
-          </div>
-          <img v-if="manual.coverUrl" :src="manual.coverUrl" :alt="t('project.manual.coverAlt')" class="project-manual-cover" />
-          <div class="project-card-actions">
-            <t-button size="small" variant="outline" @click="openEditManual('director', manual.id)">{{ t('project.edit') }}</t-button>
-            <t-button size="small" variant="outline" @click="deleteManual('director', manual.id)">{{ t('project.delete.action') }}</t-button>
-          </div>
-        </article>
-      </div>
-    </section>
+    <VtEmptyState v-else class="project-empty-state" fill />
 
     <ProjectFormDialog
       v-model:visible="projectDialogVisible"
@@ -459,19 +543,12 @@ function formatUpdatedAt(updatedAt: number): string {
       @submit="saveProject"
     />
 
-    <ManualFormDialog
-      v-model:visible="manualDialogVisible"
-      :saving="savingManual"
-      :kind="manualKind"
-      :manual="activeManual"
-      @submit="submitManual"
-    />
-
-    <t-dialog
+    <VtDialog
       :visible="importDialogVisible"
-      :header="t('project.package.importTitle')"
+      :title="t('project.package.importTitle')"
       width="680px"
-      :confirm-btn="t('project.package.importConfirm')"
+      :confirm-text="t('project.package.importConfirm')"
+      :cancel-text="t('project.cancel')"
       :confirm-loading="importingPackage"
       @update:visible="(value) => (importDialogVisible = value)"
       @confirm="importProjectPackage"
@@ -482,13 +559,14 @@ function formatUpdatedAt(updatedAt: number): string {
         </div>
         <t-input v-model="importPackagePath" :placeholder="t('project.package.pathPlaceholder')" clearable />
       </div>
-    </t-dialog>
+    </VtDialog>
 
-    <t-dialog
+    <VtDialog
       :visible="deleteDialogVisible"
-      :header="t('project.delete.title')"
+      :title="t('project.delete.title')"
       width="720px"
-      :confirm-btn="t('project.delete.confirmProject')"
+      :confirm-text="t('project.delete.confirmProject')"
+      :cancel-text="t('project.cancel')"
       :confirm-loading="deletingProject"
       @update:visible="(value) => (deleteDialogVisible = value)"
       @confirm="runDeleteProject"
@@ -506,6 +584,6 @@ function formatUpdatedAt(updatedAt: number): string {
         </dl>
         <t-checkbox v-model="deleteFiles">{{ t('project.delete.files') }}</t-checkbox>
       </div>
-    </t-dialog>
+    </VtDialog>
   </div>
 </template>

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { getRuntimeDirectories, safeJoin } from '../file-system';
 import { logger } from '../logger';
@@ -51,6 +51,47 @@ function copyDirectoryMissingOnly(sourceRoot: string, targetRoot: string): { cop
   return { copied, skipped };
 }
 
+function repairKnownDefaultVendorAdapters(sourceRoot: string, targetRoot: string): number {
+  const repairs: Array<{ vendorId: string; shouldRepair: (current: string) => boolean }> = [
+    {
+      vendorId: 'atlascloud',
+      shouldRepair: (current) => current.includes('"minimal"') || !current.includes('shouldUseAtlasCloudImageApi') || !current.includes('/images/edits'),
+    },
+    {
+      vendorId: 'volcengine',
+      shouldRepair: (current) => current.includes('"minimal"'),
+    },
+    {
+      vendorId: 'klingai',
+      shouldRepair: (current) => !current.includes('normalizeKlingVideoMode') || current.includes('"videoReference:1"'),
+    },
+    {
+      vendorId: 'minimax',
+      shouldRepair: (current) => !current.includes('MiniMax-Hailuo-2.3') || !current.includes('/v1/video_generation') || current.includes('return "";'),
+    },
+  ];
+  let repaired = 0;
+
+  for (const repair of repairs) {
+    const vendorId = repair.vendorId;
+    const sourcePath = join(sourceRoot, 'vendors', `${vendorId}.ts`);
+    const targetPath = safeJoin(targetRoot, `${vendorId}.ts`);
+    if (!existsSync(sourcePath) || !existsSync(targetPath)) {
+      continue;
+    }
+
+    const current = readFileSync(targetPath, 'utf-8');
+    if (!repair.shouldRepair(current)) {
+      continue;
+    }
+
+    copyFileSync(sourcePath, targetPath);
+    repaired += 1;
+  }
+
+  return repaired;
+}
+
 export function syncDefaultAssets(): DefaultAssetSyncResult {
   const sourceRoot = getDefaultDataRoot();
   const directories = getRuntimeDirectories();
@@ -80,7 +121,12 @@ export function syncDefaultAssets(): DefaultAssetSyncResult {
     result.skipped += current.skipped;
   }
 
+  const repairedVendors = repairKnownDefaultVendorAdapters(sourceRoot, directories.vendors);
+
   logger.info('默认资源', `已同步 ${result.copied} 个文件，跳过 ${result.skipped} 个已存在文件`);
+  if (repairedVendors > 0) {
+    logger.info('默认资源', `已修复 ${repairedVendors} 个旧版默认供应商 adapter`);
+  }
   if (result.missingTargets.length > 0) {
     logger.warn('默认资源', `缺少默认资源分类：${result.missingTargets.join('、')}`);
   }

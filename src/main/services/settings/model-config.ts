@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getTextReasoningCapability } from '@shared/constants/model-capabilities';
 import { VT_STATUS } from '@shared/constants/status';
 import { toPublicSecretState } from '@shared/security/secrets';
 import type {
@@ -115,6 +116,101 @@ const SERVICE_META: Record<
     capabilities: ['text', 'image', 'video'],
     models: [{ id: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', modelName: 'gemini-2.5-flash', type: 'text', think: true }],
   },
+  minimax: {
+    name: 'MiniMax 海螺',
+    protocolType: 'custom-adapter',
+    adapterVendorId: 'minimax',
+    defaultBaseUrl: 'https://api.minimaxi.com',
+    capabilities: ['text', 'image', 'video'],
+    models: [
+      { id: 'MiniMax-M2.7', displayName: 'MiniMax-M2.7 推理版', modelName: 'MiniMax-M2.7', type: 'text', think: true },
+      { id: 'MiniMax-M2.7-highspeed', displayName: 'MiniMax-M2.7 极速版', modelName: 'MiniMax-M2.7-highspeed', type: 'text', think: true },
+      { id: 'image-01', displayName: '海螺图像 V1', modelName: 'image-01', type: 'image', imageModes: ['text', 'singleImage'] },
+      { id: 'image-01-live', displayName: '海螺图像 V1 Live', modelName: 'image-01-live', type: 'image', imageModes: ['text', 'singleImage'] },
+      {
+        id: 'MiniMax-Hailuo-2.3',
+        displayName: '海螺 2.3',
+        modelName: 'MiniMax-Hailuo-2.3',
+        type: 'video',
+        videoModes: ['text', 'singleImage'],
+        durationOptions: [6, 10],
+        resolutionOptions: ['768P', '1080P'],
+        aspectRatioOptions: ['16:9', '9:16'],
+        audioSupport: 'none',
+      },
+      {
+        id: 'MiniMax-Hailuo-2.3-Fast',
+        displayName: '海螺 2.3 极速版',
+        modelName: 'MiniMax-Hailuo-2.3-Fast',
+        type: 'video',
+        videoModes: ['text', 'singleImage'],
+        durationOptions: [6, 10],
+        resolutionOptions: ['768P', '1080P'],
+        aspectRatioOptions: ['16:9', '9:16'],
+        audioSupport: 'none',
+      },
+      {
+        id: 'MiniMax-Hailuo-02',
+        displayName: '海螺 02',
+        modelName: 'MiniMax-Hailuo-02',
+        type: 'video',
+        videoModes: ['text', 'singleImage', 'startEndRequired'],
+        durationOptions: [6, 10],
+        resolutionOptions: ['512P', '768P', '1080P'],
+        aspectRatioOptions: ['16:9', '9:16'],
+        audioSupport: 'none',
+      },
+    ],
+  },
+  klingai: {
+    name: '可灵 AI',
+    protocolType: 'custom-adapter',
+    adapterVendorId: 'klingai',
+    defaultBaseUrl: 'https://api-beijing.klingai.com',
+    capabilities: ['video'],
+    models: [
+      {
+        id: 'kling-v2-5-turbo:std',
+        displayName: 'Kling v2.5 Turbo 标准',
+        modelName: 'kling-v2-5-turbo:std',
+        type: 'video',
+        videoModes: ['text', 'singleImage'],
+        durationOptions: [5, 10],
+        resolutionOptions: ['1080p'],
+        audioSupport: 'none',
+      },
+      {
+        id: 'kling-v2-5-turbo:pro',
+        displayName: 'Kling v2.5 Turbo 专家',
+        modelName: 'kling-v2-5-turbo:pro',
+        type: 'video',
+        videoModes: ['text', 'singleImage', 'startEndRequired'],
+        durationOptions: [5, 10],
+        resolutionOptions: ['1080p'],
+        audioSupport: 'none',
+      },
+      {
+        id: 'kling-video-o1:std',
+        displayName: 'Kling Video O1 标准',
+        modelName: 'kling-video-o1:std',
+        type: 'video',
+        videoModes: ['text', 'singleImage', 'startEndRequired', ['imageReference:7']],
+        durationOptions: [5, 10],
+        resolutionOptions: ['720p'],
+        audioSupport: 'none',
+      },
+      {
+        id: 'kling-v3-omni:std',
+        displayName: 'Kling V3 Omni 标准',
+        modelName: 'kling-v3-omni:std',
+        type: 'video',
+        videoModes: ['text', 'singleImage', 'startEndRequired', ['imageReference:7']],
+        durationOptions: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        resolutionOptions: ['720p'],
+        audioSupport: 'none',
+      },
+    ],
+  },
   'local-workflow': {
     name: '本地工作流',
     protocolType: 'workflow',
@@ -199,13 +295,33 @@ function createConnectionId(): string {
   return `conn_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
 }
 
+function normalizeServiceModel(model: RegisteredModel, serviceType: ApiServiceType): RegisteredModel {
+  const meta = SERVICE_META[serviceType];
+  const normalized = normalizeRegisteredModel(model);
+  if (normalized.type !== 'text') {
+    return normalized;
+  }
+
+  return {
+    ...normalized,
+    reasoning: getTextReasoningCapability({
+      serviceType,
+      protocolType: meta.protocolType,
+      provider: meta.adapterVendorId,
+      modelName: normalized.modelName,
+      think: normalized.think,
+      reasoning: normalized.reasoning,
+    }),
+  };
+}
+
 function normalizeModels(models: RegisteredModel[], serviceType: ApiServiceType): RegisteredModel[] {
   const fallback = SERVICE_META[serviceType].models;
   const source = models.length > 0 ? models : fallback;
   const seen = new Set<string>();
 
   return source
-    .map(normalizeRegisteredModel)
+    .map((model) => normalizeServiceModel(model, serviceType))
     .filter((model) => {
       if (!model.modelName || seen.has(model.modelName)) {
         return false;
@@ -220,8 +336,20 @@ function deriveCapabilitiesFromModels(models: RegisteredModel[]): ModelCapabilit
   return [...new Set(models.map((model) => model.type))] as ModelCapability[];
 }
 
-function getConnectionStatus(connection: Pick<ApiConnection, 'apiKey' | 'serviceType' | 'baseUrl' | 'workflowManifest' | 'models'>): Pick<ApiConnection, 'status' | 'statusText'> {
-  if (!connection.apiKey.trim() && connection.serviceType !== 'local-workflow') {
+function isKlingAiService(serviceType: ApiServiceType): boolean {
+  return serviceType === 'klingai';
+}
+
+function getConnectionStatus(connection: Pick<ApiConnection, 'apiKey' | 'secretKey' | 'serviceType' | 'baseUrl' | 'workflowManifest' | 'models'>): Pick<ApiConnection, 'status' | 'statusText'> {
+  if (isKlingAiService(connection.serviceType)) {
+    if (!connection.apiKey.trim()) {
+      return { status: 'incomplete', statusText: '缺少 Access Key' };
+    }
+
+    if (!connection.secretKey?.trim()) {
+      return { status: 'incomplete', statusText: '缺少 Secret Key' };
+    }
+  } else if (!connection.apiKey.trim() && connection.serviceType !== 'local-workflow') {
     return { status: 'incomplete', statusText: '缺少 API Key' };
   }
 
@@ -254,6 +382,7 @@ function normalizeDraft(draft: ApiConnectionDraft, previous?: ApiConnection): Ap
   const models = normalizeModels(draft.models ?? [], serviceType);
   const capabilities = deriveCapabilitiesFromModels(models);
   const apiKey = draft.apiKey.trim() || previous?.apiKey || '';
+  const secretKey = draft.secretKey?.trim() || previous?.secretKey || '';
   const base = {
     id: draft.id?.trim() || previous?.id || createConnectionId(),
     name: draft.name.trim() || meta.name,
@@ -261,6 +390,7 @@ function normalizeDraft(draft: ApiConnectionDraft, previous?: ApiConnection): Ap
     protocolType: meta.protocolType,
     baseUrl: draft.baseUrl.trim(),
     apiKey,
+    secretKey,
     workflowManifest: draft.workflowManifest?.trim() || previous?.workflowManifest || '',
     capabilities,
     models,
@@ -300,11 +430,15 @@ function saveConnections(connections: ApiConnection[]): void {
 
 function toPublicConnection(connection: ApiConnection): ApiConnection {
   const apiKeyState = toPublicSecretState(connection.apiKey);
+  const secretKeyState = toPublicSecretState(connection.secretKey ?? '');
   return {
     ...connection,
     apiKey: '',
+    secretKey: '',
     apiKeyConfigured: apiKeyState.configured,
     apiKeyMasked: apiKeyState.masked,
+    secretKeyConfigured: secretKeyState.configured,
+    secretKeyMasked: secretKeyState.masked,
   };
 }
 
@@ -322,6 +456,8 @@ function getServiceTypeFromVendor(vendorId: string, inputValues: Record<string, 
     anthropic: 'claude',
     deepseek: 'deepseek',
     gemini: 'gemini',
+    minimax: 'minimax',
+    klingai: 'klingai',
     comfyui: 'local-workflow',
     atlascloud: 'openai-gateway',
   };
@@ -335,7 +471,7 @@ function migrateLegacyVendorConnections(): ApiConnection[] {
 
   for (const row of getVendorRows()) {
     const inputValues = parseJsonObject(row.input_values);
-    if (!inputValues.apiKey?.trim() && !inputValues.baseUrl?.trim() && row.enabled !== 1) {
+    if (!inputValues.apiKey?.trim() && !inputValues.accessKey?.trim() && !inputValues.secretKey?.trim() && !inputValues.baseUrl?.trim() && row.enabled !== 1) {
       continue;
     }
 
@@ -355,7 +491,8 @@ function migrateLegacyVendorConnections(): ApiConnection[] {
       serviceType,
       protocolType: meta.protocolType,
       baseUrl: inputValues.baseUrl ?? inputValues.endpoint ?? meta.defaultBaseUrl,
-      apiKey: inputValues.apiKey ?? '',
+      apiKey: inputValues.apiKey ?? inputValues.accessKey ?? '',
+      secretKey: inputValues.secretKey ?? '',
       workflowManifest: inputValues.workflowManifest ?? inputValues.workflow ?? '',
       capabilities: deriveCapabilitiesFromModels(models),
       models,
@@ -437,7 +574,7 @@ function ensureDefaultBindings(connections: ApiConnection[]): void {
 
 function getConnectionProjectionInputValues(connection: ApiConnection): Record<string, string> {
   const meta = SERVICE_META[connection.serviceType];
-  return {
+  const inputValues: Record<string, string> = {
     apiKey: connection.apiKey,
     baseUrl: connection.baseUrl,
     endpoint: connection.baseUrl,
@@ -446,6 +583,13 @@ function getConnectionProjectionInputValues(connection: ApiConnection): Record<s
     [CONNECTION_PROJECTION_ADAPTER_KEY]: meta.adapterVendorId,
     [CONNECTION_PROJECTION_NAME_KEY]: connection.name,
   };
+
+  if (isKlingAiService(connection.serviceType)) {
+    inputValues.accessKey = connection.apiKey;
+    inputValues.secretKey = connection.secretKey ?? '';
+  }
+
+  return inputValues;
 }
 
 function getConnectionProjectionModels(models: RegisteredModel[]): VendorModelConfig[] {
@@ -476,7 +620,7 @@ function getProjectionMismatchFields(connection: ApiConnection, row: VendorRow):
   const actualModels = parseModelList(row.models);
   const mismatch: string[] = [];
 
-  for (const key of ['apiKey', 'baseUrl', 'endpoint', 'workflow', 'workflowManifest', CONNECTION_PROJECTION_ADAPTER_KEY, CONNECTION_PROJECTION_NAME_KEY]) {
+  for (const key of ['apiKey', 'accessKey', 'secretKey', 'baseUrl', 'endpoint', 'workflow', 'workflowManifest', CONNECTION_PROJECTION_ADAPTER_KEY, CONNECTION_PROJECTION_NAME_KEY]) {
     if ((actualInputs[key] ?? '') !== (expectedInputs[key] ?? '')) {
       mismatch.push(key);
     }
@@ -935,6 +1079,8 @@ export async function testApiConnection(payload: ApiConnectionTestPayload): Prom
       vendorId: connection.id,
       modelName: model.modelName,
       prompt: payload.prompt,
+      reasoningEnabled: payload.reasoningEnabled,
+      reasoningEffort: payload.reasoningEffort,
     });
   }
 
@@ -943,6 +1089,10 @@ export async function testApiConnection(payload: ApiConnectionTestPayload): Prom
       vendorId: connection.id,
       modelName: model.modelName,
       prompt: payload.prompt,
+      imageMode: payload.imageMode,
+      imageSize: payload.imageSize,
+      aspectRatio: payload.aspectRatio,
+      referenceImages: payload.referenceImages,
     });
   }
 
@@ -951,8 +1101,13 @@ export async function testApiConnection(payload: ApiConnectionTestPayload): Prom
     return runVendorVideoTest({
       vendorId: connection.id,
       modelName: model.modelName,
-      mode: modeKeys.includes('text') ? 'text' : getDefaultRegisteredModelModeKey(model),
+      mode: payload.videoMode || (modeKeys.includes('text') ? 'text' : getDefaultRegisteredModelModeKey(model)),
       prompt: payload.prompt,
+      duration: payload.duration,
+      resolution: payload.resolution,
+      aspectRatio: payload.videoAspectRatio,
+      audio: payload.audio,
+      referenceImages: payload.referenceImages,
     });
   }
 
@@ -999,6 +1154,17 @@ export async function testResourceBinding(payload: ResourceTestPayload): Promise
     connectionId: binding.connectionId,
     modelName: binding.modelName,
     prompt: payload.prompt,
+    reasoningEnabled: payload.reasoningEnabled,
+    reasoningEffort: payload.reasoningEffort,
+    imageMode: payload.imageMode,
+    imageSize: payload.imageSize,
+    aspectRatio: payload.aspectRatio,
+    videoMode: payload.videoMode,
+    duration: payload.duration,
+    resolution: payload.resolution,
+    videoAspectRatio: payload.videoAspectRatio,
+    audio: payload.audio,
+    referenceImages: payload.referenceImages,
   });
 }
 
@@ -1011,7 +1177,7 @@ export function getConnectionTemplates(): { services: Array<{ serviceType: ApiSe
         name: meta.name,
         defaultBaseUrl: meta.defaultBaseUrl,
         capabilities: meta.capabilities,
-        models: meta.models.map(normalizeRegisteredModel),
+        models: meta.models.map((model) => normalizeServiceModel(model, serviceType)),
       };
     }),
   };

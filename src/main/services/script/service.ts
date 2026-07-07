@@ -35,12 +35,12 @@ import {
   type ScriptSaveResult,
 } from '@shared/types/script';
 import { getDatabase, withTransaction } from '../database';
-import { invokeText } from '../model';
+import { createModelRequestId, invokeText } from '../model';
 import { createError } from '../result';
 import { getBusinessSettings } from '../settings/business-settings';
 import { getEffectivePromptByType } from '../settings/prompt';
 import { stripThink } from '../socket/stripThink';
-import { createTask, failTask, succeedTask } from '../task';
+import { createTask, failTask, succeedTask, updateTaskMeta } from '../task';
 import { logger } from '../logger';
 import {
   DEPENDENCY_REASON,
@@ -52,6 +52,10 @@ import { createStoredZip } from './zip';
 
 const MAX_SCRIPT_NAME_LENGTH = 80;
 const MAX_AI_REGEX_CONTENT_LENGTH = 2000;
+const MAX_MODEL_DIAGNOSTIC_TEXT_LENGTH = 12000;
+const MAX_MODEL_DIAGNOSTIC_ARRAY_ITEMS = 30;
+const MAX_MODEL_DIAGNOSTIC_OBJECT_KEYS = 80;
+const MAX_MODEL_DIAGNOSTIC_DEPTH = 5;
 const SCRIPT_ASSET_EXTRACTION_TASK_CATEGORY = '剧本资产提取';
 const RECOVER_REASON = '软件退出导致资产提取中断';
 const SECRET_REPLACEMENT = '[已隐藏]';
@@ -111,6 +115,41 @@ interface ExtractAssetsToolResult {
   assetsList?: ExtractedAssetInput[];
   newAssets?: ExtractedAssetInput[];
   existingAssetRefs?: ExtractedAssetInput[];
+}
+
+interface ToolResultRecord {
+  toolName?: string;
+  toolCallId?: string;
+  output?: unknown;
+  result?: unknown;
+}
+
+interface ExtractAssetsModelDiagnostics {
+  requestId: string;
+  modelKey: 'universalAi';
+  status: 'running' | 'returned' | 'parse_failed' | 'normalized' | 'failed';
+  rawText?: string;
+  finishReason?: unknown;
+  usage?: unknown;
+  warnings?: unknown;
+  response?: unknown;
+  toolCalls?: unknown;
+  toolResults?: unknown;
+  steps?: unknown;
+  parsed?: {
+    hasOutput: boolean;
+    assetsList: number;
+    newAssets: number;
+    existingAssetRefs: number;
+    normalizedAssets?: number;
+    normalizedTypes?: Partial<Record<ScriptAssetType, number>>;
+  };
+  error?: string;
+  recordedAt: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function tableExists(tableName: string): boolean {
@@ -387,9 +426,135 @@ function maskSensitiveText(value: string): string {
     .replace(/([a-zA-Z]:\\Users\\)[^\\\s]+/g, `$1***`);
 }
 
+function isSensitiveDiagnosticKey(key: string): boolean {
+  return /(api[_-]?key|authorization|password|passwd|secret|token|credential|private[_-]?key|access[_-]?key|signature|sign|cookie)/i.test(key);
+}
+
+function clampDiagnosticText(value: string, maxLength = MAX_MODEL_DIAGNOSTIC_TEXT_LENGTH): string {
+  const sanitized = maskSensitiveText(value);
+  if (sanitized.length <= maxLength) {
+    return sanitized;
+  }
+
+  return `${sanitized.slice(0, maxLength)}... [truncated ${sanitized.length - maxLength} chars]`;
+}
+
+function sanitizeDiagnosticValue(value: unknown, key = '', depth = 0, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (key && isSensitiveDiagnosticKey(key)) {
+    return SECRET_REPLACEMENT;
+  }
+
+  if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean') {
+    return value ?? null;
+  }
+
+  if (typeof value === 'string') {
+    return clampDiagnosticText(value);
+  }
+
+  if (typeof value === 'bigint') {
+    return `${value.toString()}n`;
+  }
+
+  if (typeof value === 'function') {
+    return value.name ? `[Function ${value.name}]` : '[Function]';
+  }
+
+  if (typeof value !== 'object') {
+    return String(value);
+  }
+
+  if (seen.has(value)) {
+    return '[Circular]';
+  }
+
+  if (depth >= MAX_MODEL_DIAGNOSTIC_DEPTH) {
+    return '[Max depth reached]';
+  }
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    const items = value.slice(0, MAX_MODEL_DIAGNOSTIC_ARRAY_ITEMS).map((item) => sanitizeDiagnosticValue(item, key, depth + 1, seen));
+    if (value.length > MAX_MODEL_DIAGNOSTIC_ARRAY_ITEMS) {
+      items.push(`[truncated ${value.length - MAX_MODEL_DIAGNOSTIC_ARRAY_ITEMS} items]`);
+    }
+    return items;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const result: Record<string, unknown> = {};
+  for (const [itemKey, itemValue] of entries.slice(0, MAX_MODEL_DIAGNOSTIC_OBJECT_KEYS)) {
+    result[itemKey] = sanitizeDiagnosticValue(itemValue, itemKey, depth + 1, seen);
+  }
+  if (entries.length > MAX_MODEL_DIAGNOSTIC_OBJECT_KEYS) {
+    result.__truncatedKeys = entries.length - MAX_MODEL_DIAGNOSTIC_OBJECT_KEYS;
+  }
+
+  return result;
+}
+
 function normalizeErrorReason(error: unknown): string {
   const normalized = normalizeUnknownError(error);
   return maskSensitiveText(normalized.message || '资产提取失败');
+}
+
+function buildExtractAssetsTaskRelatedObjects(scriptIds: number[], modelDiagnostics: ExtractAssetsModelDiagnostics | null): Record<string, unknown> {
+  return {
+    scriptIds,
+    ...(modelDiagnostics ? { modelDiagnostics } : {}),
+  };
+}
+
+function updateAssetExtractionTaskDiagnostics(taskId: number, scriptIds: number[], modelDiagnostics: ExtractAssetsModelDiagnostics | null): void {
+  try {
+    updateTaskMeta({
+      taskId,
+      relatedObjects: buildExtractAssetsTaskRelatedObjects(scriptIds, modelDiagnostics),
+    });
+  } catch (error) {
+    logger.warn('剧本资产提取', '任务诊断记录更新失败', normalizeUnknownError(error));
+  }
+}
+
+function summarizeExtractAssetsOutput(output: ExtractAssetsToolResult | null): ExtractAssetsModelDiagnostics['parsed'] {
+  return {
+    hasOutput: Boolean(output),
+    assetsList: output?.assetsList?.length ?? 0,
+    newAssets: output?.newAssets?.length ?? 0,
+    existingAssetRefs: output?.existingAssetRefs?.length ?? 0,
+  };
+}
+
+function countAssetTypes(assets: ExtractedAsset[]): Partial<Record<ScriptAssetType, number>> {
+  return assets.reduce<Partial<Record<ScriptAssetType, number>>>((counts, asset) => {
+    counts[asset.type] = (counts[asset.type] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function buildExtractAssetsModelDiagnostics(
+  requestId: string,
+  result: unknown,
+  output: ExtractAssetsToolResult | null,
+): ExtractAssetsModelDiagnostics {
+  const record = isRecord(result) ? result : {};
+
+  return {
+    requestId,
+    modelKey: 'universalAi',
+    status: output ? 'returned' : 'parse_failed',
+    rawText: clampDiagnosticText(String(record.text ?? '')),
+    finishReason: sanitizeDiagnosticValue(record.finishReason),
+    usage: sanitizeDiagnosticValue(record.usage),
+    warnings: sanitizeDiagnosticValue(record.warnings),
+    response: sanitizeDiagnosticValue(record.response),
+    toolCalls: sanitizeDiagnosticValue(record.toolCalls),
+    toolResults: sanitizeDiagnosticValue(record.toolResults),
+    steps: sanitizeDiagnosticValue(record.steps),
+    parsed: summarizeExtractAssetsOutput(output),
+    recordedAt: Date.now(),
+  };
 }
 
 function updateScriptsExtractStatus(projectId: number, scriptIds: number[], status: ScriptExtractStatus, errorReason: string | null = null): void {
@@ -439,6 +604,92 @@ function parseRegexFromText(text: string): string {
   }
 
   return normalized.split(/\r?\n/).map((line) => line.trim()).find((line) => line.startsWith('/') && line.lastIndexOf('/') > 0) ?? '';
+}
+
+function tryParseJson(value: string): unknown | null {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function collectJsonCandidates(text: string): string[] {
+  const normalized = stripThink(text).trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const candidates = new Set<string>();
+  for (const match of normalized.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    const content = match[1]?.trim();
+    if (content) {
+      candidates.add(content);
+    }
+  }
+  candidates.add(normalized);
+
+  const objectStart = normalized.indexOf('{');
+  const objectEnd = normalized.lastIndexOf('}');
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.add(normalized.slice(objectStart, objectEnd + 1));
+  }
+
+  const arrayStart = normalized.indexOf('[');
+  const arrayEnd = normalized.lastIndexOf(']');
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    candidates.add(normalized.slice(arrayStart, arrayEnd + 1));
+  }
+
+  return [...candidates];
+}
+
+function toAssetInputList(value: unknown): ExtractedAssetInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(isRecord) as ExtractedAssetInput[];
+}
+
+function coerceExtractAssetsToolResult(value: unknown): ExtractAssetsToolResult | null {
+  if (Array.isArray(value)) {
+    return { assetsList: toAssetInputList(value) };
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const assetsList = toAssetInputList(value.assetsList ?? value.assetList ?? value.assets);
+  const newAssets = toAssetInputList(value.newAssets);
+  const existingAssetRefs = toAssetInputList(value.existingAssetRefs ?? value.existingAssets);
+  if (assetsList.length === 0 && newAssets.length === 0 && existingAssetRefs.length === 0) {
+    return null;
+  }
+
+  return { assetsList, newAssets, existingAssetRefs };
+}
+
+function parseExtractAssetsTextResult(text: string): ExtractAssetsToolResult | null {
+  for (const candidate of collectJsonCandidates(text)) {
+    const parsed = tryParseJson(candidate);
+    const output = coerceExtractAssetsToolResult(parsed);
+    if (output) {
+      return output;
+    }
+  }
+
+  return null;
+}
+
+function getResultToolOutput(result: { toolResults?: ToolResultRecord[]; text?: string | null }): ExtractAssetsToolResult | null {
+  const toolResult = result.toolResults?.find((item) => item.toolName === 'resultTool');
+  const toolOutput = coerceExtractAssetsToolResult(toolResult?.output ?? toolResult?.result);
+  if (toolOutput) {
+    return toolOutput;
+  }
+
+  return parseExtractAssetsTextResult(result.text ?? '');
 }
 
 function buildRegexPrompt(content: string): string {
@@ -568,12 +819,22 @@ function upsertExtractedAssets(projectId: number, assets: ExtractedAsset[], scri
 }
 
 async function runAssetExtraction(projectId: number, scriptIds: number[], taskId: number): Promise<void> {
+  const requestId = createModelRequestId();
+  let modelDiagnostics: ExtractAssetsModelDiagnostics | null = {
+    requestId,
+    modelKey: 'universalAi',
+    status: 'running',
+    recordedAt: Date.now(),
+  };
+
   try {
     updateScriptsExtractStatus(projectId, scriptIds, SCRIPT_EXTRACT_STATUS.RUNNING);
+    updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
     const rows = getScriptRows(projectId, scriptIds);
     const existingAssets = getAssetsByProject(projectId);
     const prompt = getEffectivePromptByType('scriptAssetExtraction');
     const result = await invokeText({
+      requestId,
       modelKey: 'universalAi',
       system: prompt,
       messages: [
@@ -587,6 +848,7 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
             rows.map((script) => `# ${script.id} ${script.name}\n${script.content}`).join('\n\n---\n\n'),
             '',
             '请在每个资产对象里返回 scriptIds，表示该资产属于哪些剧本；如果是已有资产，优先返回 existingAssetRefs 的 id 和 scriptIds。',
+            '优先调用 resultTool 返回结果；如果当前模型或供应商无法调用工具，则只输出一个 JSON 对象，不要解释，格式为 {"assetsList":[{"name":"","desc":"","prompt":"","type":"role|scene|tool","scriptIds":[剧本ID]}]}。',
           ].join('\n'),
         },
       ],
@@ -647,12 +909,28 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
         }),
       },
     });
-    const output = result.toolResults?.find((item) => item.toolName === 'resultTool')?.output as ExtractAssetsToolResult | undefined;
+    const output = getResultToolOutput(result);
+    modelDiagnostics = buildExtractAssetsModelDiagnostics(requestId, result, output);
+    updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
     if (!output) {
-      throw createError(VT_STATUS.MODEL_ERROR, '模型未通过 resultTool 返回资产');
+      throw createError(VT_STATUS.MODEL_ERROR, '模型没有返回可用资产，请重试或切换支持工具调用的文本模型');
     }
 
     const assets = normalizeExtractedAssets(output, scriptIds, existingAssets);
+    modelDiagnostics = {
+      ...modelDiagnostics,
+      status: 'normalized',
+      parsed: {
+        hasOutput: true,
+        assetsList: modelDiagnostics.parsed?.assetsList ?? 0,
+        newAssets: modelDiagnostics.parsed?.newAssets ?? 0,
+        existingAssetRefs: modelDiagnostics.parsed?.existingAssetRefs ?? 0,
+        normalizedAssets: assets.length,
+        normalizedTypes: countAssetTypes(assets),
+      },
+      recordedAt: Date.now(),
+    };
+    updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
     withTransaction(() => {
       const placeholders = scriptIds.map(() => '?').join(', ');
       getDatabase().prepare<Array<number>>(`DELETE FROM script_asset_links WHERE script_id IN (${placeholders})`).run(...scriptIds);
@@ -661,6 +939,17 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
     });
     succeedTask(taskId);
   } catch (error) {
+    modelDiagnostics = {
+      ...(modelDiagnostics ?? {
+        requestId,
+        modelKey: 'universalAi',
+        recordedAt: Date.now(),
+      }),
+      status: 'failed',
+      error: normalizeErrorReason(error),
+      recordedAt: Date.now(),
+    };
+    updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
     updateScriptsExtractStatus(projectId, scriptIds, SCRIPT_EXTRACT_STATUS.FAILED, normalizeErrorReason(error));
     try {
       failTask(taskId, error);

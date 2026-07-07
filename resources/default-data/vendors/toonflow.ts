@@ -22,6 +22,8 @@ interface TextModel {
   think: boolean;
 }
 
+type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+
 interface ImageModel {
   name: string;
   modelName: string;
@@ -241,27 +243,27 @@ function extractFirstImageFromMd(content: string) {
 // 适配器函数
 // ============================================================
 
-const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3) => {
+const toDeepSeekReasoningEffort = (reasoningEffort: ReasoningEffort | undefined, thinkLevel: 0 | 1 | 2 | 3): "high" | "max" => {
+  if (reasoningEffort === "xhigh" || thinkLevel === 3) {
+    return "max";
+  }
+
+  return "high";
+};
+
+const textRequest = (model: TextModel, think: boolean, thinkLevel: 0 | 1 | 2 | 3, reasoningEffort?: ReasoningEffort) => {
   if (!vendor.inputValues.apiKey) throw new Error("缺少API Key");
   const apiKey = vendor.inputValues.apiKey.replace(/^Bearer\s+/i, "");
   const lowerName = model.modelName.toLowerCase();
   if (lowerName.includes("deepseek")) {
     logger("使用deepseek");
-    // DeepSeek 思考强度仅支持 high / max（low、medium 会被映射为 high，xhigh 会被映射为 max）
-    // thinkLevel: 0/1/2 → high, 3 → max
-    const effortMap: Record<0 | 1 | 2 | 3, "high" | "max"> = {
-      0: "high",
-      1: "high",
-      2: "high",
-      3: "max",
-    };
-
-    const enableThinking = model.think && think;
+    // DeepSeek 思考强度仅支持 high / max，low、medium 会被映射为 high，xhigh 会被映射为 max。
+    const enableThinking = model.think && think && reasoningEffort !== "none";
     const extraBody: Record<string, any> = {
       thinking: { type: enableThinking ? "enabled" : "disabled" },
     };
     if (enableThinking) {
-      extraBody.reasoning_effort = effortMap[thinkLevel];
+      extraBody.reasoning_effort = toDeepSeekReasoningEffort(reasoningEffort, thinkLevel);
     }
 
     return createDeepSeek({

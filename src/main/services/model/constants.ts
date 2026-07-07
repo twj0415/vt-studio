@@ -16,9 +16,9 @@ export const MODEL_SETTING_KEYS = {
 } as const;
 
 export const MODEL_TEST_FILE_NAMES = {
-  image: 'test-image.txt',
-  video: 'test-video.txt',
-  tts: 'test-audio.txt',
+  image: 'test-image.png',
+  video: 'test-video.mp4',
+  tts: 'test-audio.mp3',
 } as const;
 
 export const AGENT_MODEL_KEYS = [

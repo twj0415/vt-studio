@@ -1,4 +1,4 @@
-import type { AppInfo } from '@shared/types/app';
+import type { AppInfo, RendererErrorLogPayload, RendererErrorLogResult } from '@shared/types/app';
 import type {
   ExternalLinkListResult,
   ExternalLinkOpenPayload,
@@ -136,6 +136,9 @@ import type {
   ApiConnectionSaveResult,
   ApiConnectionTestPayload,
   ApiConnectionTestResult,
+  ModelTestFilePayload,
+  ModelTestOpenFileResult,
+  ModelTestSaveFileResult,
   ResourceBindingSavePayload,
   ResourceBindingSaveResult,
   ResourceConfigResult,
@@ -270,6 +273,8 @@ import type {
   ProductionDerivedAssetDeletePayload,
   ProductionDerivedAssetPollResult,
   ProductionDerivedAssetSavePayload,
+  ProductionExtractResourcesPayload,
+  ProductionExtractResourcesResult,
   ProductionGenerateAcceptedResult,
   ProductionGenerateDerivedAssetsPayload,
   ProductionGenerateStoryboardsPayload,
@@ -321,6 +326,7 @@ import type {
 export interface VtStudioApi {
   app: {
     getInfo: () => Promise<VtResponse<AppInfo>>;
+    reportRendererError: (payload: RendererErrorLogPayload) => Promise<VtResponse<RendererErrorLogResult>>;
   };
   shell: {
     listExternalLinks: () => Promise<VtResponse<ExternalLinkListResult>>;
@@ -435,6 +441,7 @@ export interface VtStudioApi {
   production: {
     getWorkspace: (payload: ProductionProjectPayload & { scriptId?: number | null }) => Promise<VtResponse<ProductionWorkspaceResult>>;
     saveWorkspace: (payload: ProductionSaveWorkspacePayload) => Promise<VtResponse<ProductionSaveWorkspaceResult>>;
+    extractResources: (payload: ProductionExtractResourcesPayload) => Promise<VtResponse<ProductionExtractResourcesResult>>;
     agent: {
       getTools: () => Promise<VtResponse<ProductionAgentToolsResult>>;
       getContext: (payload: ProductionScriptPayload) => Promise<VtResponse<ProductionAgentContextResult>>;
@@ -490,6 +497,10 @@ export interface VtStudioApi {
       save: (payload: ApiConnectionSavePayload) => Promise<VtResponse<ApiConnectionSaveResult>>;
       delete: (payload: ApiConnectionDeletePayload) => Promise<VtResponse<ApiConnectionDeleteResult>>;
       test: (payload: ApiConnectionTestPayload) => Promise<VtResponse<ApiConnectionTestResult>>;
+    };
+    modelTest: {
+      openFileLocation: (payload: ModelTestFilePayload) => Promise<VtResponse<ModelTestOpenFileResult>>;
+      saveFileAs: (payload: ModelTestFilePayload) => Promise<VtResponse<ModelTestSaveFileResult>>;
     };
     resource: {
       get: () => Promise<VtResponse<ResourceConfigResult>>;

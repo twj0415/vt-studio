@@ -3,6 +3,9 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AddIcon, DeleteIcon, EditIcon, FileIcon, ImageIcon, PlayCircleIcon, RefreshIcon, SearchIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import VtFilePicker from '@renderer/components/VtFilePicker.vue';
 import WorkflowNextStepHint from '@renderer/features/shared/WorkflowNextStepHint.vue';
 import { useAppStore } from '@renderer/stores/app';
@@ -139,7 +142,7 @@ async function pollPromptStatus(): Promise<void> {
     clearPromptPoll();
     return;
   }
-  const response = await window.vtStudio.assets.pollPromptStatus({ projectId: currentProjectId.value, assetIds: runningPromptIds.value });
+  const response = await window.vtStudio.assets.pollPromptStatus({ projectId: currentProjectId.value, assetIds: [...runningPromptIds.value] });
   if (isOk(response) && response.data.assets.length > 0) {
     await loadAssets({ keepDataOnError: true, asRefresh: true });
   } else {
@@ -152,7 +155,7 @@ async function pollImageStatus(): Promise<void> {
     clearImagePoll();
     return;
   }
-  const response = await window.vtStudio.assets.pollImageStatus({ projectId: currentProjectId.value, assetIds: runningImageIds.value });
+  const response = await window.vtStudio.assets.pollImageStatus({ projectId: currentProjectId.value, assetIds: [...runningImageIds.value] });
   if (isOk(response) && response.data.assets.length > 0) {
     await loadAssets({ keepDataOnError: true, asRefresh: true });
   } else {
@@ -638,10 +641,10 @@ onUnmounted(() => {
         <p>{{ t('assets.summary') }}</p>
       </div>
       <div class="assets-actions">
-        <t-button variant="outline" :loading="refreshing" @click="refreshAssets">
+        <VtButton variant="outline" :loading="refreshing" @click="refreshAssets">
           <template #icon><RefreshIcon /></template>
           {{ t('assets.refresh') }}
-        </t-button>
+        </VtButton>
         <VtFilePicker
           v-if="activeType === ASSET_TYPES.CLIP || activeType === ASSET_TYPES.AUDIO"
           theme="primary"
@@ -649,10 +652,10 @@ onUnmounted(() => {
           :label="t('assets.upload.action')"
           @change="handleUpload"
         />
-        <t-button v-else theme="primary" @click="openCreateForm">
+        <VtButton v-else theme="primary" variant="base" @click="openCreateForm">
           <template #icon><AddIcon /></template>
           {{ t('assets.form.create') }}
-        </t-button>
+        </VtButton>
       </div>
     </section>
 
@@ -687,10 +690,10 @@ onUnmounted(() => {
       </t-tabs>
       <div class="assets-search-row">
         <t-input v-model="keyword" :placeholder="t('assets.searchPlaceholder')" clearable @enter="loadAssets()" />
-        <t-button variant="outline" @click="loadAssets()">
+        <VtButton variant="outline" @click="loadAssets()">
           <template #icon><SearchIcon /></template>
           {{ t('assets.search') }}
-        </t-button>
+        </VtButton>
       </div>
     </section>
 
@@ -703,18 +706,18 @@ onUnmounted(() => {
         <strong>{{ t('assets.selection.count', { count: selectedIds.length }) }}</strong>
         <span>{{ t('assets.selection.hint') }}</span>
       </div>
-      <t-button v-if="isGeneratableTab" variant="outline" :disabled="selectedIds.length === 0" @click="batchGeneratePrompts">
+      <VtButton v-if="isGeneratableTab" variant="outline" :disabled="selectedIds.length === 0" @click="batchGeneratePrompts">
         <template #icon><PlayCircleIcon /></template>
         {{ t('assets.generate.batchPrompt') }}
-      </t-button>
-      <t-button v-if="isGeneratableTab" variant="outline" :disabled="selectedIds.length === 0" @click="openBatchImageDialog">
+      </VtButton>
+      <VtButton v-if="isGeneratableTab" variant="outline" :disabled="selectedIds.length === 0" @click="openBatchImageDialog">
         <template #icon><ImageIcon /></template>
         {{ t('assets.generate.batchImage') }}
-      </t-button>
-      <t-button variant="outline" :disabled="selectedIds.length === 0" @click="confirmBatchDelete">
+      </VtButton>
+      <VtButton variant="outline" :disabled="selectedIds.length === 0" @click="confirmBatchDelete">
         <template #icon><DeleteIcon /></template>
         {{ t('assets.delete.batch') }}
-      </t-button>
+      </VtButton>
     </section>
 
     <t-loading :loading="loading">
@@ -751,17 +754,17 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="asset-card-actions">
-            <t-button size="small" variant="outline" @click="openEditForm(asset)">
+            <VtButton size="small" variant="outline" @click="openEditForm(asset)">
               <template #icon><EditIcon /></template>
               {{ t('assets.form.edit') }}
-            </t-button>
-            <t-button v-if="isGeneratableAsset(asset)" size="small" variant="outline" @click="generateSinglePrompt(asset)">{{ t('assets.generate.prompt') }}</t-button>
-            <t-button v-if="isGeneratableAsset(asset)" size="small" variant="outline" @click="openImageDialog(asset)">{{ t('assets.generate.image') }}</t-button>
-            <t-button v-if="asset.imageStatus === ASSET_TASK_STATUS.RUNNING && asset.mediaId" size="small" variant="outline" @click="cancelImage(asset)">{{ t('assets.generate.cancel') }}</t-button>
-            <t-button size="small" variant="outline" @click="confirmDelete(asset)">
+            </VtButton>
+            <VtButton v-if="isGeneratableAsset(asset)" size="small" variant="outline" @click="generateSinglePrompt(asset)">{{ t('assets.generate.prompt') }}</VtButton>
+            <VtButton v-if="isGeneratableAsset(asset)" size="small" variant="outline" @click="openImageDialog(asset)">{{ t('assets.generate.image') }}</VtButton>
+            <VtButton v-if="asset.imageStatus === ASSET_TASK_STATUS.RUNNING && asset.mediaId" size="small" variant="outline" @click="cancelImage(asset)">{{ t('assets.generate.cancel') }}</VtButton>
+            <VtButton size="small" variant="outline" @click="confirmDelete(asset)">
               <template #icon><DeleteIcon /></template>
               {{ t('assets.delete.action') }}
-            </t-button>
+            </VtButton>
           </div>
           <div v-if="asset.prompt || asset.promptErrorReason || asset.imageErrorReason || asset.dependencyReason || hasGenerationRecord(asset.media?.metadata)" class="asset-card-foot">
             <button v-if="asset.prompt" type="button" @click="openDetail(t('assets.promptTitle'), asset.prompt)">{{ previewText(asset.prompt, 96) }}</button>
@@ -774,11 +777,11 @@ onUnmounted(() => {
           </div>
         </article>
       </section>
-      <t-empty v-if="!loading && assets.length === 0" :description="currentProjectId ? t('assets.empty') : t('assets.noProject')">
+      <VtEmptyState v-if="!loading && assets.length === 0" :description="currentProjectId ? t('assets.empty') : t('assets.noProject')">
         <template v-if="currentProjectId" #action>
-          <t-button theme="primary" @click="openCreateForm">{{ activeType === ASSET_TYPES.CLIP || activeType === ASSET_TYPES.AUDIO ? t('assets.upload.action') : t('assets.form.create') }}</t-button>
+          <VtButton theme="primary" variant="base" @click="openCreateForm">{{ activeType === ASSET_TYPES.CLIP || activeType === ASSET_TYPES.AUDIO ? t('assets.upload.action') : t('assets.form.create') }}</VtButton>
           </template>
-        </t-empty>
+        </VtEmptyState>
     </t-loading>
 
     <t-dialog :visible="formVisible" :header="editingAsset ? t('assets.form.editTitle') : t('assets.form.createTitle')" width="720px" :confirm-btn="t('assets.save')" :cancel-btn="t('assets.cancel')" :confirm-loading="formLoading" @update:visible="(value) => (formVisible = value)" @confirm="saveForm">
@@ -836,11 +839,11 @@ onUnmounted(() => {
               <small>{{ t(`assets.status.${media.status}`) }}</small>
             </button>
           </div>
-          <t-button v-if="hasGenerationRecord(imageAsset?.media?.metadata)" variant="outline" size="small" @click="openGenerationRecord(t('assets.generationRecord.title'), imageAsset?.media?.metadata)">
+          <VtButton v-if="hasGenerationRecord(imageAsset?.media?.metadata)" variant="outline" size="small" @click="openGenerationRecord(t('assets.generationRecord.title'), imageAsset?.media?.metadata)">
             <template #icon><FileIcon /></template>
             {{ t('assets.generationRecord.action') }}
-          </t-button>
-          <t-button v-if="imageAsset?.mediaHistory.length" variant="outline" size="small" @click="deleteMedia(imageAsset!.mediaHistory[0]!.id)">{{ t('assets.generate.deleteLatest') }}</t-button>
+          </VtButton>
+          <VtButton v-if="imageAsset?.mediaHistory.length" variant="outline" size="small" @click="deleteMedia(imageAsset!.mediaHistory[0]!.id)">{{ t('assets.generate.deleteLatest') }}</VtButton>
         </div>
       </div>
     </t-dialog>
@@ -858,8 +861,8 @@ onUnmounted(() => {
       </div>
     </t-dialog>
 
-    <t-dialog :visible="detailVisible" :header="detailTitle" width="760px" :footer="false" @update:visible="(value) => (detailVisible = value)">
+    <VtDialog :visible="detailVisible" :title="detailTitle" width="760px" :footer="false" @update:visible="(value) => (detailVisible = value)">
       <pre class="asset-detail-content">{{ detailContent }}</pre>
-    </t-dialog>
+    </VtDialog>
   </div>
 </template>

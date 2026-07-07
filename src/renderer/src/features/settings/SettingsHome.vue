@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute } from 'vue-router';
 import { useRouter } from 'vue-router';
@@ -17,10 +17,9 @@ import ModelServiceConfig from './components/ModelServiceConfig.vue';
 import DatabaseManagement from './components/DatabaseManagement.vue';
 import FileManagement from './components/FileManagement.vue';
 import MemoryConfig from './components/MemoryConfig.vue';
-import ModelPromptConfig from './components/ModelPromptConfig.vue';
-import PromptConfig from './components/PromptConfig.vue';
 import RequestDiagnostics from './components/RequestDiagnostics.vue';
-import SkillManagement from './components/SkillManagement.vue';
+import SettingsSectionErrorBoundary from './components/SettingsSectionErrorBoundary.vue';
+import SettingsSectionCard from './components/SettingsSectionCard.vue';
 import VendorConfig from './components/VendorConfig.vue';
 
 const router = useRouter();
@@ -30,64 +29,66 @@ const authStore = useAuthStore();
 const { t } = useI18n();
 const { appInfo } = storeToRefs(appStore);
 const { user } = storeToRefs(authStore);
-const developerVisible = ref(false);
-const activeSectionId = ref('settings-model-service');
 const agentConfigRef = ref<InstanceType<typeof AgentConfig> | null>(null);
-const SECTION_IDS: Record<string, string> = {
-  appearance: 'settings-appearance',
-  language: 'settings-language',
-  'model-service': 'settings-model-service',
-  agent: 'settings-agent-config',
-  prompt: 'settings-prompt',
-  files: 'settings-files',
-  business: 'settings-business',
-  about: 'settings-about',
-  developer: 'settings-developer',
-  user: 'settings-user',
-};
-interface SettingsQuickLink {
-  id: string;
-  label: string;
-}
+
+type SettingsCategoryKey = 'basic' | 'account' | 'generation' | 'workspace' | 'creation' | 'about' | 'advanced';
 
 interface SettingsQuickGroup {
-  key: string;
+  key: SettingsCategoryKey;
   title: string;
-  description: string;
-  items: SettingsQuickLink[];
 }
+
+const activeCategoryKey = ref<SettingsCategoryKey>('basic');
+
+const categoryBySection: Record<string, SettingsCategoryKey> = {
+  basic: 'basic',
+  appearance: 'basic',
+  language: 'basic',
+  user: 'account',
+  account: 'account',
+  about: 'about',
+  update: 'about',
+  version: 'about',
+  generation: 'generation',
+  'model-service': 'generation',
+  agent: 'generation',
+  workspace: 'workspace',
+  files: 'workspace',
+  creation: 'creation',
+  business: 'creation',
+  advanced: 'advanced',
+  developer: 'advanced',
+  memory: 'advanced',
+  database: 'advanced',
+  diagnostics: 'advanced',
+  vendor: 'advanced',
+};
 
 const settingsQuickGroups = computed<SettingsQuickGroup[]>(() => {
   const groups: SettingsQuickGroup[] = [
     {
-      key: 'generation',
-      title: t('settings.guide.generation.title'),
-      description: t('settings.guide.generation.description'),
-      items: [
-        { id: SECTION_IDS['model-service'], label: t('settings.actions.modelService') },
-        { id: SECTION_IDS.agent, label: t('settings.actions.agent') },
-        { id: SECTION_IDS.prompt, label: t('settings.actions.prompt') },
-      ],
-    },
-    {
-      key: 'workspace',
-      title: t('settings.guide.workspace.title'),
-      description: t('settings.guide.workspace.description'),
-      items: [
-        { id: SECTION_IDS.files, label: t('settings.actions.files') },
-        { id: SECTION_IDS.appearance, label: t('settings.actions.appearance') },
-        { id: SECTION_IDS.language, label: t('settings.actions.language') },
-        { id: SECTION_IDS.business, label: t('settings.actions.business') },
-      ],
+      key: 'basic',
+      title: t('settings.guide.basic.title'),
     },
     {
       key: 'account',
       title: t('settings.guide.account.title'),
-      description: t('settings.guide.account.description'),
-      items: [
-        { id: SECTION_IDS.user, label: t('settings.user.title') },
-        { id: SECTION_IDS.about, label: t('settings.actions.about') },
-      ],
+    },
+    {
+      key: 'generation',
+      title: t('settings.guide.generation.title'),
+    },
+    {
+      key: 'workspace',
+      title: t('settings.guide.workspace.title'),
+    },
+    {
+      key: 'creation',
+      title: t('settings.guide.creation.title'),
+    },
+    {
+      key: 'about',
+      title: t('settings.guide.about.title'),
     },
   ];
 
@@ -95,13 +96,13 @@ const settingsQuickGroups = computed<SettingsQuickGroup[]>(() => {
     groups.push({
       key: 'advanced',
       title: t('settings.guide.advanced.title'),
-      description: t('settings.guide.advanced.description'),
-      items: [{ id: SECTION_IDS.developer, label: t('settings.actions.developer') }],
     });
   }
 
   return groups;
 });
+
+const activeCategory = computed(() => settingsQuickGroups.value.find((group) => group.key === activeCategoryKey.value) ?? settingsQuickGroups.value[0]);
 
 const userForm = reactive({
   name: user.value?.name ?? '',
@@ -149,24 +150,27 @@ function confirmLogout(): void {
   });
 }
 
-async function handleSectionQuery(section: unknown): Promise<void> {
+function handleSectionQuery(section: unknown): void {
   if (typeof section !== 'string') {
     return;
   }
 
-  await nextTick();
-  const targetId = SECTION_IDS[section];
-  const element = targetId ? document.getElementById(targetId) : null;
-  if (targetId) {
-    activeSectionId.value = targetId;
+  const targetCategory = categoryBySection[section];
+  if (targetCategory) {
+    selectCategory(targetCategory, false);
   }
-  element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-async function scrollToSection(targetId: string): Promise<void> {
-  await nextTick();
-  activeSectionId.value = targetId;
-  document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function selectCategory(key: SettingsCategoryKey, syncQuery = true): void {
+  if (!settingsQuickGroups.value.some((group) => group.key === key)) {
+    return;
+  }
+
+  activeCategoryKey.value = key;
+
+  if (syncQuery) {
+    void router.replace({ query: { ...route.query, section: key } });
+  }
 }
 
 function handleModelServiceUpdated(): void {
@@ -176,7 +180,17 @@ function handleModelServiceUpdated(): void {
 watch(
   () => route.query.section,
   (section) => {
-    void handleSectionQuery(section);
+    handleSectionQuery(section);
+  },
+  { immediate: true },
+);
+
+watch(
+  settingsQuickGroups,
+  (groups) => {
+    if (!groups.some((group) => group.key === activeCategoryKey.value)) {
+      activeCategoryKey.value = 'basic';
+    }
   },
   { immediate: true },
 );
@@ -187,109 +201,121 @@ watch(
   <div class="settings-page">
     <div class="settings-layout">
       <aside class="settings-nav-panel" :aria-label="t('settings.quickNavLabel')">
-        <div class="settings-nav-intro">
-          <p class="eyebrow">{{ t('settings.guide.eyebrow') }}</p>
-          <strong>{{ t('settings.guide.title') }}</strong>
-          <span>{{ t('settings.guide.summary') }}</span>
-        </div>
-
-        <div v-for="group in settingsQuickGroups" :key="group.key" class="settings-nav-group">
-          <div class="settings-nav-group-head">
-            <strong>{{ group.title }}</strong>
-            <span>{{ group.description }}</span>
-          </div>
+        <div class="settings-nav-group">
           <div class="settings-nav-links">
-            <t-button v-for="item in group.items" :key="item.id" class="settings-nav-link" :class="{ 'is-active': activeSectionId === item.id }" variant="text" @click="scrollToSection(item.id)">
-              {{ item.label }}
+            <t-button v-for="group in settingsQuickGroups" :key="group.key" class="settings-nav-link" :class="{ 'is-active': activeCategoryKey === group.key }" variant="text" @click="selectCategory(group.key)">
+              <span class="settings-nav-link-title">{{ group.title }}</span>
             </t-button>
           </div>
         </div>
       </aside>
 
       <div class="settings-content">
-        <div id="settings-model-service" class="settings-anchor-section">
-          <ModelServiceConfig @model-service-updated="handleModelServiceUpdated" />
-        </div>
+        <section v-if="activeCategory?.key === 'basic'" class="settings-category-section">
+          <SettingsSectionCard id="settings-appearance" class="settings-list-section" :heading="t('appearance.title')">
+            <AppearanceConfig />
+          </SettingsSectionCard>
 
-        <div id="settings-agent-config" class="settings-anchor-section">
-          <AgentConfig ref="agentConfigRef" />
-        </div>
-
-        <div id="settings-prompt" class="settings-anchor-section">
-          <PromptConfig />
-        </div>
-
-        <div id="settings-files" class="settings-anchor-section">
-          <FileManagement />
-        </div>
-
-        <div id="settings-appearance" class="settings-anchor-section">
-          <AppearanceConfig />
-        </div>
-
-        <div id="settings-language" class="settings-anchor-section">
-          <LanguageConfig />
-        </div>
-
-        <div id="settings-business" class="settings-anchor-section">
-          <BusinessConfig />
-        </div>
-
-        <div id="settings-about" class="settings-anchor-section">
-          <AboutConfig />
-        </div>
-
-        <section v-if="appInfo?.isDev" id="settings-developer" class="settings-section developer-section">
-          <div class="settings-section-head">
-            <div>
-              <p class="eyebrow">{{ t('settings.actions.developer') }}</p>
-              <h3>{{ t('settings.developer.title') }}</h3>
-            </div>
-            <t-button variant="outline" @click="developerVisible = !developerVisible">
-              {{ developerVisible ? t('settings.developer.collapse') : t('settings.developer.expand') }}
-            </t-button>
-          </div>
-          <p class="settings-hint">{{ t('settings.developer.hint') }}</p>
-          <template v-if="developerVisible">
-            <DeveloperConfig />
-            <MemoryConfig />
-            <DatabaseManagement />
-            <RequestDiagnostics />
-            <SkillManagement />
-            <ModelPromptConfig />
-            <VendorConfig />
-          </template>
+          <SettingsSectionCard id="settings-language" class="settings-list-section" :heading="t('language.title')">
+            <LanguageConfig />
+          </SettingsSectionCard>
         </section>
 
-        <section id="settings-user" class="settings-section">
-          <div>
-            <p class="eyebrow">{{ t('settings.user.eyebrow') }}</p>
-            <h3>{{ t('settings.user.title') }}</h3>
-          </div>
+        <section v-if="activeCategory?.key === 'account'" class="settings-category-section">
+          <SettingsSectionCard id="settings-user" class="settings-list-section" :heading="t('settings.user.title')">
+            <section class="settings-account-panel settings-row-list">
+              <t-form class="settings-form settings-row-form" :data="userForm" layout="vertical">
+                <div class="settings-row">
+                  <div>
+                    <span class="settings-row-title">{{ t('settings.user.username') }}</span>
+                  </div>
+                  <div class="settings-row-control">
+                    <t-input v-model="userForm.name" :placeholder="t('settings.user.usernamePlaceholder')" />
+                  </div>
+                </div>
 
-          <t-form class="settings-form" :data="userForm" layout="vertical">
-            <t-form-item :label="t('settings.user.username')">
-              <t-input v-model="userForm.name" :placeholder="t('settings.user.usernamePlaceholder')" />
-            </t-form-item>
-            <t-form-item :label="t('settings.user.password')">
-              <t-input v-model="userForm.password" type="password" :placeholder="t('settings.user.passwordPlaceholder')" @enter="saveLocalUser" />
-            </t-form-item>
-            <t-button theme="primary" :loading="authStore.loading" @click="saveLocalUser">{{ t('settings.user.save') }}</t-button>
-          </t-form>
+                <div class="settings-row">
+                  <div>
+                    <span class="settings-row-title">{{ t('settings.user.password') }}</span>
+                  </div>
+                  <div class="settings-row-control settings-row-actions">
+                    <t-input v-model="userForm.password" type="password" :placeholder="t('settings.user.passwordPlaceholder')" @enter="saveLocalUser" />
+                    <t-button theme="primary" :loading="authStore.loading" @click="saveLocalUser">{{ t('settings.user.save') }}</t-button>
+                  </div>
+                </div>
+              </t-form>
+
+              <div class="settings-row settings-logout-row">
+                <div>
+                  <span class="settings-row-title">{{ user?.name ?? t('settings.logout.currentUserFallback') }}</span>
+                  <span class="settings-row-note">{{ t('settings.logout.description') }}</span>
+                </div>
+                <div class="settings-row-control">
+                  <t-button theme="danger" variant="outline" @click="confirmLogout">{{ t('settings.logout.button') }}</t-button>
+                </div>
+              </div>
+            </section>
+          </SettingsSectionCard>
         </section>
 
-        <section class="settings-section">
-          <div>
-            <p class="eyebrow">{{ t('settings.logout.eyebrow') }}</p>
-            <h3>{{ t('settings.logout.title') }}</h3>
-          </div>
-          <div class="logout-row">
-            <div>
-              <strong>{{ user?.name ?? t('settings.logout.currentUserFallback') }}</strong>
-              <p>{{ t('settings.logout.description') }}</p>
-            </div>
-            <t-button theme="danger" variant="outline" @click="confirmLogout">{{ t('settings.logout.button') }}</t-button>
-          </div>
+        <section v-if="activeCategory?.key === 'about'" class="settings-category-section">
+          <SettingsSectionCard id="settings-about" class="settings-list-section" :heading="t('settings.about.title')">
+            <AboutConfig />
+          </SettingsSectionCard>
+        </section>
+
+        <section v-if="activeCategory?.key === 'generation'" class="settings-category-section">
+          <SettingsSectionCard id="settings-model-service" class="settings-list-section" :heading="t('settings.modelService.title')">
+            <ModelServiceConfig @model-service-updated="handleModelServiceUpdated" />
+          </SettingsSectionCard>
+
+          <SettingsSectionCard id="settings-agent-config" class="settings-list-section" :heading="t('settings.agentConfig.title')">
+            <AgentConfig ref="agentConfigRef" />
+          </SettingsSectionCard>
+        </section>
+
+        <section v-if="activeCategory?.key === 'workspace'" class="settings-category-section">
+          <SettingsSectionCard id="settings-files" class="settings-list-section" :heading="t('files.title')">
+            <FileManagement />
+          </SettingsSectionCard>
+        </section>
+
+        <section v-if="activeCategory?.key === 'creation'" class="settings-category-section">
+          <SettingsSectionCard id="settings-business" class="settings-list-section" :heading="t('settings.businessConfig.title')">
+            <BusinessConfig />
+          </SettingsSectionCard>
+        </section>
+
+        <section v-if="activeCategory?.key === 'advanced' && appInfo?.isDev" class="settings-category-section developer-section">
+          <SettingsSectionCard id="settings-developer" class="settings-list-section" :heading="t('settings.devConfig.title')">
+            <SettingsSectionErrorBoundary scope="settings-developer">
+              <DeveloperConfig />
+            </SettingsSectionErrorBoundary>
+          </SettingsSectionCard>
+
+          <SettingsSectionCard class="settings-list-section" :heading="t('settings.memoryConfig.title')">
+            <SettingsSectionErrorBoundary scope="settings-memory">
+              <MemoryConfig />
+            </SettingsSectionErrorBoundary>
+          </SettingsSectionCard>
+
+          <SettingsSectionCard class="settings-list-section" :heading="t('settings.databaseManagement.title')">
+            <SettingsSectionErrorBoundary scope="settings-database">
+              <DatabaseManagement />
+            </SettingsSectionErrorBoundary>
+          </SettingsSectionCard>
+
+          <SettingsSectionCard class="settings-list-section" :heading="t('settings.requestDiagnostics.title')">
+            <SettingsSectionErrorBoundary scope="settings-request-diagnostics">
+              <RequestDiagnostics />
+            </SettingsSectionErrorBoundary>
+          </SettingsSectionCard>
+
+          <SettingsSectionCard class="settings-list-section" :heading="t('settings.vendorConfig.title')">
+            <SettingsSectionErrorBoundary scope="settings-vendor">
+              <VendorConfig />
+            </SettingsSectionErrorBoundary>
+          </SettingsSectionCard>
         </section>
       </div>
     </div>

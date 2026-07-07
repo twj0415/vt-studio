@@ -34,6 +34,22 @@ function normalizeConnectionBaseUrl(baseUrl: string | undefined): string {
   return (baseUrl ?? '').trim().replace(/\/+$/, '');
 }
 
+function normalizeOpenAiCompatibleBaseUrl(baseUrl: string): string {
+  try {
+    const parsed = new URL(baseUrl);
+    let pathname = parsed.pathname.replace(/\/+$/, '');
+    pathname = pathname.replace(/\/(chat\/completions|responses|completions|images\/generations|images\/edits)$/i, '');
+
+    if (!pathname || pathname === '/') {
+      pathname = '/v1';
+    }
+
+    return `${parsed.origin}${pathname}`;
+  } catch {
+    return baseUrl;
+  }
+}
+
 function toAtlasCloudChatBaseUrl(baseUrl: string | undefined): string {
   const normalized = normalizeConnectionBaseUrl(baseUrl);
   if (!normalized) {
@@ -44,7 +60,7 @@ function toAtlasCloudChatBaseUrl(baseUrl: string | undefined): string {
     return normalized.replace(/\/api\/v1$/i, '/v1');
   }
 
-  return normalized;
+  return normalizeOpenAiCompatibleBaseUrl(normalized);
 }
 
 function toAtlasCloudMediaBaseUrl(baseUrl: string | undefined): string {

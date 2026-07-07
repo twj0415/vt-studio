@@ -150,6 +150,10 @@ function mergeModels(baseModels: VendorModelConfig[], customModels: VendorModelC
   return [...map.values()];
 }
 
+function toSerializableVendorListResult(result: VendorListResult): VendorListResult {
+  return JSON.parse(JSON.stringify(result)) as VendorListResult;
+}
+
 function getFallbackManifest(vendorId: string): VendorManifest {
   const builtin = getBuiltinVendorDefinition(vendorId);
   if (builtin) {
@@ -312,7 +316,7 @@ export function getVendorList(): VendorListResult {
     }
   });
 
-  return { vendors };
+  return toSerializableVendorListResult({ vendors });
 }
 
 export function saveVendorInputs(payload: VendorUpdateInputsPayload): VendorUpdateInputsResult {
@@ -431,6 +435,8 @@ export async function runVendorTextTest(payload: VendorTestTextPayload): Promise
     vendorId: payload.vendorId,
     modelName: payload.modelName,
     messages: [{ role: 'user', content: payload.prompt }],
+    think: payload.reasoningEnabled,
+    reasoningEffort: payload.reasoningEffort,
   });
 
   return { ...result, durationMs: Date.now() - startedAt };
@@ -451,6 +457,11 @@ export async function runVendorVideoTest(payload: VendorTestVideoPayload): Promi
     modelName: payload.modelName,
     mode: payload.mode,
     prompt: payload.prompt,
+    duration: payload.duration,
+    resolution: payload.resolution,
+    aspectRatio: payload.aspectRatio,
+    audio: payload.audio,
+    referenceImages: payload.referenceImages,
     images: [],
     videos: [],
     audios: [],

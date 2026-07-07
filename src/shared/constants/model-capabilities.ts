@@ -48,6 +48,23 @@ export const MODEL_REFERENCE_FILE_TYPES = {
 export const MODEL_REFERENCE_FILE_TYPE_VALUES = Object.values(MODEL_REFERENCE_FILE_TYPES);
 export type ModelReferenceFileType = (typeof MODEL_REFERENCE_FILE_TYPE_VALUES)[number];
 
+export const REASONING_EFFORTS = {
+  NONE: 'none',
+  LOW: 'low',
+  MEDIUM: 'medium',
+  HIGH: 'high',
+  XHIGH: 'xhigh',
+} as const;
+
+export const REASONING_EFFORT_VALUES = Object.values(REASONING_EFFORTS);
+export type ReasoningEffort = (typeof REASONING_EFFORT_VALUES)[number];
+
+export interface TextReasoningCapability {
+  supported: boolean;
+  defaultEffort: ReasoningEffort;
+  efforts: ReasoningEffort[];
+}
+
 export interface ModelReferenceLimits {
   text: number;
   image: number;
@@ -80,6 +97,33 @@ const EMPTY_REFERENCE_LIMITS: ModelReferenceLimits = {
   optionalEnd: false,
   optionalStart: false,
 };
+
+const NO_REASONING_CAPABILITY: TextReasoningCapability = {
+  supported: false,
+  defaultEffort: REASONING_EFFORTS.NONE,
+  efforts: [REASONING_EFFORTS.NONE],
+};
+
+const OPENAI_REASONING_EFFORTS: ReasoningEffort[] = [
+  REASONING_EFFORTS.NONE,
+  REASONING_EFFORTS.LOW,
+  REASONING_EFFORTS.MEDIUM,
+  REASONING_EFFORTS.HIGH,
+  REASONING_EFFORTS.XHIGH,
+];
+
+const STANDARD_REASONING_EFFORTS: ReasoningEffort[] = [
+  REASONING_EFFORTS.NONE,
+  REASONING_EFFORTS.LOW,
+  REASONING_EFFORTS.MEDIUM,
+  REASONING_EFFORTS.HIGH,
+];
+
+const HIGH_ONLY_REASONING_EFFORTS: ReasoningEffort[] = [
+  REASONING_EFFORTS.NONE,
+  REASONING_EFFORTS.HIGH,
+  REASONING_EFFORTS.XHIGH,
+];
 
 export const IMAGE_MODE_PRESETS: readonly ImageModePreset[] = [
   {
@@ -151,6 +195,114 @@ export function getEmptyReferenceLimits(): ModelReferenceLimits {
   return { ...EMPTY_REFERENCE_LIMITS };
 }
 
+export function normalizeReasoningEffort(value: unknown, fallback: ReasoningEffort = REASONING_EFFORTS.NONE): ReasoningEffort {
+  return REASONING_EFFORT_VALUES.includes(value as ReasoningEffort) ? (value as ReasoningEffort) : fallback;
+}
+
+export function reasoningEffortToThinkLevel(effort: ReasoningEffort): 0 | 1 | 2 | 3 {
+  if (effort === REASONING_EFFORTS.LOW) {
+    return 1;
+  }
+
+  if (effort === REASONING_EFFORTS.MEDIUM) {
+    return 2;
+  }
+
+  if (effort === REASONING_EFFORTS.HIGH || effort === REASONING_EFFORTS.XHIGH) {
+    return 3;
+  }
+
+  return 0;
+}
+
+export function thinkLevelToReasoningEffort(level: 0 | 1 | 2 | 3 | undefined, fallback: ReasoningEffort = REASONING_EFFORTS.LOW): ReasoningEffort {
+  if (level === 1) {
+    return REASONING_EFFORTS.LOW;
+  }
+
+  if (level === 2) {
+    return REASONING_EFFORTS.MEDIUM;
+  }
+
+  if (level === 3) {
+    return REASONING_EFFORTS.HIGH;
+  }
+
+  return fallback;
+}
+
+function normalizeReasoningEfforts(efforts: unknown, fallback: ReasoningEffort[]): ReasoningEffort[] {
+  const values = Array.isArray(efforts) ? efforts.map((item) => normalizeReasoningEffort(item, REASONING_EFFORTS.NONE)) : fallback;
+  const unique = [...new Set([REASONING_EFFORTS.NONE, ...values])];
+  return unique.length > 1 ? unique : [REASONING_EFFORTS.NONE];
+}
+
+function normalizeTextReasoningCapability(input: {
+  modelName?: string;
+  think?: boolean;
+  serviceType?: string;
+  protocolType?: string;
+  provider?: string;
+  reasoning?: Partial<TextReasoningCapability>;
+}): TextReasoningCapability {
+  if (!input.think) {
+    return { ...NO_REASONING_CAPABILITY, efforts: [...NO_REASONING_CAPABILITY.efforts] };
+  }
+
+  const modelName = input.modelName?.toLowerCase() ?? '';
+  const provider = input.provider?.toLowerCase() ?? '';
+  const serviceType = input.serviceType?.toLowerCase() ?? '';
+  const protocolType = input.protocolType?.toLowerCase() ?? '';
+
+  let fallbackEfforts = STANDARD_REASONING_EFFORTS;
+  if (/^(gpt-5|o[134])/.test(modelName) || provider.includes('openai') || protocolType.includes('openai')) {
+    fallbackEfforts = OPENAI_REASONING_EFFORTS;
+  } else if (modelName.includes('deepseek') || provider.includes('deepseek') || serviceType.includes('deepseek')) {
+    fallbackEfforts = HIGH_ONLY_REASONING_EFFORTS;
+  }
+
+  const efforts = normalizeReasoningEfforts(input.reasoning?.efforts, fallbackEfforts);
+  const requestedDefault = normalizeReasoningEffort(input.reasoning?.defaultEffort, REASONING_EFFORTS.NONE);
+  const defaultEffort = efforts.includes(requestedDefault) ? requestedDefault : REASONING_EFFORTS.NONE;
+
+  return {
+    supported: efforts.some((effort) => effort !== REASONING_EFFORTS.NONE),
+    defaultEffort,
+    efforts,
+  };
+}
+
+export function getTextReasoningCapability(input: {
+  modelName?: string;
+  think?: boolean;
+  serviceType?: string;
+  protocolType?: string;
+  provider?: string;
+  reasoning?: Partial<TextReasoningCapability>;
+}): TextReasoningCapability {
+  const capability = normalizeTextReasoningCapability(input);
+  return {
+    ...capability,
+    efforts: [...capability.efforts],
+  };
+}
+
+export function resolveSupportedReasoningEffort(capability: TextReasoningCapability, effort: ReasoningEffort): ReasoningEffort {
+  if (!capability.supported) {
+    return REASONING_EFFORTS.NONE;
+  }
+
+  if (capability.efforts.includes(effort)) {
+    return effort;
+  }
+
+  if (capability.defaultEffort !== REASONING_EFFORTS.NONE && capability.efforts.includes(capability.defaultEffort)) {
+    return capability.defaultEffort;
+  }
+
+  return capability.efforts.find((item) => item !== REASONING_EFFORTS.NONE) ?? REASONING_EFFORTS.NONE;
+}
+
 export function serializeImageMode(mode: string | null | undefined): string {
   return (mode ?? '').trim();
 }
@@ -212,7 +364,7 @@ export function getVideoModeReferenceLimits(mode: string | readonly string[] | n
     return { ...preset.referenceLimits };
   }
 
-  const parsed = Array.isArray(mode) ? mode : key.includes(',') ? key.split(',') : [];
+  const parsed = Array.isArray(mode) ? mode : key ? key.split(',') : [];
   const limits = getEmptyReferenceLimits();
   limits.allowMore = parsed.length > 0;
 

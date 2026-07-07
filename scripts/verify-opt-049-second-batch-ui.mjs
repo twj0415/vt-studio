@@ -23,11 +23,11 @@ function assertNotIncludes(relativePath, expected) {
 
 assertIncludes('src/renderer/src/layouts/WorkbenchLayout.vue', ':aria-label="t(\'layout.sidebarLabel\')"');
 assertIncludes('src/renderer/src/layouts/WorkbenchLayout.vue', 'class="nav-item-label"');
-assertIncludes('src/renderer/src/layouts/WorkbenchLayout.vue', 'class="topbar-icon-action"');
-assertIncludes('src/renderer/src/layouts/WorkbenchLayout.vue', "t('layout.appVersion'");
+assertNotIncludes('src/renderer/src/layouts/WorkbenchLayout.vue', 'class="topbar-icon-action"');
+assertNotIncludes('src/renderer/src/layouts/WorkbenchLayout.vue', "t('layout.appVersion'");
 assertIncludes('src/renderer/src/styles/index.scss', 'grid-template-columns: 72px minmax(0, 1fr)');
 assertIncludes('src/renderer/src/styles/index.scss', '.nav-item-label');
-assertIncludes('src/renderer/src/styles/index.scss', '.topbar-icon-action');
+assertNotIncludes('src/renderer/src/styles/index.scss', '.topbar-icon-action');
 assertIncludes('src/renderer/src/styles/tokens.scss', '--vt-surface-app: #eef3f1');
 
 assertIncludes('src/renderer/src/features/script/ScriptHome.vue', 'scriptStatusSummary');

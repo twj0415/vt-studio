@@ -7,6 +7,8 @@ import { Controls } from '@vue-flow/controls';
 import { MiniMap } from '@vue-flow/minimap';
 import { AddIcon, GitBranchIcon, ImageIcon, SaveIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
 import {
   DEFAULT_IMAGE_FLOW_RATIOS,
   PROJECT_IMAGE_QUALITIES,
@@ -490,9 +492,9 @@ watch(() => props.visible, (visible) => {
 </script>
 
 <template>
-  <t-dialog
+  <VtDialog
     :visible="visible"
-    :header="title"
+    :title="title"
     width="96vw"
     :footer="false"
     destroy-on-close
@@ -509,32 +511,32 @@ watch(() => props.visible, (visible) => {
           <span v-else>{{ t('production.imageFlow.noOwnerImage') }}</span>
         </div>
         <div class="production-image-flow-actions">
-          <t-button block theme="primary" @click="addUploadNode">
+          <VtButton block theme="primary" variant="base" @click="addUploadNode">
             <template #icon><AddIcon /></template>
             {{ t('production.imageFlow.addUpload') }}
-          </t-button>
-          <t-button block variant="outline" @click="addGeneratedNode">
+          </VtButton>
+          <VtButton block variant="outline" @click="addGeneratedNode">
             <template #icon><ImageIcon /></template>
             {{ t('production.imageFlow.addGenerated') }}
-          </t-button>
-          <t-button block variant="outline" @click="autoLayout">
+          </VtButton>
+          <VtButton block variant="outline" @click="autoLayout">
             <template #icon><GitBranchIcon /></template>
             {{ t('production.autoLayout') }}
-          </t-button>
+          </VtButton>
         </div>
         <label>
           <span>{{ t('production.imageFlow.applyTarget') }}</span>
           <t-select v-model="selectedGeneratedNodeId" :options="selectedGeneratedOptions" :placeholder="t('production.imageFlow.noGeneratedResult')" />
         </label>
         <div class="production-image-flow-actions">
-          <t-button block variant="outline" :loading="saving" @click="saveFlow()">
+          <VtButton block variant="outline" :loading="saving" @click="saveFlow()">
             <template #icon><SaveIcon /></template>
             {{ t('production.imageFlow.save') }}
-          </t-button>
-          <t-button block theme="primary" :loading="applying" :disabled="!canApply" @click="applyResult">
+          </VtButton>
+          <VtButton block theme="primary" variant="base" :loading="applying" :disabled="!canApply" @click="applyResult">
             <template #icon><ImageIcon /></template>
             {{ t('production.imageFlow.apply') }}
-          </t-button>
+          </VtButton>
         </div>
       </aside>
 
@@ -572,5 +574,5 @@ watch(() => props.visible, (visible) => {
         </t-loading>
       </section>
     </div>
-  </t-dialog>
+  </VtDialog>
 </template>

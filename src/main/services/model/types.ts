@@ -2,11 +2,14 @@ import type { generateText, streamText } from 'ai';
 import type { AgentModelKey, ModelType } from './constants';
 import type {
   ImageGenerationMode,
+  ProjectImageQuality,
+  ProjectVideoRatio,
   VendorInputType,
   VideoGenerationMode,
   VideoReferenceMode,
   VideoSimpleMode,
 } from '@shared/constants/dictionaries';
+import type { ReasoningEffort, TextReasoningCapability } from '@shared/constants/model-capabilities';
 
 export type ImageMode = ImageGenerationMode;
 export type VideoMode = VideoGenerationMode;
@@ -25,6 +28,7 @@ export interface TextModelConfig {
   modelName: string;
   type: 'text';
   think: boolean;
+  reasoning?: TextReasoningCapability;
 }
 
 export interface ImageModelConfig {
@@ -85,7 +89,7 @@ export interface VendorRecord {
 
 export interface VendorRuntime {
   vendor?: VendorManifest;
-  textRequest?: (model: TextModelConfig, think: boolean, thinkLevel: 0 | 1 | 2 | 3) => unknown;
+  textRequest?: (model: TextModelConfig, think: boolean, thinkLevel: 0 | 1 | 2 | 3, reasoningEffort?: ReasoningEffort) => unknown;
   imageRequest?: (config: ImageGenerateInput, model: ImageModelConfig) => Promise<string>;
   videoRequest?: (config: VideoGenerateInput, model: VideoModelConfig) => Promise<string>;
   ttsRequest?: (config: TtsGenerateInput, model: TtsModelConfig) => Promise<string>;
@@ -175,6 +179,7 @@ export type TextInvokeInput = Omit<Parameters<typeof generateText>[0], 'model'> 
   modelKey: AgentModelKey | string;
   think?: boolean;
   thinkLevel?: 0 | 1 | 2 | 3;
+  reasoningEffort?: ReasoningEffort;
 };
 
 export type TextStreamInput = Omit<Parameters<typeof streamText>[0], 'model'> & {
@@ -182,18 +187,25 @@ export type TextStreamInput = Omit<Parameters<typeof streamText>[0], 'model'> & 
   modelKey: AgentModelKey | string;
   think?: boolean;
   thinkLevel?: 0 | 1 | 2 | 3;
+  reasoningEffort?: ReasoningEffort;
 };
 
 export interface ModelTestTextInput {
   vendorId: string;
   modelName: string;
   messages: TextInvokeInput['messages'];
+  think?: boolean;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface ModelTestImageInput {
   vendorId: string;
   modelName: string;
   prompt: string;
+  imageMode?: ImageGenerationMode;
+  imageSize?: ProjectImageQuality;
+  aspectRatio?: string;
+  referenceImages?: string[];
   imageBase64?: string;
 }
 
@@ -202,6 +214,11 @@ export interface ModelTestVideoInput {
   modelName: string;
   mode: string | VideoMode | VideoMode[];
   prompt: string;
+  duration?: number;
+  resolution?: string;
+  aspectRatio?: ProjectVideoRatio;
+  audio?: boolean;
+  referenceImages?: string[];
   images: ReferenceItem[];
   videos: ReferenceItem[];
   audios: ReferenceItem[];

@@ -16,6 +16,7 @@ import {
   recordModelRequestRetry,
   recordModelRequestStart,
   recordModelRequestSuccess,
+  runWithModelRequestTrace,
 } from './request-diagnostics';
 import { getVendorRuntime } from './vendor-service';
 import type { AgentModelConfig, ModelCallRetryOptions, VendorModelConfig, VendorRuntime } from './types';
@@ -302,7 +303,7 @@ export async function runModelCall<TResult>(context: ModelCallContext, runner: (
       recordModelRequestAttempt(context.requestId, attempt);
       try {
         assertModelCallNotCancelled(options, context.requestId);
-        const result = await withModelTimeout(runner, timeoutMs, context.requestId);
+        const result = await withModelTimeout(() => runWithModelRequestTrace(context.requestId, runner), timeoutMs, context.requestId);
         assertModelCallNotCancelled(options, context.requestId);
         recordModelRequestSuccess(context.requestId, attempt);
         logger.detail('模型调用', '调用成功', getLogMeta(context, {

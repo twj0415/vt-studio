@@ -35,6 +35,70 @@ export default {
       boxShadow: {
         panel: 'var(--vt-shadow-panel)',
       },
+      keyframes: {
+        'model-test-image-reveal': {
+          '0%': {
+            filter: 'blur(18px) saturate(0.72)',
+            opacity: '0.72',
+            transform: 'scale(1.015)',
+          },
+          '100%': {
+            filter: 'blur(0) saturate(1)',
+            opacity: '1',
+            transform: 'scale(1)',
+          },
+        },
+        'model-test-scan': {
+          '0%': {
+            opacity: '0',
+            transform: 'translateY(-28%)',
+          },
+          '18%, 82%': {
+            opacity: '1',
+          },
+          '100%': {
+            opacity: '0',
+            transform: 'translateY(360%)',
+          },
+        },
+        'model-test-drift': {
+          '0%, 100%': {
+            opacity: '0.72',
+            transform: 'rotate(0deg) scale(1)',
+          },
+          '50%': {
+            opacity: '1',
+            transform: 'rotate(45deg) scale(0.92)',
+          },
+        },
+        'model-test-pulse': {
+          '0%, 100%': {
+            opacity: '0.72',
+            transform: 'translate(-50%, -50%) scale(0.7)',
+          },
+          '50%': {
+            opacity: '1',
+            transform: 'translate(-50%, -50%) scale(1.15)',
+          },
+        },
+        'model-test-dot': {
+          '0%, 80%, 100%': {
+            opacity: '0.45',
+            transform: 'translateY(0)',
+          },
+          '40%': {
+            opacity: '1',
+            transform: 'translateY(-5px)',
+          },
+        },
+      },
+      animation: {
+        'model-test-image-reveal': 'model-test-image-reveal 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both',
+        'model-test-scan': 'model-test-scan 2.4s ease-in-out infinite',
+        'model-test-drift': 'model-test-drift 2.8s ease-in-out infinite',
+        'model-test-pulse': 'model-test-pulse 1.4s ease-in-out infinite',
+        'model-test-dot': 'model-test-dot 1s ease-in-out infinite',
+      },
     },
   },
   plugins: [],

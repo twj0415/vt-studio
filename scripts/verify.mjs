@@ -24,6 +24,7 @@ const groups = {
     'verify-f-002-001.mjs',
     'verify-f-002-002.mjs',
     'verify-f-002-003.mjs',
+    'verify-klingai-video-adapter.mjs',
     'verify-f-002-004.mjs',
     'verify-f-002-005.mjs',
     'verify-f-002-006.mjs',
@@ -61,6 +62,7 @@ const groups = {
   project: [
     'verify-p2-shell.mjs',
     'verify-p3-projects.mjs',
+    'verify-resource-library-ia.mjs',
     'verify-opt-047-project-i18n.mjs',
     'verify-opt-048-layout-governance.mjs',
     'verify-opt-049-first-batch-ui.mjs',
@@ -96,7 +98,7 @@ const groups = {
   production: ['verify-p9-production.mjs', 'verify-p12-real-generation.mjs', 'verify-p13-model-adapters.mjs', 'verify-opt-004-model-prompt-mode.mjs', 'verify-opt-009-manual-generation-chain.mjs', 'verify-opt-034-generation-snapshot.mjs', 'verify-opt-047-business-pages-i18n.mjs', 'verify-opt-049-fourth-batch-ui.mjs', 'verify-opt-049-dialog-upload-ui.mjs', 'verify-opt-054-upstream-invalidations.mjs', 'verify-opt-036-020-021-media-export-foundation.mjs'],
   export: ['verify-p10-export.mjs', 'verify-opt-050-export-center.mjs', 'verify-opt-056-export-history.mjs', 'verify-opt-054-upstream-invalidations.mjs', 'verify-opt-036-020-021-media-export-foundation.mjs'],
   acceptance: ['verify-p11-real-acceptance.mjs'],
-  docs: ['verify-doc-status.mjs', 'verify-opt-019-build-artifacts.mjs', 'verify-opt-042-style-boundary.mjs', 'verify-opt-049-page-ui-checklist.mjs', 'verify-opt-049-second-batch-ui.mjs', 'verify-opt-049-login-ui.mjs', 'verify-opt-049-fourth-batch-plan.mjs', 'verify-opt-049-fourth-batch-ui.mjs', 'verify-opt-049-dialog-upload-ui.mjs', 'verify-opt-049-final-ui.mjs', 'verify-opt-054-upstream-invalidations.mjs', 'verify-opt-036-020-021-media-export-foundation.mjs'],
+  docs: ['verify-doc-status.mjs', 'verify-opt-019-build-artifacts.mjs', 'verify-opt-042-style-boundary.mjs', 'verify-resource-library-ia.mjs', 'verify-opt-049-page-ui-checklist.mjs', 'verify-opt-049-second-batch-ui.mjs', 'verify-opt-049-login-ui.mjs', 'verify-opt-049-fourth-batch-plan.mjs', 'verify-opt-049-fourth-batch-ui.mjs', 'verify-opt-049-dialog-upload-ui.mjs', 'verify-opt-049-final-ui.mjs', 'verify-opt-054-upstream-invalidations.mjs', 'verify-opt-036-020-021-media-export-foundation.mjs'],
 };
 
 groups.all = [

@@ -4,8 +4,6 @@ import { join } from 'node:path';
 const workspaceRoot = process.cwd();
 
 const checks = [
-  ['docs/tasks/P5-原文输入批.md', '第一版以章节级事件摘要为准'],
-  ['docs/tasks/P5-原文输入批.md', '事件分析进入任务中心'],
   ['src/shared/types/source.ts', 'SOURCE_EVENT_STATUS'],
   ['src/shared/types/source.ts', 'SourceGenerateEventsPayload'],
   ['src/main/services/source/migrations.ts', 'CREATE TABLE IF NOT EXISTS source_chapters'],
@@ -22,8 +20,10 @@ const checks = [
   ['src/renderer/src/features/novel/NovelHome.vue', 'window.vtStudio.source.import'],
   ['src/renderer/src/features/novel/NovelHome.vue', 'pollEventStatus'],
   ['src/renderer/src/features/novel/NovelHome.vue', 'readDocxFile'],
+  ['src/renderer/src/features/novel/NovelHome.vue', '<VtTable'],
+  ['src/renderer/src/features/novel/NovelHome.vue', '<VtDialog'],
   ['src/renderer/src/i18n/messages.ts', 'source'],
-  ['src/renderer/src/styles/index.scss', '.source-table-wrap'],
+  ['src/renderer/src/styles/index.scss', '.source-table-toolbar'],
 ];
 
 for (const [relativePath, needle] of checks) {

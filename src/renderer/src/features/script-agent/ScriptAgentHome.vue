@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
-import { AddIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, DeleteIcon, EditIcon, RefreshIcon, SaveIcon, SendIcon, StopIcon } from 'tdesign-icons-vue-next';
+import { AddIcon, ArrowRightIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, DeleteIcon, EditIcon, MoreIcon, RefreshIcon, SaveIcon, SendIcon, SettingIcon, StopIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
+import type { DropdownOption } from 'tdesign-vue-next/es/dropdown';
+import VtButton from '@renderer/components/VtButton.vue';
 import { useAgentSocket } from '@renderer/composables/useAgentSocket';
-import WorkflowNextStepHint from '@renderer/features/shared/WorkflowNextStepHint.vue';
 import { useAppStore } from '@renderer/stores/app';
 import { VT_STATUS } from '@shared/constants/status';
 import type { HistoryMessage, MemoryClearType } from '@shared/types/memory';
@@ -39,6 +40,8 @@ interface ScriptEditorState {
   content: string;
 }
 
+type ScriptComposerAction = 'outline' | 'plan' | 'draft' | 'review';
+
 const THINK_LEVELS: Array<{ value: 0 | 1 | 2 | 3; labelKey: string }> = [
   { value: 0, labelKey: 'scriptAgent.think.off' },
   { value: 1, labelKey: 'scriptAgent.think.light' },
@@ -54,8 +57,8 @@ const isAgentConnected = agentSocket.isConnected;
 const lastAgentError = agentSocket.lastError;
 
 const loading = ref(false);
-const refreshing = ref(false);
 const workspaceLoading = ref(false);
+const settingsVisible = ref(false);
 const historyMessages = ref<HistoryMessage[]>([]);
 const sessionUserMessages = ref<DisplayMessage[]>([]);
 const inputText = ref('');
@@ -141,6 +144,47 @@ const displayMessages = computed<DisplayMessage[]>(() => {
 const isGenerating = computed(() => assistantDisplayMessages.value.some((message) => message.status === 'pending' || message.status === 'streaming'));
 const isSourceReady = computed(() => Boolean(sourceEventCheck.value?.ready));
 const scriptCount = computed(() => workspace.value?.scripts.length ?? 0);
+const connectionStatusText = computed(() => t(isAgentConnected.value ? 'scriptAgent.connection.connected' : 'scriptAgent.connection.disconnected'));
+const modelStatusTheme = computed<'success' | 'danger' | 'default'>(() => {
+  if (!modelCapability.value) {
+    return 'default';
+  }
+  return modelCapability.value.configured ? 'success' : 'danger';
+});
+const modelStatusText = computed(() => {
+  if (!modelCapability.value) {
+    return t('scriptAgent.model.checking');
+  }
+  return modelCapability.value.configured ? modelCapability.value.modelName || t('scriptAgent.model.notConfigured') : modelCapability.value.error || t('scriptAgent.model.notConfigured');
+});
+const thinkLevelLabel = computed(() => t(THINK_LEVELS.find((option) => option.value === thinkLevel.value)?.labelKey ?? 'scriptAgent.think.off'));
+const composerActions = computed<Array<{ value: ScriptComposerAction; label: string; prompt: string }>>(() => [
+  { value: 'outline', label: t('scriptAgent.composer.outline'), prompt: t('scriptAgent.composer.prompt.outline') },
+  { value: 'plan', label: t('scriptAgent.composer.plan'), prompt: t('scriptAgent.composer.prompt.plan') },
+  { value: 'draft', label: t('scriptAgent.composer.draft'), prompt: t('scriptAgent.composer.prompt.draft') },
+  { value: 'review', label: t('scriptAgent.composer.review'), prompt: t('scriptAgent.composer.prompt.review') },
+]);
+const memoryActionOptions = computed<DropdownOption[]>(() => [
+  {
+    content: t('scriptAgent.memory.clearMessage'),
+    value: 'message' satisfies MemoryClearType,
+    disabled: Boolean(clearingType.value) || !canUseAgent.value,
+    prefixIcon: () => h(DeleteIcon),
+  },
+  {
+    content: t('scriptAgent.memory.clearSummary'),
+    value: 'summary' satisfies MemoryClearType,
+    disabled: Boolean(clearingType.value) || !canUseAgent.value,
+    prefixIcon: () => h(DeleteIcon),
+  },
+  {
+    content: t('scriptAgent.memory.clearAll'),
+    value: 'all' satisfies MemoryClearType,
+    disabled: Boolean(clearingType.value) || !canUseAgent.value,
+    theme: 'error',
+    prefixIcon: () => h(DeleteIcon),
+  },
+]);
 const sourceIssueCount = computed(() => {
   const check = sourceEventCheck.value;
   return check ? check.staleCount + check.runningCount + check.failedCount : 0;
@@ -384,15 +428,6 @@ async function initialize(): Promise<void> {
   }
 }
 
-async function refreshPage(): Promise<void> {
-  refreshing.value = true;
-  try {
-    await Promise.all([loadModelCapability(), loadMemoryHistory(), checkSourceEvents(), loadWorkspace()]);
-  } finally {
-    refreshing.value = false;
-  }
-}
-
 async function saveWorkspaceField(field: ScriptAgentWorkspaceField): Promise<void> {
   if (!canUseAgent.value) {
     return;
@@ -534,6 +569,15 @@ function stopGenerate(): void {
   agentSocket.stop();
 }
 
+function applyComposerAction(action: ScriptComposerAction): void {
+  const option = composerActions.value.find((item) => item.value === action);
+  if (!option) {
+    return;
+  }
+  const current = inputText.value.trim();
+  inputText.value = current ? `${current}\n\n${option.prompt}` : option.prompt;
+}
+
 function reconnectAgent(): void {
   if (!canUseAgent.value) {
     return;
@@ -541,8 +585,23 @@ function reconnectAgent(): void {
   agentSocket.reconnect();
 }
 
+function openSettingsDialog(): void {
+  settingsVisible.value = true;
+}
+
+function handleMemoryAction(dropdownItem: DropdownOption): void {
+  const value = dropdownItem.value;
+  if (value === 'message' || value === 'summary' || value === 'all') {
+    confirmClearMemory(value);
+  }
+}
+
 function openSourcePage(): void {
   void router.push({ name: 'novel' });
+}
+
+function openScriptPage(): void {
+  void router.push({ name: 'script' });
 }
 
 function confirmClearMemory(type: MemoryClearType): void {
@@ -623,25 +682,6 @@ onUnmounted(() => {
 
 <template>
   <div class="script-agent-page">
-    <section class="script-agent-head">
-      <div>
-        <p class="eyebrow">{{ t('common.project') }}</p>
-        <h3>{{ t('scriptAgent.title') }}</h3>
-        <p>{{ t('scriptAgent.summary') }}</p>
-      </div>
-      <div class="script-agent-head-actions">
-        <t-tag :theme="isAgentConnected ? 'success' : 'warning'" variant="light">
-          {{ isAgentConnected ? t('scriptAgent.connection.connected') : t('scriptAgent.connection.disconnected') }}
-        </t-tag>
-        <t-button variant="outline" :loading="refreshing" @click="refreshPage">
-          <template #icon><RefreshIcon /></template>
-          {{ t('scriptAgent.refresh') }}
-        </t-button>
-      </div>
-    </section>
-
-    <WorkflowNextStepHint hint-key="scriptAgent" next-route-name="script" />
-
     <section v-if="sourceEventCheck && !isSourceReady" class="script-agent-source-warning">
       <div>
         <strong>{{ sourceWarningText }}</strong>
@@ -651,35 +691,38 @@ onUnmounted(() => {
         <t-tag v-if="sourceEventCheck.total > 0" theme="warning" variant="light">
           {{ t('scriptAgent.source.issueCount', { count: sourceIssueCount }) }}
         </t-tag>
-        <t-button variant="outline" @click="openSourcePage">{{ t('scriptAgent.source.openSource') }}</t-button>
+        <VtButton variant="outline" @click="openSourcePage">{{ t('scriptAgent.source.openSource') }}</VtButton>
       </div>
     </section>
 
     <section class="script-agent-layout">
       <section class="script-chat-panel">
         <div class="script-chat-panel-head">
-          <div>
-            <strong>{{ t('scriptAgent.chat.title') }}</strong>
+          <div class="script-chat-title">
+            <strong>{{ t('scriptAgent.title') }}</strong>
             <p>{{ currentProjectName }}</p>
+            <div class="script-agent-title-meta">
+              <span class="script-agent-connection" :class="{ 'is-connected': isAgentConnected }">
+                <span class="script-agent-connection-dot" />
+                {{ connectionStatusText }}
+              </span>
+              <t-tag v-if="!modelCapability?.configured" size="small" :theme="modelStatusTheme" variant="light">
+                {{ modelStatusText }}
+              </t-tag>
+            </div>
           </div>
           <div class="script-chat-panel-actions">
-            <t-button size="small" variant="outline" @click="reconnectAgent">
-              <template #icon><RefreshIcon /></template>
-              {{ t('scriptAgent.connection.reconnect') }}
-            </t-button>
+            <t-tooltip :content="t('scriptAgent.connection.reconnect')">
+              <VtButton shape="square" size="small" variant="text" icon-only :aria-label="t('scriptAgent.connection.reconnect')" @click="reconnectAgent">
+                <template #icon><RefreshIcon /></template>
+              </VtButton>
+            </t-tooltip>
+            <t-tooltip :content="t('scriptAgent.settings.open')">
+              <VtButton shape="square" size="small" variant="text" icon-only :aria-label="t('scriptAgent.settings.open')" @click="openSettingsDialog">
+                <template #icon><SettingIcon /></template>
+              </VtButton>
+            </t-tooltip>
           </div>
-        </div>
-
-        <div class="script-agent-config-row">
-          <label>
-            <span>{{ t('scriptAgent.think.label') }}</span>
-            <t-select v-model="thinkLevel" :disabled="!modelCapability?.supportsThink" size="small">
-              <t-option v-for="option in THINK_LEVELS" :key="option.value" :value="option.value" :label="t(option.labelKey)" />
-            </t-select>
-          </label>
-          <t-tag :theme="modelCapability?.configured ? 'success' : 'danger'" variant="light">
-            {{ modelCapability?.configured ? modelCapability.modelName : modelCapability?.error || t('scriptAgent.model.notConfigured') }}
-          </t-tag>
         </div>
 
         <t-loading :loading="loading">
@@ -704,30 +747,27 @@ onUnmounted(() => {
 
         <div class="script-chat-input">
           <t-textarea v-model="inputText" :placeholder="t('scriptAgent.chat.placeholder')" :autosize="{ minRows: 3, maxRows: 5 }" @enter.ctrl="sendMessage" />
-          <div class="script-chat-input-actions">
-            <div class="script-memory-actions">
-              <t-button size="small" variant="outline" :loading="clearingType === 'message'" @click="confirmClearMemory('message')">
-                <template #icon><DeleteIcon /></template>
-                {{ t('scriptAgent.memory.clearMessage') }}
-              </t-button>
-              <t-button size="small" variant="outline" :loading="clearingType === 'summary'" @click="confirmClearMemory('summary')">
-                <template #icon><DeleteIcon /></template>
-                {{ t('scriptAgent.memory.clearSummary') }}
-              </t-button>
-              <t-button size="small" variant="outline" :loading="clearingType === 'all'" @click="confirmClearMemory('all')">
-                <template #icon><DeleteIcon /></template>
-                {{ t('scriptAgent.memory.clearAll') }}
-              </t-button>
+          <div class="script-composer-toolbar">
+            <div class="script-composer-tools">
+              <VtButton v-for="action in composerActions" :key="action.value" size="small" variant="text" :min-width="0" :disabled="!canUseAgent || isGenerating" @click="applyComposerAction(action.value)">
+                {{ action.label }}
+              </VtButton>
             </div>
             <div class="script-send-actions">
-              <t-button v-if="isGenerating" variant="outline" theme="warning" @click="stopGenerate">
+              <t-dropdown trigger="click" placement="top-right" :options="memoryActionOptions" @click="handleMemoryAction">
+                <VtButton size="small" variant="outline" :min-width="0" :disabled="!canUseAgent" :loading="Boolean(clearingType)">
+                  <template #icon><MoreIcon /></template>
+                  {{ t('scriptAgent.composer.more') }}
+                </VtButton>
+              </t-dropdown>
+              <VtButton v-if="isGenerating" variant="outline" theme="warning" @click="stopGenerate">
                 <template #icon><StopIcon /></template>
                 {{ t('scriptAgent.chat.stop') }}
-              </t-button>
-              <t-button theme="primary" :disabled="isGenerating || !isAgentConnected" @click="sendMessage">
+              </VtButton>
+              <VtButton theme="primary" variant="base" :disabled="isGenerating || !isAgentConnected" @click="sendMessage">
                 <template #icon><SendIcon /></template>
                 {{ t('scriptAgent.chat.send') }}
-              </t-button>
+              </VtButton>
             </div>
           </div>
         </div>
@@ -737,7 +777,7 @@ onUnmounted(() => {
         <div class="script-workspace-head">
           <div>
             <strong>{{ t('scriptAgent.workspace.title') }}</strong>
-            <p>{{ t('scriptAgent.workspace.project', { name: currentProjectName }) }}</p>
+            <p>{{ t('scriptAgent.workspace.draftHint') }}</p>
           </div>
           <ChatIcon />
         </div>
@@ -747,10 +787,10 @@ onUnmounted(() => {
               <div class="script-workspace-editor">
                 <div class="script-workspace-editor-head">
                   <strong>{{ t('scriptAgent.workspace.skeleton') }}</strong>
-                  <t-button size="small" theme="primary" :loading="savingWorkspaceField === 'storySkeleton'" :disabled="!canUseAgent" @click="saveWorkspaceField('storySkeleton')">
+                  <VtButton size="small" theme="primary" variant="base" :loading="savingWorkspaceField === 'storySkeleton'" :disabled="!canUseAgent" @click="saveWorkspaceField('storySkeleton')">
                     <template #icon><SaveIcon /></template>
                     {{ t('scriptAgent.workspace.save') }}
-                  </t-button>
+                  </VtButton>
                 </div>
                 <t-textarea v-model="workspaceDraft.storySkeleton" :placeholder="t('scriptAgent.workspace.skeletonPlaceholder')" :autosize="{ minRows: 9, maxRows: 16 }" />
                 <pre v-if="workspaceDraft.storySkeleton" class="script-workspace-preview">{{ workspaceDraft.storySkeleton }}</pre>
@@ -761,10 +801,10 @@ onUnmounted(() => {
               <div class="script-workspace-editor">
                 <div class="script-workspace-editor-head">
                   <strong>{{ t('scriptAgent.workspace.strategy') }}</strong>
-                  <t-button size="small" theme="primary" :loading="savingWorkspaceField === 'adaptationStrategy'" :disabled="!canUseAgent" @click="saveWorkspaceField('adaptationStrategy')">
+                  <VtButton size="small" theme="primary" variant="base" :loading="savingWorkspaceField === 'adaptationStrategy'" :disabled="!canUseAgent" @click="saveWorkspaceField('adaptationStrategy')">
                     <template #icon><SaveIcon /></template>
                     {{ t('scriptAgent.workspace.save') }}
-                  </t-button>
+                  </VtButton>
                 </div>
                 <t-textarea v-model="workspaceDraft.adaptationStrategy" :placeholder="t('scriptAgent.workspace.strategyPlaceholder')" :autosize="{ minRows: 9, maxRows: 16 }" />
                 <pre v-if="workspaceDraft.adaptationStrategy" class="script-workspace-preview">{{ workspaceDraft.adaptationStrategy }}</pre>
@@ -781,10 +821,10 @@ onUnmounted(() => {
             <strong>{{ t('scriptAgent.workspace.scripts') }}</strong>
             <p>{{ t('scriptAgent.workspace.scriptCount', { count: scriptCount }) }}</p>
           </div>
-          <t-button size="small" theme="primary" :disabled="!canUseAgent" @click="createScript">
+          <VtButton size="small" theme="primary" variant="base" :disabled="!canUseAgent" @click="createScript">
             <template #icon><AddIcon /></template>
             {{ t('scriptAgent.workspace.addScript') }}
-          </t-button>
+          </VtButton>
         </div>
 
         <div class="script-list-workspace">
@@ -798,11 +838,11 @@ onUnmounted(() => {
               <t-textarea v-model="scriptEditor.content" :placeholder="t('scriptAgent.workspace.scriptContentPlaceholder')" :autosize="{ minRows: 8, maxRows: 18 }" />
             </label>
             <div class="script-editor-actions">
-              <t-button variant="outline" @click="resetScriptEditor">{{ t('scriptAgent.cancel') }}</t-button>
-              <t-button theme="primary" :loading="savingScript" @click="saveScript">
+              <VtButton variant="outline" @click="resetScriptEditor">{{ t('scriptAgent.cancel') }}</VtButton>
+              <VtButton theme="primary" variant="base" :loading="savingScript" @click="saveScript">
                 <template #icon><SaveIcon /></template>
                 {{ t('scriptAgent.workspace.saveScript') }}
-              </t-button>
+              </VtButton>
             </div>
           </div>
 
@@ -817,14 +857,14 @@ onUnmounted(() => {
                 <t-tag size="small" :theme="getExtractStatusTheme(script.extractStatus)" variant="light">
                   {{ getExtractStatusLabel(script.extractStatus) }}
                 </t-tag>
-                <t-button size="small" variant="outline" @click="editScript(script)">
+                <VtButton size="small" variant="outline" @click="editScript(script)">
                   <template #icon><EditIcon /></template>
                   {{ t('scriptAgent.workspace.editScript') }}
-                </t-button>
-                <t-button size="small" theme="danger" variant="outline" :loading="deletingScriptId === script.id" @click="confirmDeleteScript(script)">
+                </VtButton>
+                <VtButton size="small" theme="danger" variant="outline" :loading="deletingScriptId === script.id" @click="confirmDeleteScript(script)">
                   <template #icon><DeleteIcon /></template>
                   {{ t('scriptAgent.workspace.deleteScript') }}
-                </t-button>
+                </VtButton>
               </div>
             </div>
             <div class="script-card-meta">
@@ -836,5 +876,41 @@ onUnmounted(() => {
         </div>
       </section>
     </section>
+
+    <t-dialog v-model:visible="settingsVisible" :header="t('scriptAgent.settings.title')" width="520px" :footer="false">
+      <div class="script-agent-settings">
+        <div class="script-agent-setting-row">
+          <span>{{ t('scriptAgent.settings.connection') }}</span>
+          <t-tag :theme="isAgentConnected ? 'success' : 'default'" variant="light">{{ connectionStatusText }}</t-tag>
+        </div>
+        <div class="script-agent-setting-row">
+          <span>{{ t('scriptAgent.settings.model') }}</span>
+          <t-tag :theme="modelStatusTheme" variant="light">{{ modelStatusText }}</t-tag>
+        </div>
+        <label class="script-agent-setting-field">
+          <span>{{ t('scriptAgent.settings.think') }}</span>
+          <t-select v-model="thinkLevel" :disabled="!modelCapability?.supportsThink" size="small">
+            <t-option v-for="option in THINK_LEVELS" :key="option.value" :value="option.value" :label="t(option.labelKey)" />
+          </t-select>
+        </label>
+        <div class="script-agent-setting-row">
+          <span>{{ t('scriptAgent.settings.currentThink') }}</span>
+          <b>{{ thinkLevelLabel }}</b>
+        </div>
+        <div class="script-agent-settings-actions">
+          <VtButton size="small" variant="outline" @click="reconnectAgent">
+            <template #icon><RefreshIcon /></template>
+            {{ t('scriptAgent.connection.reconnect') }}
+          </VtButton>
+        </div>
+      </div>
+    </t-dialog>
+
+    <div class="script-agent-bottom-actions">
+      <VtButton theme="primary" variant="base" @click="openScriptPage">
+        <template #icon><ArrowRightIcon /></template>
+        {{ t('workflowHint.scriptAgent.action') }}
+      </VtButton>
+    </div>
   </div>
 </template>

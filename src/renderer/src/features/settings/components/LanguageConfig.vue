@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { CheckCircleFilledIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
 import { useLanguageStore } from '@renderer/stores/language';
@@ -17,41 +16,40 @@ const options = computed(() =>
   })),
 );
 
-function switchLocale(locale: AppLocale): void {
+const currentOption = computed(() => options.value.find((option) => option.value === languageStore.locale) ?? options.value[0]);
+
+function switchLocale(locale: string | number): void {
+  if (!languageStore.languageOptions.some((option) => option.value === locale)) {
+    return;
+  }
+
   if (languageStore.locale === locale) {
     return;
   }
 
-  languageStore.setLocale(locale);
+  languageStore.setLocale(locale as AppLocale);
   MessagePlugin.success(t('language.saved'));
 }
 </script>
 
 <template>
-  <section class="language-section">
-    <div class="language-section-head">
+  <section class="language-section settings-row-list">
+    <div class="settings-row">
       <div>
-        <strong>{{ t('language.title') }}</strong>
-        <p>{{ t('language.hint') }}</p>
+        <span class="settings-row-title">{{ t('language.title') }}</span>
+        <span class="settings-row-note">{{ currentOption?.label }}</span>
       </div>
-      <t-tag variant="light">{{ t('language.status') }}</t-tag>
-    </div>
-
-    <div class="language-card-grid">
-      <button
-        v-for="option in options"
-        :key="option.value"
-        class="language-card"
-        :class="{ 'is-active': languageStore.locale === option.value }"
-        type="button"
-        @click="switchLocale(option.value)"
-      >
-        <div>
-          <strong>{{ option.label }}</strong>
-          <small>{{ option.tips }}</small>
-        </div>
-        <CheckCircleFilledIcon v-if="languageStore.locale === option.value" />
-      </button>
+      <div class="settings-row-control">
+        <t-radio-group class="language-segmented" :model-value="languageStore.locale" variant="default-filled" @update:model-value="switchLocale">
+          <t-radio-button
+            v-for="option in options"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </t-radio-button>
+        </t-radio-group>
+      </div>
     </div>
   </section>
 </template>

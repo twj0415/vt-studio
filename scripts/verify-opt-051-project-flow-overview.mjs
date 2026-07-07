@@ -27,16 +27,19 @@ assertIncludes('src/renderer/src/router/index.ts', "name: 'project-overview'");
 assertIncludes('src/renderer/src/router/index.ts', "meta: { titleKey: 'route.projectOverview', requiresProject: true }");
 
 const menu = read('src/renderer/src/router/menu.ts');
-const overviewIndex = menu.indexOf("routeName: 'project-overview'");
 const novelIndex = menu.indexOf("routeName: 'novel'");
 const exportIndex = menu.indexOf("routeName: 'export'");
-if (overviewIndex === -1 || novelIndex === -1 || overviewIndex > novelIndex) {
-  throw new Error('project overview menu should exist before novel');
+if (menu.includes("titleKey: 'route.projectOverview'") || menu.includes("routeName: 'project-overview'")) {
+  throw new Error('project overview should stay out of the visible project step menu');
+}
+if (novelIndex === -1) {
+  throw new Error('project step menu should start with novel');
 }
 if (exportIndex === -1) {
   throw new Error('project menu should include export entry');
 }
-assertIncludes('src/renderer/src/router/menu.ts', "descriptionKey: 'routeDescription.projectOverview'");
+assertIncludes('src/renderer/src/router/menu.ts', 'projectWorkspaceRouteNames');
+assertIncludes('src/renderer/src/router/menu.ts', "'project-overview'");
 assertIncludes('src/renderer/src/router/menu.ts', "descriptionKey: 'routeDescription.export'");
 
 assertIncludes('src/main/services/project.ts', "const targetRoute = 'project-overview';");

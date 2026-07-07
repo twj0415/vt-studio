@@ -4,6 +4,9 @@ import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { CheckIcon, ImageIcon, PlayCircleIcon, RefreshIcon, SearchIcon, SoundIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import WorkflowNextStepHint from '@renderer/features/shared/WorkflowNextStepHint.vue';
 import { useAppStore } from '@renderer/stores/app';
 import { ASSET_TASK_STATUS, GENERATABLE_ASSET_TYPES, type AssetAudioSummary, type AssetItem, type GeneratableAssetType } from '@shared/types/assets';
@@ -49,7 +52,7 @@ let audioPollTimer: number | null = null;
 
 const filteredAssets = computed(() => {
   const key = keyword.value.trim().toLowerCase();
-  return assets.value.filter((asset) => !key || asset.name.toLowerCase().includes(key) || asset.description.toLowerCase().includes(key));
+  return assets.value.filter((asset) => !key || normalizeAssetText(asset.name).toLowerCase().includes(key) || normalizeAssetText(asset.description).toLowerCase().includes(key));
 });
 const allSelected = computed(() => filteredAssets.value.length > 0 && filteredAssets.value.every((asset) => selectedIds.value.includes(asset.id)));
 const selectedAssets = computed(() => assets.value.filter((asset) => selectedIds.value.includes(asset.id)));
@@ -62,7 +65,7 @@ const hasActiveFilters = computed(() => keyword.value.trim().length > 0 || selec
 const cornerStatusSummary = computed(() => ({
   total: filteredAssets.value.length,
   selected: selectedIds.value.length,
-  promptReady: filteredAssets.value.filter((asset) => Boolean(asset.prompt.trim())).length,
+  promptReady: filteredAssets.value.filter(hasPrompt).length,
   imageReady: filteredAssets.value.filter((asset) => Boolean(asset.media)).length,
   audioReady: filteredAssets.value.filter((asset) => Boolean(asset.boundAudio)).length,
   running: filteredAssets.value.filter(isAssetRunning).length,
@@ -71,6 +74,14 @@ const cornerStatusSummary = computed(() => ({
 
 function isOk(response: { code: number; msg: string }): boolean {
   return response.code === 200;
+}
+
+function normalizeAssetText(value: string | null | undefined): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function hasPrompt(asset: AssetItem): boolean {
+  return Boolean(normalizeAssetText(asset.prompt).trim());
 }
 
 function clearPollTimers(): void {
@@ -104,7 +115,7 @@ async function pollPromptStatus(): Promise<void> {
   if (!currentProjectId.value || runningPromptIds.value.length === 0) {
     return;
   }
-  const response = await window.vtStudio.assets.pollPromptStatus({ projectId: currentProjectId.value, assetIds: runningPromptIds.value });
+  const response = await window.vtStudio.assets.pollPromptStatus({ projectId: currentProjectId.value, assetIds: [...runningPromptIds.value] });
   if (isOk(response) && response.data.assets.length > 0) {
     await loadCornerAssets({ keepDataOnError: true, asRefresh: true });
   } else {
@@ -116,7 +127,7 @@ async function pollImageStatus(): Promise<void> {
   if (!currentProjectId.value || runningImageIds.value.length === 0) {
     return;
   }
-  const response = await window.vtStudio.assets.pollImageStatus({ projectId: currentProjectId.value, assetIds: runningImageIds.value });
+  const response = await window.vtStudio.assets.pollImageStatus({ projectId: currentProjectId.value, assetIds: [...runningImageIds.value] });
   if (isOk(response) && response.data.assets.length > 0) {
     await loadCornerAssets({ keepDataOnError: true, asRefresh: true });
   } else {
@@ -128,7 +139,7 @@ async function pollAudioStatus(): Promise<void> {
   if (!currentProjectId.value || runningAudioIds.value.length === 0) {
     return;
   }
-  const response = await window.vtStudio.cornerScape.pollAudioBindStatus({ projectId: currentProjectId.value, assetIds: runningAudioIds.value });
+  const response = await window.vtStudio.cornerScape.pollAudioBindStatus({ projectId: currentProjectId.value, assetIds: [...runningAudioIds.value] });
   if (isOk(response) && response.data.assets.length > 0) {
     await loadCornerAssets({ keepDataOnError: true, asRefresh: true });
   } else {
@@ -153,7 +164,7 @@ async function loadCornerAssets(options: { keepDataOnError?: boolean; asRefresh?
   try {
     const response = await window.vtStudio.cornerScape.list({
       projectId: currentProjectId.value,
-      types: selectedTypes.value,
+      types: [...selectedTypes.value],
     });
     if (!isOk(response)) {
       MessagePlugin.error(response.msg);
@@ -194,7 +205,7 @@ function toggleAll(): void {
 }
 
 function selectPromptEmpty(): void {
-  selectedIds.value = assets.value.filter((asset) => !asset.prompt.trim()).map((asset) => asset.id);
+  selectedIds.value = assets.value.filter((asset) => !hasPrompt(asset)).map((asset) => asset.id);
 }
 
 function selectImageEmpty(): void {
@@ -251,7 +262,7 @@ async function batchGenerateImages(): Promise<void> {
     MessagePlugin.warning(t('cornerScape.modelRequired'));
     return;
   }
-  if (selectedAssets.value.some((asset) => !asset.prompt.trim())) {
+  if (selectedAssets.value.some((asset) => !hasPrompt(asset))) {
     MessagePlugin.warning(t('cornerScape.promptRequired'));
     return;
   }
@@ -292,7 +303,7 @@ async function batchBindAudio(): Promise<void> {
 
 function openDrawer(asset: AssetItem): void {
   currentAsset.value = asset;
-  editForm.prompt = asset.prompt;
+  editForm.prompt = normalizeAssetText(asset.prompt);
   editForm.model = batchForm.model || defaultImageModel.value || '';
   editForm.resolution = asset.media?.resolution ?? defaultResolution.value;
   editForm.audioAssetId = asset.boundAudio?.id ?? null;
@@ -480,10 +491,10 @@ onUnmounted(() => {
         <h3>{{ t('cornerScape.title') }}</h3>
         <p>{{ t('cornerScape.summary') }}</p>
       </div>
-      <t-button variant="outline" :loading="refreshing" @click="loadCornerAssets({ keepDataOnError: true, asRefresh: true })">
+      <VtButton variant="outline" :loading="refreshing" @click="loadCornerAssets({ keepDataOnError: true, asRefresh: true })">
         <template #icon><RefreshIcon /></template>
         {{ t('cornerScape.refresh') }}
-      </t-button>
+      </VtButton>
     </section>
 
     <WorkflowNextStepHint hint-key="cornerScape" next-route-name="production" />
@@ -535,24 +546,24 @@ onUnmounted(() => {
           <t-textarea v-model="batchForm.extraInstruction" :autosize="{ minRows: 4, maxRows: 7 }" :placeholder="t('cornerScape.batch.extraPlaceholder')" />
         </label>
         <div class="corner-quick-grid">
-          <t-button variant="outline" size="small" @click="toggleAll">{{ allSelected ? t('cornerScape.unselectAll') : t('cornerScape.selectAll') }}</t-button>
-          <t-button variant="outline" size="small" @click="selectPromptEmpty">{{ t('cornerScape.selectPromptEmpty') }}</t-button>
-          <t-button variant="outline" size="small" @click="selectImageEmpty">{{ t('cornerScape.selectImageEmpty') }}</t-button>
-          <t-button variant="outline" size="small" @click="selectFailed">{{ t('cornerScape.selectFailed') }}</t-button>
+          <VtButton variant="outline" size="small" @click="toggleAll">{{ allSelected ? t('cornerScape.unselectAll') : t('cornerScape.selectAll') }}</VtButton>
+          <VtButton variant="outline" size="small" @click="selectPromptEmpty">{{ t('cornerScape.selectPromptEmpty') }}</VtButton>
+          <VtButton variant="outline" size="small" @click="selectImageEmpty">{{ t('cornerScape.selectImageEmpty') }}</VtButton>
+          <VtButton variant="outline" size="small" @click="selectFailed">{{ t('cornerScape.selectFailed') }}</VtButton>
         </div>
         <div class="corner-action-stack">
-          <t-button theme="primary" :disabled="selectedIds.length === 0" @click="batchGeneratePrompts">
+          <VtButton theme="primary" variant="base" :disabled="selectedIds.length === 0" @click="batchGeneratePrompts">
             <template #icon><PlayCircleIcon /></template>
             {{ t('cornerScape.batch.prompt') }}
-          </t-button>
-          <t-button theme="primary" variant="outline" :disabled="selectedIds.length === 0" @click="batchGenerateImages">
+          </VtButton>
+          <VtButton theme="primary" variant="outline" :disabled="selectedIds.length === 0" @click="batchGenerateImages">
             <template #icon><ImageIcon /></template>
             {{ t('cornerScape.batch.image') }}
-          </t-button>
-          <t-button theme="primary" variant="outline" :disabled="selectedIds.length === 0" @click="batchBindAudio">
+          </VtButton>
+          <VtButton theme="primary" variant="outline" :disabled="selectedIds.length === 0" @click="batchBindAudio">
             <template #icon><SoundIcon /></template>
             {{ t('cornerScape.batch.audio') }}
-          </t-button>
+          </VtButton>
         </div>
       </aside>
 
@@ -591,21 +602,21 @@ onUnmounted(() => {
               </div>
             </article>
           </div>
-          <t-empty v-if="!loading && filteredAssets.length === 0" :description="currentProjectId ? t('cornerScape.empty') : t('cornerScape.noProject')">
+          <VtEmptyState v-if="!loading && filteredAssets.length === 0" :description="currentProjectId ? t('cornerScape.empty') : t('cornerScape.noProject')">
             <template #action>
               <div class="flex flex-wrap justify-center gap-2">
-                <t-button v-if="!currentProjectId" theme="primary" @click="goProjects">{{ t('cornerScape.emptyActionProjects') }}</t-button>
+                <VtButton v-if="!currentProjectId" theme="primary" variant="base" @click="goProjects">{{ t('cornerScape.emptyActionProjects') }}</VtButton>
                 <template v-else-if="hasActiveFilters">
-                  <t-button theme="primary" @click="resetCornerFilters">{{ t('cornerScape.emptyActionReset') }}</t-button>
-                  <t-button variant="outline" @click="goAssets">{{ t('cornerScape.emptyActionAssets') }}</t-button>
+                  <VtButton theme="primary" variant="base" @click="resetCornerFilters">{{ t('cornerScape.emptyActionReset') }}</VtButton>
+                  <VtButton variant="outline" @click="goAssets">{{ t('cornerScape.emptyActionAssets') }}</VtButton>
                 </template>
                 <template v-else>
-                  <t-button theme="primary" @click="goAssets">{{ t('cornerScape.emptyActionAssets') }}</t-button>
-                  <t-button variant="outline" @click="goScript">{{ t('cornerScape.emptyActionScript') }}</t-button>
+                  <VtButton theme="primary" variant="base" @click="goAssets">{{ t('cornerScape.emptyActionAssets') }}</VtButton>
+                  <VtButton variant="outline" @click="goScript">{{ t('cornerScape.emptyActionScript') }}</VtButton>
                 </template>
               </div>
             </template>
-          </t-empty>
+          </VtEmptyState>
         </t-loading>
       </main>
     </section>
@@ -635,8 +646,8 @@ onUnmounted(() => {
           </label>
         </div>
         <div class="corner-drawer-actions">
-          <t-button variant="outline" @click="polishPrompt">{{ t('cornerScape.drawer.polish') }}</t-button>
-          <t-button theme="primary" @click="generateImage">{{ t('cornerScape.drawer.generate') }}</t-button>
+          <VtButton variant="outline" @click="polishPrompt">{{ t('cornerScape.drawer.polish') }}</VtButton>
+          <VtButton theme="primary" variant="base" @click="generateImage">{{ t('cornerScape.drawer.generate') }}</VtButton>
         </div>
         <div class="corner-history">
           <strong>{{ t('cornerScape.drawer.history') }}</strong>
@@ -651,8 +662,8 @@ onUnmounted(() => {
       </div>
     </t-drawer>
 
-    <t-dialog :visible="detailVisible" :header="detailTitle" width="760px" :footer="false" @update:visible="(value) => (detailVisible = value)">
+    <VtDialog :visible="detailVisible" :title="detailTitle" width="760px" :footer="false" @update:visible="(value) => (detailVisible = value)">
       <pre class="asset-detail-content">{{ detailContent }}</pre>
-    </t-dialog>
+    </VtDialog>
   </div>
 </template>

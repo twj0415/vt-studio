@@ -27,7 +27,7 @@ const staticChecks = [
   ['src/shared/contracts/preload.ts', 'diagnoseLifecycle: ()'],
   ['src/shared/contracts/preload.ts', 'cleanupLifecycle: (payload: FileLifecycleCleanupPayload)'],
   ['src/renderer/src/features/settings/SettingsHome.vue', '<FileManagement'],
-  ['src/renderer/src/features/settings/components/FileManagement.vue', "t('files.hint')"],
+  ['src/renderer/src/features/settings/components/FileManagement.vue', "t('files.lifecycle.title')"],
   ['src/renderer/src/features/settings/components/FileManagement.vue', 'diagnoseLifecycle'],
   ['src/renderer/src/features/settings/components/FileManagement.vue', 'cleanupLifecycle'],
   ['src/main/services/settings/file-management.ts', 'shell.openPath'],

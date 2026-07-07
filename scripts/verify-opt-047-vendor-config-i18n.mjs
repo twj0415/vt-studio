@@ -32,7 +32,7 @@ includes(component, `settings.vendorConfig.videoMode.imageReference3`, component
 includes(component, `settings.vendorConfig.secretSavedHint`, componentFile);
 includes(component, `settings.vendorConfig.deleteModelDialog.title`, componentFile);
 includes(component, `settings.vendorConfig.deleteVendorDialog.title`, componentFile);
-includes(component, `settings.vendorConfig.testResult.imageSuccess`, componentFile);
+includes(component, `ModelTestDialog`, componentFile);
 includes(component, `settings.vendorConfig.codeDialog.warning`, componentFile);
 includes(component, `getVendorStatusText(selectedVendor)`, componentFile);
 notIncludes(component, 'MODEL_TYPE_LABELS', componentFile);
@@ -51,6 +51,8 @@ includes(messages, `secretSavedHint`, messagesFile);
 includes(messages, `readonlyProjection`, messagesFile);
 includes(messages, `modelDialog`, messagesFile);
 includes(messages, `codeDialog`, messagesFile);
+includes(messages, `modelTestDialog`, messagesFile);
+includes(messages, `file: '生成文件：{path}'`, messagesFile);
 
 const taskFile = 'docs/tasks/OPT-047-可见文案i18n治理-第三批-设置供应商.md';
 const task = read(taskFile);

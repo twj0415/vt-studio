@@ -109,11 +109,7 @@ onMounted(loadInfo);
 
 <template>
   <section class="about-config-section">
-    <div class="about-config-head">
-      <div>
-        <strong>{{ t('settings.about.title') }}</strong>
-        <p>{{ t('settings.about.hint') }}</p>
-      </div>
+    <div class="settings-inline-toolbar">
       <div class="settings-actions">
         <t-button variant="outline" :loading="loading" @click="loadInfo">
           <template #icon><RefreshIcon /></template>
@@ -122,54 +118,52 @@ onMounted(loadInfo);
       </div>
     </div>
 
-    <div class="about-version-grid">
-      <div>
-        <span>{{ t('settings.about.appName') }}</span>
-        <b>{{ info?.appName ?? '-' }}</b>
+    <div class="about-version-grid settings-row-list">
+      <div class="settings-row">
+        <span class="settings-row-title">{{ t('settings.about.appName') }}</span>
+        <b class="settings-row-value">{{ info?.appName ?? '-' }}</b>
       </div>
-      <div>
-        <span>{{ t('settings.about.version') }}</span>
-        <b>{{ info?.version ?? '-' }}</b>
+      <div class="settings-row">
+        <span class="settings-row-title">{{ t('settings.about.version') }}</span>
+        <b class="settings-row-value">{{ info?.version ?? '-' }}</b>
       </div>
-      <div>
-        <span>{{ t('settings.about.platform') }}</span>
-        <b>{{ info?.platform ?? '-' }}</b>
+      <div class="settings-row">
+        <span class="settings-row-title">{{ t('settings.about.platform') }}</span>
+        <b class="settings-row-value">{{ info?.platform ?? '-' }}</b>
       </div>
-      <div>
-        <span>{{ t('settings.about.environment') }}</span>
-        <b>{{ info?.isDev ? t('settings.about.devEnvironment') : t('settings.about.productionEnvironment') }}</b>
+      <div class="settings-row">
+        <span class="settings-row-title">{{ t('settings.about.environment') }}</span>
+        <b class="settings-row-value">{{ info?.isDev ? t('settings.about.devEnvironment') : t('settings.about.productionEnvironment') }}</b>
       </div>
     </div>
 
-    <div class="about-download-directory">
-      <span>{{ t('settings.about.downloadDirectory') }}</span>
-      <b>{{ info?.downloadDirectory ?? '-' }}</b>
+    <div class="settings-row-list">
+      <div class="settings-row about-download-directory">
+        <span class="settings-row-title">{{ t('settings.about.downloadDirectory') }}</span>
+        <b class="settings-row-value">{{ info?.downloadDirectory ?? '-' }}</b>
+      </div>
     </div>
 
     <div class="about-link-section">
-      <div class="about-link-head">
-        <strong>{{ t('settings.about.linksTitle') }}</strong>
-        <small>{{ t('settings.about.linksHint') }}</small>
-      </div>
-      <div class="about-link-grid">
-        <div v-for="link in externalLinks" :key="link.key" class="about-link-card">
+      <div class="settings-list-title">{{ t('settings.about.linksTitle') }}</div>
+      <div class="about-link-grid settings-row-list">
+        <div v-for="link in externalLinks" :key="link.key" class="settings-row about-link-card">
           <div>
-            <strong>{{ link.label }}</strong>
-            <small>{{ link.configured ? t('settings.about.linkConfigured') : t('settings.about.linkMissing') }}</small>
+            <span class="settings-row-title">{{ link.label }}</span>
+            <span class="settings-row-note">{{ link.configured ? t('settings.about.linkConfigured') : t('settings.about.linkMissing') }}</span>
           </div>
-          <t-button variant="outline" :disabled="!link.configured" @click="openLink(link.key)">
-            <template #icon><LinkIcon /></template>
-            {{ t('settings.about.openLink') }}
-          </t-button>
+          <div class="settings-row-control">
+            <t-button variant="outline" :disabled="!link.configured" @click="openLink(link.key)">
+              <template #icon><LinkIcon /></template>
+              {{ t('settings.about.openLink') }}
+            </t-button>
+          </div>
         </div>
       </div>
     </div>
 
     <div class="about-update-section">
-      <div class="about-link-head">
-        <strong>{{ t('settings.about.updateTitle') }}</strong>
-        <small>{{ t('settings.about.updateHint') }}</small>
-      </div>
+      <div class="settings-list-title">{{ t('settings.about.updateTitle') }}</div>
 
       <div class="about-update-warning">
         {{ t('settings.about.updateWarning') }}

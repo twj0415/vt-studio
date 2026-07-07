@@ -9,6 +9,11 @@ import { createError } from '../result';
 import { MODEL_TYPES } from './constants';
 import { assertVendorVideoModeSupported } from './capability-matrix';
 import { resolveModelCallContext, runModelCall, type ModelCallContext, type ModelCallRunOptions } from './gateway';
+import {
+  recordModelRequestTraceInput,
+  recordModelRequestTraceNormalizedInput,
+  recordModelRequestTraceOutput,
+} from './request-diagnostics';
 import type {
   AudioGenerateInput,
   ImageGenerateInput,
@@ -170,6 +175,44 @@ async function normalizeMediaResult(value: string, kind: MediaResultKind): Promi
   }
 
   return normalized;
+}
+
+function getMediaResultSource(value: string): 'data-url' | 'url' | 'base64' {
+  if (/^data:[^;,]+;base64,/i.test(value)) {
+    return 'data-url';
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return 'url';
+  }
+
+  return 'base64';
+}
+
+function summarizeMediaTraceInput<TInput extends ImageGenerateInput | VideoGenerateInput | AudioGenerateInput>(modelKey: string, input: TInput): Record<string, unknown> {
+  return {
+    modelKey,
+    ...input,
+    task: input.task
+      ? {
+        taskId: input.task.taskId,
+        projectId: input.task.projectId,
+        category: input.task.category,
+        description: input.task.description,
+        timeoutMs: input.task.timeoutMs,
+        retry: input.task.retry,
+        relatedObjects: input.task.relatedObjects,
+      }
+      : null,
+  };
+}
+
+function summarizeMediaTraceOutput(kind: MediaResultKind, value: string): Record<string, unknown> {
+  return {
+    kind,
+    source: getMediaResultSource(value),
+    result: value,
+  };
 }
 
 function normalizeLegacyReferenceInput(vendorId: string, input: ImageGenerateInput | VideoGenerateInput | AudioGenerateInput): void {
@@ -337,12 +380,16 @@ export async function generateImageByModel(modelKey: string, input: ImageGenerat
 
   return runWithTask(input.task, context, async (options) => {
     return runModelCall(context, async () => {
+      recordModelRequestTraceInput(context.requestId, 'Image input', summarizeMediaTraceInput(modelKey, input));
       const runtimeInput = cloneRuntimeInput(input);
       ensureBase64SourceType(runtimeInput);
       assertReferencePayloads(runtimeInput.referenceList);
       normalizeLegacyReferenceInput(vendorId, runtimeInput);
+      recordModelRequestTraceNormalizedInput(context.requestId, 'Image adapter input', runtimeInput);
       const result = await runtime.imageRequest!(runtimeInput, model);
-      return normalizeMediaResult(result, 'image');
+      const normalizedResult = await normalizeMediaResult(result, 'image');
+      recordModelRequestTraceOutput(context.requestId, 'Image output', summarizeMediaTraceOutput('image', normalizedResult));
+      return normalizedResult;
     }, {
       ...options,
       retry: options.retry ?? { maxAttempts: 2, delayMs: 1000, backoffFactor: 2 },
@@ -360,13 +407,17 @@ export async function generateVideoByModel(modelKey: string, input: VideoGenerat
 
   return runWithTask(input.task, context, async (options) => {
     return runModelCall(context, async () => {
+      recordModelRequestTraceInput(context.requestId, 'Video input', summarizeMediaTraceInput(modelKey, input));
       const runtimeInput = cloneRuntimeInput(input);
       ensureBase64SourceType(runtimeInput);
       assertReferencePayloads(runtimeInput.referenceList);
       normalizeLegacyReferenceInput(vendorId, runtimeInput);
       assertVideoInputSupported(model, runtimeInput);
+      recordModelRequestTraceNormalizedInput(context.requestId, 'Video adapter input', runtimeInput);
       const result = await runtime.videoRequest!(runtimeInput, model);
-      return normalizeMediaResult(result, 'video');
+      const normalizedResult = await normalizeMediaResult(result, 'video');
+      recordModelRequestTraceOutput(context.requestId, 'Video output', summarizeMediaTraceOutput('video', normalizedResult));
+      return normalizedResult;
     }, {
       ...options,
       retry: options.retry ?? false,
@@ -384,12 +435,16 @@ export async function generateAudioByModel(modelKey: string, input: AudioGenerat
 
   return runWithTask(input.task, context, async (options) => {
     return runModelCall(context, async () => {
+      recordModelRequestTraceInput(context.requestId, 'Audio input', summarizeMediaTraceInput(modelKey, input));
       const runtimeInput = cloneRuntimeInput(input);
       ensureBase64SourceType(runtimeInput);
       assertReferencePayloads(runtimeInput.referenceList);
       normalizeLegacyReferenceInput(vendorId, runtimeInput);
+      recordModelRequestTraceNormalizedInput(context.requestId, 'Audio adapter input', runtimeInput);
       const result = await runtime.ttsRequest!(runtimeInput, model);
-      return normalizeMediaResult(result, 'audio');
+      const normalizedResult = await normalizeMediaResult(result, 'audio');
+      recordModelRequestTraceOutput(context.requestId, 'Audio output', summarizeMediaTraceOutput('audio', normalizedResult));
+      return normalizedResult;
     }, {
       ...options,
       retry: options.retry ?? { maxAttempts: 2, delayMs: 1000, backoffFactor: 2 },

@@ -1254,6 +1254,10 @@ function getAudioCandidates(projectId: number): AssetAudioSummary[] {
   }));
 }
 
+function toSerializableCornerAssetListResult(result: CornerAssetListResult): CornerAssetListResult {
+  return JSON.parse(JSON.stringify(result)) as CornerAssetListResult;
+}
+
 function buildAudioBindPrompt(asset: AssetRow, candidates: AssetAudioSummary[]): string {
   return [
     '待匹配资产：',
@@ -1820,13 +1824,13 @@ export function listCornerAssets(payload: CornerAssetListPayload): CornerAssetLi
     )
     .all(projectId, ...types);
 
-  return {
+  return toSerializableCornerAssetListResult({
     assets: mapAssetRows(rows),
     audioAssets: getAudioCandidates(projectId),
     imageModelId: project.image_model_id || null,
     imageQuality: project.image_quality,
     assetsBatchGenerateSize: getBusinessSettings().config.assetsBatchGenerateSize,
-  };
+  });
 }
 
 export function updateAssetAudioBinding(payload: AssetAudioBindingPayload): AssetAudioBindingResult {

@@ -20,6 +20,7 @@ import {
   MODEL_OUTPUT_TYPES,
   MODEL_PROMPT_TEMPLATE_TYPES,
   MODEL_REFERENCE_FILE_TYPES,
+  getTextReasoningCapability,
   parseVideoModeKey,
   serializeImageMode,
   serializeVideoMode,
@@ -131,10 +132,16 @@ export function normalizeRegisteredModel(model: RegisteredModel): RegisteredMode
   const base = assertModelBase(model);
 
   if (base.type === MODEL_CAPABILITIES.TEXT) {
+    const think = Boolean(model.think);
     return {
       ...base,
       type: MODEL_CAPABILITIES.TEXT,
-      think: Boolean(model.think),
+      think,
+      reasoning: getTextReasoningCapability({
+        modelName: base.modelName,
+        think,
+        reasoning: model.reasoning,
+      }),
     };
   }
 
@@ -174,6 +181,7 @@ export function vendorModelToRegisteredModel(model: VendorModelConfig): Register
       modelName: model.modelName,
       type: MODEL_CAPABILITIES.TEXT,
       think: model.think,
+      reasoning: model.reasoning,
     };
   }
 
@@ -217,7 +225,7 @@ export function registeredModelToVendorModel(model: RegisteredModel): VendorMode
   };
 
   if (normalized.type === MODEL_CAPABILITIES.TEXT) {
-    return { ...base, type: 'text', think: Boolean(normalized.think) };
+    return { ...base, type: 'text', think: Boolean(normalized.think), reasoning: normalized.reasoning };
   }
 
   if (normalized.type === MODEL_CAPABILITIES.IMAGE) {

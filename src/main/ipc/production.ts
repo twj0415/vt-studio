@@ -5,6 +5,7 @@ import type {
   ProductionBatchDeleteStoryboardsPayload,
   ProductionDerivedAssetDeletePayload,
   ProductionDerivedAssetSavePayload,
+  ProductionExtractResourcesPayload,
   ProductionGenerateDerivedAssetsPayload,
   ProductionGenerateStoryboardsPayload,
   ProductionGenerateVideoPayload,
@@ -32,6 +33,7 @@ import {
   deleteProductionStoryboards,
   deleteProductionVideo,
   deleteProductionVideoTrack,
+  extractProductionResources,
   generateProductionAgentDerivedAssetImages,
   generateProductionAgentStoryboardImages,
   generateProductionDerivedAssetImages,
@@ -63,6 +65,7 @@ function readObjectArg<T extends object>(value: unknown): T {
 export function registerProductionIpc(): void {
   handleIpc('production:workspace:get', (_event, payload) => getProductionWorkspace(readObjectArg<ProductionScriptPayload & { scriptId?: number | null }>(payload)));
   handleIpc('production:workspace:save', (_event, payload) => saveProductionWorkspace(readObjectArg<ProductionSaveWorkspacePayload>(payload)));
+  handleIpc('production:resources:extract', (_event, payload) => extractProductionResources(readObjectArg<ProductionExtractResourcesPayload>(payload)));
 
   handleIpc('production:agent:tools', () => getProductionAgentTools());
   handleIpc('production:agent:context', (_event, payload) => getProductionAgentContext(readObjectArg<ProductionScriptPayload>(payload)));

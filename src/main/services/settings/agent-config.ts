@@ -42,14 +42,14 @@ const AGENT_GROUPS: Record<TextAgentKey, AgentConfigGroup> = {
 };
 
 const AGENT_LABELS: Record<TextAgentKey, string> = {
-  scriptAgent: '剧本 Agent',
+  scriptAgent: '改编助手',
   productionAgent: '生产 Agent',
   universalAi: '通用 AI',
-  'scriptAgent:decisionAgent': '剧本决策',
-  'scriptAgent:supervisionAgent': '剧本监督',
-  'scriptAgent:storySkeletonAgent': '故事骨架',
-  'scriptAgent:adaptationStrategyAgent': '改编策略',
-  'scriptAgent:scriptAgent': '剧本写作',
+  'scriptAgent:decisionAgent': '改编决策',
+  'scriptAgent:supervisionAgent': '改编监督',
+  'scriptAgent:storySkeletonAgent': '故事大纲',
+  'scriptAgent:adaptationStrategyAgent': '改编方案',
+  'scriptAgent:scriptAgent': '成稿生成',
   'productionAgent:decisionAgent': '生产决策',
   'productionAgent:supervisionAgent': '生产监督',
   'productionAgent:deriveAssetsAgent': '资产衍生',

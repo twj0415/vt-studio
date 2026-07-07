@@ -67,8 +67,8 @@ assertIncludes('src/main/services/settings/model-config.ts', "if (model.type ===
 assertIncludes('src/main/services/settings/model-config.ts', "if (model.type === 'video')");
 assertIncludes('src/main/services/settings/model-config.ts', 'TTS 测试入口尚未接入');
 
-assertIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', 'formatTestResult');
-assertIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', 'result.filePath');
+assertIncludes('src/renderer/src/features/settings/components/ModelTestDialog.vue', 'resultText');
+assertIncludes('src/renderer/src/features/settings/components/ModelTestDialog.vue', 'result.filePath');
 assertIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', 'getCapabilityTestPrompt(summary.capability)');
 assertNotIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', '第一版先打通文本');
 assertNotIncludes('src/renderer/src/features/settings/components/ModelServiceConfig.vue', '媒体测试会在后续能力任务接入');

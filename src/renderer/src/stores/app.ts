@@ -1,13 +1,15 @@
 import { defineStore } from 'pinia';
 import { VT_STATUS } from '@shared/constants/status';
 import type { AppInfo } from '@shared/types/app';
+import type { ProjectSourceType, ProjectTemplateType } from '@shared/types/project';
 import type { ExternalLinkInfo } from '@shared/types/shell';
 import { rtFallback } from '@renderer/utils/i18n-text';
 
 interface CurrentProject {
   id: string;
   name: string;
-  sourceType: 'novel' | 'script';
+  templateType: ProjectTemplateType;
+  sourceType: ProjectSourceType;
 }
 
 interface AppState {

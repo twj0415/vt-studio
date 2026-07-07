@@ -4,26 +4,23 @@ import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { useAppStore } from '@renderer/stores/app';
 import { useVtRequest } from '@renderer/composables/useVtRequest';
+import { PROJECT_TEMPLATE_TYPES } from '@shared/constants/dictionaries';
 import type { ProjectFlowStatsResult } from '@shared/types/project';
 
 type FlowStatus = 'done' | 'pending' | 'blocked' | 'skipped' | 'running' | 'failed';
 type FlowStepKey =
   | 'setup'
-  | 'source'
-  | 'scriptAgent'
-  | 'script'
-  | 'extractAssets'
-  | 'assetImages'
-  | 'cornerScape'
-  | 'storyboard'
-  | 'imageReview'
+  | 'content'
+  | 'resources'
+  | 'directorPlan'
+  | 'storyboardTable'
+  | 'storyboardImage'
   | 'video'
   | 'export';
 
 interface FlowStepBase {
   key: FlowStepKey;
   routeName: string;
-  novelOnly?: boolean;
 }
 
 interface FlowStep extends FlowStepBase {
@@ -42,26 +39,23 @@ const statsRequest = useVtRequest({ loading, showError: false });
 
 const baseSteps: FlowStepBase[] = [
   { key: 'setup', routeName: 'projects' },
-  { key: 'source', routeName: 'novel', novelOnly: true },
-  { key: 'scriptAgent', routeName: 'script-agent', novelOnly: true },
-  { key: 'script', routeName: 'script' },
-  { key: 'extractAssets', routeName: 'script' },
-  { key: 'assetImages', routeName: 'assets' },
-  { key: 'cornerScape', routeName: 'corner-scape' },
-  { key: 'storyboard', routeName: 'production' },
-  { key: 'imageReview', routeName: 'production' },
+  { key: 'content', routeName: 'production' },
+  { key: 'resources', routeName: 'production' },
+  { key: 'directorPlan', routeName: 'production' },
+  { key: 'storyboardTable', routeName: 'production' },
+  { key: 'storyboardImage', routeName: 'production' },
   { key: 'video', routeName: 'production' },
-  { key: 'export', routeName: 'export' },
+  { key: 'export', routeName: 'production' },
 ];
 
 const currentProject = computed(() => appStore.currentProject);
 const currentProjectId = computed(() => Number(currentProject.value?.id ?? 0));
-const isNovelProject = computed(() => currentProject.value?.sourceType === 'novel');
 const stats = computed(() => flowStats.value ?? createEmptyStats(currentProjectId.value, currentProject.value?.sourceType ?? 'script'));
+const currentTemplateType = computed(() => currentProject.value?.templateType ?? PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA);
 
 const flowSteps = computed<FlowStep[]>(() =>
   baseSteps.map((step, index) => {
-    const disabled = Boolean(step.novelOnly && !isNovelProject.value);
+    const disabled = false;
     const status = resolveStepStatus(step.key, stats.value);
     return {
       ...step,
@@ -80,6 +74,7 @@ const failedTaskSummaries = computed(() => stats.value.failedTaskSummaries);
 function createEmptyStats(projectId: number, sourceType: ProjectFlowStatsResult['sourceType']): ProjectFlowStatsResult {
   return {
     projectId,
+    templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
     sourceType,
     sourceChapterCount: 0,
     sourceEventSucceededCount: 0,
@@ -116,53 +111,16 @@ function createEmptyStats(projectId: number, sourceType: ProjectFlowStatsResult[
   };
 }
 
-function isSourceReady(value: ProjectFlowStatsResult): boolean {
-  if (value.sourceType !== 'novel') {
-    return true;
-  }
-
-  return (
-    value.sourceChapterCount > 0 &&
-    value.sourceEventSucceededCount >= value.sourceChapterCount &&
-    value.sourceEventFailedCount === 0 &&
-    value.sourceEventRunningCount === 0 &&
-    value.sourceEventStaleCount === 0
-  );
-}
-
 function resolveStepStatus(key: FlowStepKey, value: ProjectFlowStatsResult): FlowStatus {
   if (key === 'setup') {
     return 'done';
   }
 
-  if (key === 'source') {
-    if (value.sourceChapterCount === 0) {
-      return 'pending';
-    }
-    if (value.sourceEventFailedCount > 0) {
-      return 'failed';
-    }
-    if (value.sourceEventRunningCount > 0) {
-      return 'running';
-    }
-    return isSourceReady(value) ? 'done' : 'pending';
+  if (key === 'content') {
+    return value.scriptCount > 0 ? 'done' : 'pending';
   }
 
-  if (key === 'scriptAgent') {
-    if (!isSourceReady(value)) {
-      return 'blocked';
-    }
-    return value.agentWorkspaceCount > 0 || value.scriptCount > 0 ? 'done' : 'pending';
-  }
-
-  if (key === 'script') {
-    if (value.scriptCount > 0) {
-      return 'done';
-    }
-    return value.sourceType === 'novel' && !isSourceReady(value) ? 'blocked' : 'pending';
-  }
-
-  if (key === 'extractAssets') {
+  if (key === 'resources') {
     if (value.scriptCount === 0) {
       return 'blocked';
     }
@@ -175,40 +133,21 @@ function resolveStepStatus(key: FlowStepKey, value: ProjectFlowStatsResult): Flo
     return value.scriptExtractSucceededCount > 0 || value.assetCount > 0 ? 'done' : 'pending';
   }
 
-  if (key === 'assetImages') {
-    if (value.assetCount === 0) {
-      return 'blocked';
-    }
-    if (value.assetImageFailedCount > 0) {
-      return 'failed';
-    }
-    if (value.assetImageRunningCount > 0) {
-      return 'running';
-    }
-    return value.visualAssetCount > 0 && value.assetImageReadyCount >= value.visualAssetCount ? 'done' : 'pending';
-  }
-
-  if (key === 'cornerScape') {
-    if (value.assetCount === 0) {
-      return 'blocked';
-    }
-    if (value.audioBindingFailedCount > 0) {
-      return 'failed';
-    }
-    if (value.audioBindingRunningCount > 0) {
-      return 'running';
-    }
-    return value.audioBindingReadyCount > 0 ? 'done' : 'pending';
-  }
-
-  if (key === 'storyboard') {
+  if (key === 'directorPlan') {
     if (value.scriptCount === 0) {
       return 'blocked';
     }
     return value.storyboardCount > 0 ? 'done' : 'pending';
   }
 
-  if (key === 'imageReview') {
+  if (key === 'storyboardTable') {
+    if (value.scriptCount === 0) {
+      return 'blocked';
+    }
+    return value.storyboardCount > 0 ? 'done' : 'pending';
+  }
+
+  if (key === 'storyboardImage') {
     if (value.storyboardCount === 0) {
       return 'blocked';
     }
@@ -359,7 +298,7 @@ watch(
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="project-overview-page">
     <section class="rounded-lg border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-5 shadow-sm">
       <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div class="min-w-0">
@@ -371,7 +310,7 @@ watch(
           <p class="m-0 text-xs font-medium uppercase text-[var(--vt-text-tertiary)]">{{ t('projectOverview.currentProject') }}</p>
           <strong class="mt-2 block truncate text-base text-[var(--vt-text-primary)]">{{ currentProject?.name ?? t('common.noProject') }}</strong>
           <p class="m-0 mt-2 text-sm text-[var(--vt-text-secondary)]">
-            {{ t('projectOverview.projectType', { type: t(`project.sourceType.${currentProject?.sourceType ?? 'script'}`) }) }}
+            {{ t('projectOverview.projectType', { type: t(`project.templateType.${currentTemplateType}`) }) }}
           </p>
           <t-button class="mt-3 w-full" size="small" theme="primary" variant="outline" :loading="loading" @click="loadFlowStats">
             {{ t('projectOverview.refreshStats') }}
@@ -476,7 +415,7 @@ watch(
           <div class="rounded-md bg-[var(--vt-surface-app)] p-3">
             <dt class="text-xs font-medium text-[var(--vt-text-tertiary)]">{{ t('projectOverview.blockerLabel') }}</dt>
             <dd class="m-0 mt-1 text-sm text-[var(--vt-text-primary)]">
-              {{ step.disabled ? t('projectOverview.skippedForScriptProject') : t(`projectOverview.step.${step.key}.blocker`, metricParams(step.key)) }}
+              {{ t(`projectOverview.step.${step.key}.blocker`, metricParams(step.key)) }}
             </dd>
           </div>
         </dl>

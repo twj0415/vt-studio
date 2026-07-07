@@ -42,9 +42,12 @@ notIncludes(scaffold, `待建任务`, scaffoldFile);
 const settingsFile = 'src/renderer/src/features/settings/SettingsHome.vue';
 const settings = read(settingsFile);
 includes(settings, `settingsQuickGroups`, settingsFile);
-includes(settings, `settings-anchor-section`, settingsFile);
-includes(settings, `t('settings.guide.title')`, settingsFile);
+includes(settings, `settings-list-section`, settingsFile);
+includes(settings, `settings-row`, settingsFile);
+includes(settings, `activeCategoryKey`, settingsFile);
+includes(settings, `selectCategory`, settingsFile);
 notIncludes(settings, `基础入口`, settingsFile);
+notIncludes(settings, `settings-panel-toggle`, settingsFile);
 
 const exportFile = 'src/renderer/src/features/export/ExportHome.vue';
 const exportHome = read(exportFile);

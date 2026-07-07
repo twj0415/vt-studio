@@ -1,17 +1,17 @@
 ---
 name: script_agent_execution
-description: 剧本 Agent 执行层总索引，负责把故事骨架、改编策略、剧本生成三个子执行技能串起来。
+description: 改编助手执行层总索引，负责把故事大纲、改编方案、成稿生成三个执行技能串起来。
 ---
 
-# 剧本 Agent 执行层
+# 改编助手执行层
 
-这是剧本 Agent 的执行层入口索引。
+这是改编助手的执行层入口索引。
 
 参考项目真实执行时按阶段拆分到以下文件：
 
-- `script_execution_skeleton.md`：生成故事骨架。
-- `script_execution_adaptation.md`：生成改编策略。
-- `script_execution_script.md`：生成正式剧本。
+- `script_execution_skeleton.md`：生成故事大纲。
+- `script_execution_adaptation.md`：生成改编方案。
+- `script_execution_script.md`：生成待确认成稿。
 
 ## 使用规则
 
@@ -25,6 +25,6 @@ description: 剧本 Agent 执行层总索引，负责把故事骨架、改编策
 
 | 用户目标 | 执行技能 |
 | --- | --- |
-| 故事骨架、分集、三幕结构 | `script_execution_skeleton.md` |
-| 改编策略、删减、世界观呈现 | `script_execution_adaptation.md` |
-| 剧本编写、分镜脚本、对白 | `script_execution_script.md` |
+| 故事大纲、分集、三幕结构 | `script_execution_skeleton.md` |
+| 改编方案、删减、世界观呈现 | `script_execution_adaptation.md` |
+| 成稿编写、分镜脚本、对白 | `script_execution_script.md` |

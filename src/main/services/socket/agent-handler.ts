@@ -101,6 +101,21 @@ function isScriptAgentSubAgentTool(toolName: string): boolean {
   return toolName === 'run_supervision_agent' || toolName.startsWith('run_sub_agent_');
 }
 
+function getToolDisplayName(toolName: string): string {
+  const toolNames: Record<string, string> = {
+    get_novel_events: '读取章节事件',
+    get_novel_text: '读取原文',
+    get_planData: '读取改编草稿',
+    get_script_content: '读取成稿',
+    run_sub_agent_storySkeleton: '故事大纲生成',
+    run_sub_agent_adaptationStrategy: '改编方案生成',
+    run_sub_agent_script: '成稿生成',
+    run_supervision_agent: '监督审核',
+  };
+
+  return toolNames[toolName] ?? toolName;
+}
+
 function sanitizeToolDisplayResult(toolName: string, value: unknown): unknown {
   if (!isScriptAgentSubAgentTool(toolName) || !value || typeof value !== 'object') {
     return value;
@@ -114,7 +129,7 @@ function sanitizeToolDisplayResult(toolName: string, value: unknown): unknown {
   };
   const visibleOutput =
     typeof result.output === 'string'
-      ? stripScriptAgentXmlForDisplay(result.output) || (result.ok === false ? result.output : '结构化输出已由子 Agent 过程块展示')
+      ? stripScriptAgentXmlForDisplay(result.output) || (result.ok === false ? result.output : '结构化输出已在过程块展示')
       : result.output;
 
   return {
@@ -146,7 +161,7 @@ function emitToolStepContent(
     const toolResult = (stepResult.toolResults ?? []).find((item) => item.toolCallId === toolCall.toolCallId);
     const output = toolResult?.output ?? toolResult?.result;
     const displayOutput = sanitizeToolDisplayResult(toolCall.toolName, output);
-    const content = [`tool: ${toolCall.toolName}`, `args: ${stringifyToolPayload(toolCall.input)}`, `result: ${stringifyToolPayload(displayOutput)}`].join('\n');
+    const content = [`工具：${getToolDisplayName(toolCall.toolName)}`, `参数：${stringifyToolPayload(toolCall.input)}`, `结果：${stringifyToolPayload(displayOutput)}`].join('\n');
 
     emitContentBlock(
       socket,
@@ -187,7 +202,7 @@ function emitSubAgentContent(
       id: `${messageId}:subagent:${update.toolCallId}`,
       messageId,
       type: 'toolcall',
-      content: [`subAgent: ${update.title}`, visibleContent || fallbackContent].join('\n'),
+      content: [`步骤：${update.title}`, visibleContent || fallbackContent].join('\n'),
       status: update.status,
       toolcall: {
         name: update.toolName,
@@ -209,13 +224,13 @@ function updateAgentTask(taskId: number | null, action: 'succeed' | 'fail' | 'ca
       return;
     }
     if (action === 'cancel') {
-      cancelTask(taskId, '剧本 Agent 生成已停止');
+      cancelTask(taskId, '改编助手生成已停止');
       return;
     }
-    failTask(taskId, error ?? '剧本 Agent 生成失败');
+    failTask(taskId, error ?? '改编助手生成失败');
   } catch (taskError) {
-    logger.warn('任务中心', '剧本 Agent 任务状态更新失败，已跳过');
-    logger.detail('任务中心', '剧本 Agent 任务状态更新失败详情', normalizeUnknownError(taskError));
+    logger.warn('任务中心', '改编助手任务状态更新失败，已跳过');
+    logger.detail('任务中心', '改编助手任务状态更新失败详情', normalizeUnknownError(taskError));
   }
 }
 
@@ -333,7 +348,7 @@ async function consumeModelStream(
     if (namespace === 'scriptAgent' && projectId) {
       const task = createTask({
         projectId,
-        category: '剧本 Agent',
+        category: '改编助手',
         relatedObjects: { projectId, messageId, action: 'chat' },
         modelName: 'scriptAgent:decisionAgent',
         description: content.slice(0, 200),
@@ -471,7 +486,7 @@ async function consumeModelStream(
       }
 
       const memoryContent = namespace === 'scriptAgent' ? stripScriptAgentXmlForDisplay(markdownContent) : markdownContent;
-      await persistSocketMemory(socket, namespace, 'assistant', memoryContent, namespace === 'scriptAgent' ? '剧本 Agent' : '生产 Agent');
+      await persistSocketMemory(socket, namespace, 'assistant', memoryContent, namespace === 'scriptAgent' ? '改编助手' : '生产 Agent');
     }
     if (namespace === 'scriptAgent') {
       updateAgentTask(taskId, finalStatus === 'stop' ? 'cancel' : completionError ? 'fail' : 'succeed', completionError ?? undefined);

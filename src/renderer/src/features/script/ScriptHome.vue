@@ -3,9 +3,13 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AddIcon, DeleteIcon, DownloadIcon, EditIcon, PlayCircleIcon, RefreshIcon, SearchIcon, UploadIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
+import VtButton from '@renderer/components/VtButton.vue';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import VtFilePicker from '@renderer/components/VtFilePicker.vue';
 import WorkflowNextStepHint from '@renderer/features/shared/WorkflowNextStepHint.vue';
 import { useAppStore } from '@renderer/stores/app';
+import { readDocxText } from '@renderer/utils/docx-text';
 import { SCRIPT_EXTRACT_STATUS, type ScriptExtractStatus } from '@shared/types/script-agent';
 import type { ScriptAssetItem, ScriptItem } from '@shared/types/script';
 
@@ -18,9 +22,6 @@ interface DraftScript {
 const DEFAULT_SCRIPT_REG = '/第\\s*([0-9０-９零一二三四五六七八九十百千万]+)\\s*集\\s*([^\\n\\r]*)/g';
 const MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024;
 const POLL_INTERVAL = 3000;
-const ZIP_LOCAL_FILE_HEADER = 0x04034b50;
-const ZIP_CENTRAL_DIRECTORY_HEADER = 0x02014b50;
-const ZIP_END_OF_CENTRAL_DIRECTORY = 0x06054b50;
 
 const { t } = useI18n();
 const appStore = useAppStore();
@@ -250,88 +251,6 @@ function openEditDialog(script: ScriptItem): void {
   saveVisible.value = true;
 }
 
-function findZipEndOfCentralDirectory(view: DataView): number {
-  const minOffset = Math.max(0, view.byteLength - 65557);
-  for (let offset = view.byteLength - 22; offset >= minOffset; offset -= 1) {
-    if (view.getUint32(offset, true) === ZIP_END_OF_CENTRAL_DIRECTORY) {
-      return offset;
-    }
-  }
-
-  throw new Error(t('script.import.docxParseFailed'));
-}
-
-async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
-  if (typeof DecompressionStream === 'undefined') {
-    throw new Error(t('script.import.docxParseFailed'));
-  }
-
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  const buffer = await new Response(stream).arrayBuffer();
-  return new Uint8Array(buffer);
-}
-
-async function extractZipEntry(buffer: ArrayBuffer, entryName: string): Promise<string> {
-  const view = new DataView(buffer);
-  const decoder = new TextDecoder('utf-8');
-  const eocdOffset = findZipEndOfCentralDirectory(view);
-  const entryCount = view.getUint16(eocdOffset + 10, true);
-  let offset = view.getUint32(eocdOffset + 16, true);
-
-  for (let index = 0; index < entryCount; index += 1) {
-    if (view.getUint32(offset, true) !== ZIP_CENTRAL_DIRECTORY_HEADER) {
-      throw new Error(t('script.import.docxParseFailed'));
-    }
-
-    const method = view.getUint16(offset + 10, true);
-    const compressedSize = view.getUint32(offset + 20, true);
-    const fileNameLength = view.getUint16(offset + 28, true);
-    const extraLength = view.getUint16(offset + 30, true);
-    const commentLength = view.getUint16(offset + 32, true);
-    const localHeaderOffset = view.getUint32(offset + 42, true);
-    const fileNameBytes = new Uint8Array(buffer, offset + 46, fileNameLength);
-    const fileName = decoder.decode(fileNameBytes);
-
-    if (fileName === entryName) {
-      if (view.getUint32(localHeaderOffset, true) !== ZIP_LOCAL_FILE_HEADER) {
-        throw new Error(t('script.import.docxParseFailed'));
-      }
-
-      const localNameLength = view.getUint16(localHeaderOffset + 26, true);
-      const localExtraLength = view.getUint16(localHeaderOffset + 28, true);
-      const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
-      const compressed = new Uint8Array(buffer, dataStart, compressedSize);
-      const content = method === 0 ? compressed : method === 8 ? await inflateRaw(compressed) : null;
-      if (!content) {
-        throw new Error(t('script.import.docxParseFailed'));
-      }
-
-      return decoder.decode(content);
-    }
-
-    offset += 46 + fileNameLength + extraLength + commentLength;
-  }
-
-  throw new Error(t('script.import.docxParseFailed'));
-}
-
-function docxXmlToText(xml: string): string {
-  const documentXml = new DOMParser().parseFromString(xml, 'application/xml');
-  const paragraphs = Array.from(documentXml.getElementsByTagName('w:p'));
-  const lines = paragraphs.map((paragraph) => Array.from(paragraph.getElementsByTagName('w:t')).map((node) => node.textContent ?? '').join('')).filter((line) => line.trim());
-  return lines.join('\n');
-}
-
-async function readDocxFile(file: File): Promise<string> {
-  const xml = await extractZipEntry(await file.arrayBuffer(), 'word/document.xml');
-  const text = docxXmlToText(xml);
-  if (!text.trim()) {
-    throw new Error(t('script.import.docxParseFailed'));
-  }
-
-  return text;
-}
-
 async function readScriptFile(file: File): Promise<string> {
   const lowerName = file.name.toLowerCase();
   if (file.size > MAX_IMPORT_FILE_SIZE) {
@@ -341,7 +260,7 @@ async function readScriptFile(file: File): Promise<string> {
     throw new Error(t('script.import.docUnsupported'));
   }
   if (lowerName.endsWith('.docx')) {
-    return readDocxFile(file);
+    return readDocxText(file, t('script.import.docxParseFailed'));
   }
   if (file.type !== 'text/plain' && !lowerName.endsWith('.txt')) {
     throw new Error(t('script.import.unsupportedFile'));
@@ -744,18 +663,18 @@ onUnmounted(() => {
         <p>{{ t('script.summary') }}</p>
       </div>
       <div class="script-page-actions">
-        <t-button variant="outline" :loading="refreshing" @click="refreshScripts">
+        <VtButton variant="outline" :loading="refreshing" @click="refreshScripts">
           <template #icon><RefreshIcon /></template>
           {{ t('script.refresh') }}
-        </t-button>
-        <t-button variant="outline" @click="openBatchDialog">
+        </VtButton>
+        <VtButton variant="outline" @click="openBatchDialog">
           <template #icon><UploadIcon /></template>
           {{ t('script.import.open') }}
-        </t-button>
-        <t-button theme="primary" @click="openCreateDialog">
+        </VtButton>
+        <VtButton theme="primary" variant="base" @click="openCreateDialog">
           <template #icon><AddIcon /></template>
           {{ t('script.form.create') }}
-        </t-button>
+        </VtButton>
       </div>
     </section>
 
@@ -786,10 +705,10 @@ onUnmounted(() => {
         <t-input v-model="filters.keyword" :placeholder="t('script.filters.namePlaceholder')" clearable @enter="searchScripts" />
       </label>
       <div class="script-toolbar-actions">
-        <t-button variant="outline" @click="searchScripts">
+        <VtButton variant="outline" @click="searchScripts">
           <template #icon><SearchIcon /></template>
           {{ t('script.search') }}
-        </t-button>
+        </VtButton>
       </div>
     </section>
 
@@ -799,21 +718,21 @@ onUnmounted(() => {
         <span>{{ t('script.selection.hint') }}</span>
       </div>
       <div class="script-toolbar-actions">
-        <t-button v-if="selectedScriptIds.length > 0" variant="text" @click="clearScriptSelection">
+        <VtButton v-if="selectedScriptIds.length > 0" variant="text" @click="clearScriptSelection">
           {{ t('script.selection.clear') }}
-        </t-button>
-        <t-button variant="outline" :disabled="selectedScriptIds.length === 0" @click="exportZip">
+        </VtButton>
+        <VtButton variant="outline" :disabled="selectedScriptIds.length === 0" @click="exportZip">
           <template #icon><DownloadIcon /></template>
           {{ t('script.export.action') }}
-        </t-button>
-        <t-button variant="outline" :disabled="selectedScriptIds.length === 0" @click="confirmBatchDelete">
+        </VtButton>
+        <VtButton variant="outline" :disabled="selectedScriptIds.length === 0" @click="confirmBatchDelete">
           <template #icon><DeleteIcon /></template>
           {{ t('script.delete.batch') }}
-        </t-button>
-        <t-button theme="primary" :disabled="selectedScriptIds.length === 0" @click="extractAssets">
+        </VtButton>
+        <VtButton theme="primary" variant="base" :disabled="selectedScriptIds.length === 0" @click="extractAssets">
           <template #icon><PlayCircleIcon /></template>
           {{ t('script.extract.action') }}
-        </t-button>
+        </VtButton>
       </div>
     </section>
 
@@ -856,22 +775,22 @@ onUnmounted(() => {
               {{ previewText(script.errorReason, 100) }}
             </button>
             <div class="script-result-actions" @click.stop>
-              <t-button size="small" variant="outline" :disabled="isExtractLocked(script.extractStatus)" @click="openEditDialog(script)">
+              <VtButton size="small" variant="outline" :disabled="isExtractLocked(script.extractStatus)" @click="openEditDialog(script)">
                 <template #icon><EditIcon /></template>
                 {{ t('script.form.edit') }}
-              </t-button>
-              <t-button size="small" variant="outline" :disabled="isExtractLocked(script.extractStatus)" @click="confirmDeleteScript(script)">
+              </VtButton>
+              <VtButton size="small" variant="outline" :disabled="isExtractLocked(script.extractStatus)" @click="confirmDeleteScript(script)">
                 <template #icon><DeleteIcon /></template>
                 {{ t('script.delete.action') }}
-              </t-button>
+              </VtButton>
             </div>
           </article>
         </div>
-        <t-empty v-if="!loading && scripts.length === 0" :description="currentProjectId ? t('script.empty') : t('script.noProject')">
+        <VtEmptyState v-if="!loading && scripts.length === 0" :description="currentProjectId ? t('script.empty') : t('script.noProject')">
           <template v-if="currentProjectId" #action>
-            <t-button theme="primary" @click="openCreateDialog">{{ t('script.form.create') }}</t-button>
+            <VtButton theme="primary" variant="base" @click="openCreateDialog">{{ t('script.form.create') }}</VtButton>
           </template>
-        </t-empty>
+        </VtEmptyState>
       </t-loading>
     </section>
 
@@ -927,7 +846,7 @@ onUnmounted(() => {
           </div>
           <div class="script-regex-row">
             <t-input v-model="batchRegex" :placeholder="t('script.import.regexPlaceholder')" :status="batchRegexError ? 'error' : 'default'" />
-            <t-button variant="outline" :loading="aiRegexLoading" @click="generateParseRegex">{{ t('script.import.aiRegex') }}</t-button>
+            <VtButton variant="outline" :loading="aiRegexLoading" @click="generateParseRegex">{{ t('script.import.aiRegex') }}</VtButton>
           </div>
           <t-textarea v-model="batchText" :placeholder="t('script.import.placeholder')" :autosize="{ minRows: 12, maxRows: 18 }" />
           <div class="script-form-meta" :class="{ 'is-danger': Boolean(batchRegexError) }">
@@ -936,8 +855,8 @@ onUnmounted(() => {
             <span v-if="batchRegexError">{{ batchRegexError }}</span>
           </div>
           <div class="script-dialog-footer">
-            <t-button variant="outline" @click="batchVisible = false">{{ t('script.cancel') }}</t-button>
-            <t-button theme="primary" :disabled="draftScripts.length === 0" @click="goBatchPreview">{{ t('script.import.next') }}</t-button>
+            <VtButton variant="outline" @click="batchVisible = false">{{ t('script.cancel') }}</VtButton>
+            <VtButton theme="primary" variant="base" :disabled="draftScripts.length === 0" @click="goBatchPreview">{{ t('script.import.next') }}</VtButton>
           </div>
         </div>
 
@@ -947,7 +866,7 @@ onUnmounted(() => {
               <strong>{{ t('script.import.previewTitle') }}</strong>
               <p>{{ t('script.import.selectedInfo', { count: selectedDraftIds.length, chars: selectedDraftChars }) }}</p>
             </div>
-            <t-button variant="outline" @click="toggleAllDrafts">{{ selectedDraftIds.length === draftScripts.length ? t('script.import.unselectAll') : t('script.import.selectAll') }}</t-button>
+            <VtButton variant="outline" @click="toggleAllDrafts">{{ selectedDraftIds.length === draftScripts.length ? t('script.import.unselectAll') : t('script.import.selectAll') }}</VtButton>
           </div>
           <div class="script-draft-list">
             <div v-for="script in draftScripts" :key="script.tempId" class="script-draft-item" :class="{ selected: selectedDraftIds.includes(script.tempId), over: script.content.length > scriptEpisodeLength }" role="button" tabindex="0" @click="toggleDraftSelection(script.tempId)" @keydown.enter.prevent="toggleDraftSelection(script.tempId)" @keydown.space.prevent="toggleDraftSelection(script.tempId)">
@@ -960,15 +879,15 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="script-dialog-footer">
-            <t-button variant="outline" @click="batchStep = 'input'">{{ t('script.import.back') }}</t-button>
-            <t-button theme="primary" :loading="batchSaving" :disabled="selectedDraftIds.length === 0 || batchContentOverLimit" @click="saveBatchScripts">{{ t('script.import.save') }}</t-button>
+            <VtButton variant="outline" @click="batchStep = 'input'">{{ t('script.import.back') }}</VtButton>
+            <VtButton theme="primary" variant="base" :loading="batchSaving" :disabled="selectedDraftIds.length === 0 || batchContentOverLimit" @click="saveBatchScripts">{{ t('script.import.save') }}</VtButton>
           </div>
         </div>
       </div>
     </t-dialog>
 
-    <t-dialog :visible="detailVisible" :header="detailTitle" width="780px" :footer="false" @update:visible="(value) => (detailVisible = value)">
+    <VtDialog :visible="detailVisible" :title="detailTitle" width="780px" :footer="false" @update:visible="(value) => (detailVisible = value)">
       <pre class="script-detail-content">{{ detailContent }}</pre>
-    </t-dialog>
+    </VtDialog>
   </div>
 </template>

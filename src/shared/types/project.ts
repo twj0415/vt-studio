@@ -2,6 +2,7 @@ import type {
   ProjectImageQuality,
   ProjectManualKind,
   ProjectSourceType,
+  ProjectTemplateType,
   ProjectVideoRatio,
 } from '../constants/dictionaries';
 import type { BusinessLockSummary } from './business-lock';
@@ -13,6 +14,8 @@ export {
   PROJECT_MANUAL_KIND_VALUES,
   PROJECT_SOURCE_TYPES,
   PROJECT_SOURCE_TYPE_VALUES,
+  PROJECT_TEMPLATE_TYPES,
+  PROJECT_TEMPLATE_TYPE_VALUES,
   PROJECT_VIDEO_RATIOS,
   PROJECT_VIDEO_RATIO_VALUES,
 } from '../constants/dictionaries';
@@ -20,6 +23,7 @@ export type {
   ProjectImageQuality,
   ProjectManualKind,
   ProjectSourceType,
+  ProjectTemplateType,
   ProjectVideoRatio,
 } from '../constants/dictionaries';
 
@@ -62,6 +66,7 @@ export interface ProjectManualDetail extends ProjectManualSummary {
 
 export interface ProjectSummary {
   id: number;
+  templateType: ProjectTemplateType;
   sourceType: ProjectSourceType;
   name: string;
   genre: string;
@@ -95,6 +100,7 @@ export interface ProjectPageStateResult {
 
 export interface ProjectSavePayload {
   id?: number;
+  templateType: ProjectTemplateType;
   sourceType: ProjectSourceType;
   name: string;
   genre: string;
@@ -149,12 +155,13 @@ export interface ProjectOpenPayload {
 export interface ProjectCurrentContext {
   id: string;
   name: string;
+  templateType: ProjectTemplateType;
   sourceType: ProjectSourceType;
 }
 
 export interface ProjectOpenResult {
   project: ProjectCurrentContext;
-  targetRoute: 'project-overview' | 'novel' | 'script';
+  targetRoute: ProjectRouteName;
 }
 
 export type ProjectRouteName =
@@ -214,6 +221,7 @@ export interface ProjectFlowFailedTaskSummary {
 
 export interface ProjectFlowStatsResult {
   projectId: number;
+  templateType: ProjectTemplateType;
   sourceType: ProjectSourceType;
   sourceChapterCount: number;
   sourceEventSucceededCount: number;

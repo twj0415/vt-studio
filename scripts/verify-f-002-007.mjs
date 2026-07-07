@@ -35,7 +35,7 @@ const staticChecks = [
   ['src/preload/index.ts', 'settings:skill:save-content'],
   ['src/preload/index.ts', 'settings:skill:rebuild-embeddings'],
   ['src/shared/contracts/preload.ts', 'skill: {'],
-  ['src/renderer/src/features/settings/SettingsHome.vue', '<SkillManagement'],
+  ['src/renderer/src/features/resource-library/ResourceLibraryHome.vue', '<SkillManagement'],
   ['src/renderer/src/features/settings/components/SkillManagement.vue', 'settings.skillManagement.riskDialog.title'],
   ['src/renderer/src/features/settings/components/SkillManagement.vue', 'settings.skillManagement.rebuildAll'],
   ['src/renderer/src/i18n/messages.ts', 'rebuildDone'],

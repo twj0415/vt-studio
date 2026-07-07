@@ -21,7 +21,7 @@ const staticChecks = [
   ['src/preload/index.ts', 'settings:model-prompt:get'],
   ['src/main/ipc/settings.ts', 'settings:model-prompt:bind'],
   ['src/main/services/settings/model-prompt.ts', '模板类型和模型类型不匹配'],
-  ['src/renderer/src/features/settings/SettingsHome.vue', '<ModelPromptConfig'],
+  ['src/renderer/src/features/resource-library/ResourceLibraryHome.vue', '<ModelPromptConfig'],
   ['src/renderer/src/features/settings/components/ModelPromptConfig.vue', 'settings.modelPromptConfig.title'],
 ];
 

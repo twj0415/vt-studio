@@ -15,6 +15,7 @@ import type {
   ApiConnectionDeletePayload,
   ApiConnectionSavePayload,
   ApiConnectionTestPayload,
+  ModelTestFilePayload,
   ResourceBindingSavePayload,
   ResourceTestPayload,
 } from '@shared/types/model-config';
@@ -84,6 +85,10 @@ import {
   testResourceBinding,
 } from '../services/settings/model-config';
 import {
+  openModelTestFileLocation,
+  saveModelTestFileAs,
+} from '../services/settings/model-test-files';
+import {
   bindModelPromptTemplate,
   clearModelPromptBinding,
   deleteModelPromptTemplate,
@@ -134,6 +139,8 @@ export function registerSettingsIpc(): void {
   handleIpc('settings:api:save', (_event, payload) => saveApiConnection(readObjectArg<ApiConnectionSavePayload>(payload)));
   handleIpc('settings:api:delete', (_event, payload) => deleteApiConnection(readObjectArg<ApiConnectionDeletePayload>(payload)));
   handleIpc('settings:api:test', (_event, payload) => testApiConnection(readObjectArg<ApiConnectionTestPayload>(payload)));
+  handleIpc('settings:model-test:open-file-location', (_event, payload) => openModelTestFileLocation(readObjectArg<ModelTestFilePayload>(payload)));
+  handleIpc('settings:model-test:save-file-as', (_event, payload) => saveModelTestFileAs(readObjectArg<ModelTestFilePayload>(payload)));
   handleIpc('settings:resource:get', () => getResourceConfig());
   handleIpc('settings:resource:save-binding', (_event, payload) => saveResourceBinding(readObjectArg<ResourceBindingSavePayload>(payload)));
   handleIpc('settings:resource:test', (_event, payload) => testResourceBinding(readObjectArg<ResourceTestPayload>(payload)));

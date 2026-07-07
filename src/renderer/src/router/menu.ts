@@ -1,36 +1,70 @@
 import type { MenuModule } from '@shared/types/app';
+import type { ProjectRouteName } from '@shared/types/project';
 
 export const globalMenus: MenuModule[] = [
   {
     id: 'M-003',
     titleKey: 'route.projects',
+    shortTitleKey: 'routeShort.projects',
     routeName: 'projects',
     scope: 'global',
     descriptionKey: 'routeDescription.projects',
     status: 'planned',
   },
   {
+    id: 'M-014',
+    titleKey: 'route.aiToolLibrary',
+    shortTitleKey: 'routeShort.aiToolLibrary',
+    routeName: 'ai-tool-library',
+    scope: 'global',
+    descriptionKey: 'routeDescription.aiToolLibrary',
+    status: 'planned',
+  },
+  {
+    id: 'M-013',
+    titleKey: 'route.resourceLibrary',
+    shortTitleKey: 'routeShort.resourceLibrary',
+    routeName: 'resource-library',
+    scope: 'global',
+    descriptionKey: 'routeDescription.resourceLibrary',
+    status: 'planned',
+  },
+  {
     id: 'M-009',
     titleKey: 'route.tasks',
+    shortTitleKey: 'routeShort.tasks',
     routeName: 'tasks',
     scope: 'global',
     descriptionKey: 'routeDescription.tasks',
     status: 'planned',
   },
+  {
+    id: 'M-002',
+    titleKey: 'route.settings',
+    shortTitleKey: 'routeShort.settings',
+    routeName: 'settings',
+    scope: 'global',
+    descriptionKey: 'routeDescription.settings',
+    status: 'planned',
+  },
+];
+
+export const projectWorkspaceRouteNames: readonly ProjectRouteName[] = [
+  'project-overview',
+  'novel',
+  'script-agent',
+  'script',
+  'assets',
+  'corner-scape',
+  'production',
+  'export',
 ];
 
 const projectMenuItems: MenuModule[] = [
   {
-    id: 'M-012',
-    titleKey: 'route.projectOverview',
-    routeName: 'project-overview',
-    scope: 'project',
-    descriptionKey: 'routeDescription.projectOverview',
-    status: 'planned',
-  },
-  {
     id: 'M-004',
     titleKey: 'route.novel',
+    shortTitleKey: 'routeShort.novel',
     routeName: 'novel',
     scope: 'project',
     descriptionKey: 'routeDescription.novel',
@@ -40,6 +74,7 @@ const projectMenuItems: MenuModule[] = [
   {
     id: 'M-011',
     titleKey: 'route.script-agent',
+    shortTitleKey: 'routeShort.script-agent',
     routeName: 'script-agent',
     scope: 'project',
     descriptionKey: 'routeDescription.script-agent',
@@ -49,6 +84,7 @@ const projectMenuItems: MenuModule[] = [
   {
     id: 'M-005',
     titleKey: 'route.script',
+    shortTitleKey: 'routeShort.script',
     routeName: 'script',
     scope: 'project',
     descriptionKey: 'routeDescription.script',
@@ -57,6 +93,7 @@ const projectMenuItems: MenuModule[] = [
   {
     id: 'M-006',
     titleKey: 'route.assets',
+    shortTitleKey: 'routeShort.assets',
     routeName: 'assets',
     scope: 'project',
     descriptionKey: 'routeDescription.assets',
@@ -65,6 +102,7 @@ const projectMenuItems: MenuModule[] = [
   {
     id: 'M-007',
     titleKey: 'route.corner-scape',
+    shortTitleKey: 'routeShort.corner-scape',
     routeName: 'corner-scape',
     scope: 'project',
     descriptionKey: 'routeDescription.corner-scape',
@@ -73,6 +111,7 @@ const projectMenuItems: MenuModule[] = [
   {
     id: 'M-008',
     titleKey: 'route.production',
+    shortTitleKey: 'routeShort.production',
     routeName: 'production',
     scope: 'project',
     descriptionKey: 'routeDescription.production',
@@ -81,6 +120,7 @@ const projectMenuItems: MenuModule[] = [
   {
     id: 'M-010',
     titleKey: 'route.export',
+    shortTitleKey: 'routeShort.export',
     routeName: 'export',
     scope: 'project',
     descriptionKey: 'routeDescription.export',
