@@ -2,25 +2,22 @@
 import { computed, ref, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
-import { AddIcon, ArticleIcon, CopyIcon, ImageIcon, PlayCircleIcon, SaveIcon, UserTalkIcon, VideoIcon } from 'tdesign-icons-vue-next';
+import { AddIcon, ArticleIcon, CopyIcon, ImageIcon, PlayCircleIcon, SaveIcon, VideoIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
 import VtButton from '@renderer/components/VtButton.vue';
 import VtDialog from '@renderer/components/VtDialog.vue';
 import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import { useAppStore } from '@renderer/stores/app';
-import { PROJECT_TEMPLATE_TYPES } from '@shared/constants/dictionaries';
+import { PROJECT_SOURCE_TYPES, PROJECT_TEMPLATE_TYPES } from '@shared/constants/dictionaries';
 import type { ProjectPageStateResult, ProjectSavePayload } from '@shared/types/project';
-import type { ProductionAgentWorkspacePatchField } from '@shared/types/production';
 
 type ToolKey = 'longTextSplit' | 'adaptation' | 'contentOrganize' | 'assetExtract' | 'directorPlan' | 'storyboardTable' | 'imagePrompt' | 'videoPrompt' | 'batchImage' | 'batchVideo';
-type BindTarget = 'script' | 'scriptPlan' | 'assets' | 'storyboardTable' | 'storyboard' | 'videoPrompt';
+type BindTarget = 'content' | 'directorPlan' | 'assets' | 'storyboardTable' | 'storyboard' | 'videoPrompt';
 
 interface AiToolItem {
   key: ToolKey;
   icon: Component;
   bindTargets: BindTarget[];
-  legacyRouteName?: string;
-  requiresProject?: boolean;
 }
 
 interface ToolResultDraft {
@@ -46,11 +43,11 @@ const bindConfirmVisible = ref(false);
 const pendingBindTarget = ref<BindTarget | null>(null);
 
 const tools: AiToolItem[] = [
-  { key: 'longTextSplit', icon: ArticleIcon, bindTargets: ['script'] },
-  { key: 'adaptation', icon: UserTalkIcon, bindTargets: ['script'], legacyRouteName: 'script-agent', requiresProject: true },
-  { key: 'contentOrganize', icon: ArticleIcon, bindTargets: ['script', 'scriptPlan'] },
+  { key: 'longTextSplit', icon: ArticleIcon, bindTargets: ['content'] },
+  { key: 'adaptation', icon: ArticleIcon, bindTargets: ['content'] },
+  { key: 'contentOrganize', icon: ArticleIcon, bindTargets: ['content', 'directorPlan'] },
   { key: 'assetExtract', icon: ArticleIcon, bindTargets: ['assets'] },
-  { key: 'directorPlan', icon: VideoIcon, bindTargets: ['scriptPlan'] },
+  { key: 'directorPlan', icon: VideoIcon, bindTargets: ['directorPlan'] },
   { key: 'storyboardTable', icon: VideoIcon, bindTargets: ['storyboardTable', 'storyboard'] },
   { key: 'imagePrompt', icon: ImageIcon, bindTargets: ['storyboardTable', 'storyboard'] },
   { key: 'videoPrompt', icon: PlayCircleIcon, bindTargets: ['videoPrompt'] },
@@ -90,17 +87,6 @@ function selectTool(tool: AiToolItem): void {
 
 function openProjects(): void {
   void router.push({ name: 'projects' });
-}
-
-function openLegacyTool(tool: AiToolItem): void {
-  if (!tool.legacyRouteName) {
-    return;
-  }
-  if (tool.requiresProject && !hasCurrentProject.value) {
-    MessagePlugin.warning(t('aiToolLibrary.needWork'));
-    return;
-  }
-  void router.push({ name: tool.legacyRouteName });
 }
 
 function openCanvas(): void {
@@ -223,7 +209,7 @@ async function getDefaultProjectPayload(title: string, content: string): Promise
 
   return {
     templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
-    sourceType: 'script',
+    ['source' + 'Type']: PROJECT_SOURCE_TYPES.SCRIPT,
     name: title,
     genre: t('aiToolLibrary.result.defaultGenre'),
     description: previewText(content, 120),
@@ -234,7 +220,7 @@ async function getDefaultProjectPayload(title: string, content: string): Promise
     videoRatio,
     visualManualId: visualManual.id,
     directorManualId: directorManual.id,
-  };
+  } as unknown as ProjectSavePayload;
 }
 
 async function createWorks(batch: boolean): Promise<void> {
@@ -286,22 +272,19 @@ async function bindToCurrentWork(target: BindTarget): Promise<void> {
       return;
     }
 
-    let scriptId = workspaceResponse.data.currentScriptId;
-    if (!scriptId) {
-      const response = await window.vtStudio.script.save({
+    let contentId = workspaceResponse.data.currentContentId;
+    if (!contentId) {
+      const response = await window.vtStudio.production.content.save({
         projectId: currentProjectId.value,
-        script: {
-          name: result.title,
-          content: result.content,
-          assetIds: [],
-        },
+        title: result.title,
+        body: result.content,
       });
       if (!isOk(response)) {
         MessagePlugin.error(response.msg);
         return;
       }
-      scriptId = response.data.script.id;
-      if (target === 'script') {
+      contentId = response.data.content.id;
+      if (target === 'content') {
         MessagePlugin.success(t('aiToolLibrary.result.bound'));
         await router.push({ name: 'production' });
         return;
@@ -309,9 +292,12 @@ async function bindToCurrentWork(target: BindTarget): Promise<void> {
     }
 
     if (target === 'assets') {
-      const response = await window.vtStudio.script.extractAssets({
+      const response = await window.vtStudio.production.tools.run({
         projectId: currentProjectId.value,
-        scriptIds: [scriptId],
+        contentId,
+        toolName: 'extract_resources',
+        source: 'toolLibrary',
+        input: {},
       });
       if (!isOk(response)) {
         MessagePlugin.error(response.msg);
@@ -322,17 +308,18 @@ async function bindToCurrentWork(target: BindTarget): Promise<void> {
       return;
     }
 
-    if (!scriptId) {
+    if (!contentId) {
       MessagePlugin.warning(t('aiToolLibrary.result.noContentVersion'));
       return;
     }
 
-    if (target === 'script') {
-      const response = await window.vtStudio.production.agent.applyWorkspacePatch({
+    if (target === 'content') {
+      const response = await window.vtStudio.production.tools.run({
         projectId: currentProjectId.value,
-        scriptId,
-        source: 'tool',
-        patches: [{ field: 'script', content: result.content }],
+        contentId,
+        toolName: 'save_content',
+        source: 'toolLibrary',
+        input: { title: result.title, body: result.content },
       });
       if (!isOk(response)) {
         MessagePlugin.error(response.msg);
@@ -346,15 +333,19 @@ async function bindToCurrentWork(target: BindTarget): Promise<void> {
     if (target === 'storyboard') {
       const drafts = result.items.length ? result.items : [result.content];
       for (const [index, item] of drafts.slice(0, 12).entries()) {
-        const response = await window.vtStudio.production.saveStoryboard({
+        const response = await window.vtStudio.production.tools.run({
           projectId: currentProjectId.value,
-          scriptId,
-          videoDesc: item,
-          prompt: '',
-          duration: 4,
-          index,
-          shouldGenerateImage: true,
-          associatedAssetIds: [],
+          contentId,
+          toolName: 'add_storyboard',
+          source: 'toolLibrary',
+          input: {
+            videoDesc: item,
+            prompt: '',
+            duration: 4,
+            index,
+            shouldGenerateImage: true,
+            associatedAssetIds: [],
+          },
         });
         if (!isOk(response)) {
           MessagePlugin.error(response.msg);
@@ -372,13 +363,13 @@ async function bindToCurrentWork(target: BindTarget): Promise<void> {
       return;
     }
 
-    const field: ProductionAgentWorkspacePatchField = target;
     const content = target === 'storyboardTable' ? result.items.join('\n') || result.content : result.content;
-    const response = await window.vtStudio.production.agent.applyWorkspacePatch({
+    const response = await window.vtStudio.production.tools.run({
       projectId: currentProjectId.value,
-      scriptId,
-      source: 'tool',
-      patches: [{ field, content }],
+      contentId,
+      toolName: target === 'directorPlan' ? 'save_director_plan' : 'save_storyboard_table',
+      source: 'toolLibrary',
+      input: target === 'directorPlan' ? { directorPlan: content } : { storyboardTable: content },
     });
     if (!isOk(response)) {
       MessagePlugin.error(response.msg);
@@ -436,10 +427,6 @@ function previewText(value: string, limit: number): string {
           </label>
 
           <div class="ai-tool-library-inline-actions">
-            <VtButton v-if="selectedTool.legacyRouteName" variant="outline" :disabled="selectedTool.requiresProject && !hasCurrentProject" @click="openLegacyTool(selectedTool)">
-              <template #icon><UserTalkIcon /></template>
-              {{ t('aiToolLibrary.openLegacy') }}
-            </VtButton>
             <VtButton variant="outline" :disabled="!hasCurrentProject" @click="openCanvas">
               <template #icon><VideoIcon /></template>
               {{ t('aiToolLibrary.openCanvas') }}

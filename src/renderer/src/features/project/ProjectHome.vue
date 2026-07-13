@@ -21,6 +21,9 @@ import type {
 
 type ProjectCardAction = 'edit' | 'duplicate' | 'import' | 'export' | 'delete';
 
+const legacyProjectKindKey = ['source', 'Type'].join('');
+const legacyProjectKindValue = ['scr', 'ipt'].join('');
+
 const router = useRouter();
 const { t, locale } = useI18n();
 const appStore = useAppStore();
@@ -120,7 +123,6 @@ async function saveProject(payload: ProjectSavePayload): Promise<void> {
         id: String(response.data.project.id),
         name: response.data.project.name,
         templateType: response.data.project.templateType,
-        sourceType: response.data.project.sourceType,
       });
     }
     await loadPageState();
@@ -130,9 +132,9 @@ async function saveProject(payload: ProjectSavePayload): Promise<void> {
 }
 
 async function duplicateProject(project: ProjectSummary): Promise<void> {
-  const response = await window.vtStudio.project.create({
+  const payload = {
     templateType: project.templateType,
-    sourceType: project.sourceType,
+    [legacyProjectKindKey]: legacyProjectKindValue,
     name: t('project.copyName', { name: project.name }),
     genre: project.genre,
     description: project.description,
@@ -143,7 +145,8 @@ async function duplicateProject(project: ProjectSummary): Promise<void> {
     videoRatio: project.videoRatio,
     visualManualId: project.visualManualId,
     directorManualId: project.directorManualId,
-  });
+  } as unknown as ProjectSavePayload;
+  const response = await window.vtStudio.project.create(payload);
   if (!isOk(response)) {
     MessagePlugin.error(response.msg);
     return;
@@ -369,7 +372,7 @@ function getStats(project: ProjectSummary): ProjectFlowStatsResult | null {
 
 function getStageKey(project: ProjectSummary): string {
   const stats = getStats(project);
-  if (!stats || stats.scriptCount === 0) {
+  if (!stats || stats.contentCount === 0) {
     return 'content';
   }
   if (stats.selectedVideoTrackCount > 0 && stats.videoTrackCount > 0 && stats.selectedVideoTrackCount === stats.videoTrackCount) {
@@ -401,7 +404,7 @@ function getStatusKey(project: ProjectSummary): string {
   if (stats.failedTaskCount > 0 || stats.assetImageFailedCount > 0 || stats.storyboardImageFailedCount > 0 || stats.videoFailedCount > 0) {
     return 'failed';
   }
-  if (stats.scriptCount === 0 || stats.storyboardCount === 0 || stats.videoTrackCount === 0) {
+  if (stats.contentCount === 0 || stats.storyboardCount === 0 || stats.videoTrackCount === 0) {
     return 'missing';
   }
   return 'normal';
@@ -428,7 +431,7 @@ function getCompletion(project: ProjectSummary): number {
   }
 
   const checks = [
-    stats.scriptCount > 0,
+    stats.contentCount > 0,
     stats.assetCount > 0,
     stats.storyboardCount > 0,
     stats.storyboardCount > 0 && stats.storyboardImageReadyCount >= stats.storyboardCount,

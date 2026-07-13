@@ -34,6 +34,26 @@ const pagination = reactive({
 const pageSizeOptions = [10, 20, 50, 100];
 const MODEL_DIAGNOSTIC_KEYS = ['modelDiagnostics'] as const;
 const MODEL_DIAGNOSTIC_STATUS_VALUES = ['running', 'returned', 'parse_failed', 'normalized', 'failed'] as const;
+const RELATED_OBJECT_LABEL_KEYS: Record<string, string> = {
+  projectId: 'taskCenter.relatedObjects.project',
+  contentId: 'taskCenter.relatedObjects.content',
+  contentIds: 'taskCenter.relatedObjects.contents',
+  assetId: 'taskCenter.relatedObjects.asset',
+  assetIds: 'taskCenter.relatedObjects.assets',
+  mediaId: 'taskCenter.relatedObjects.resourceImage',
+  storyboardId: 'taskCenter.relatedObjects.storyboard',
+  storyboardIds: 'taskCenter.relatedObjects.storyboards',
+  trackId: 'taskCenter.relatedObjects.videoTrack',
+  trackIds: 'taskCenter.relatedObjects.videoTracks',
+  videoId: 'taskCenter.relatedObjects.video',
+  videoIds: 'taskCenter.relatedObjects.videos',
+  draftName: 'taskCenter.relatedObjects.draftName',
+  copyAssets: 'taskCenter.relatedObjects.copyAssets',
+  manuals: 'taskCenter.relatedObjects.manuals',
+  modelCall: 'taskCenter.relatedObjects.modelCall',
+  action: 'taskCenter.relatedObjects.action',
+  messageId: 'taskCenter.relatedObjects.message',
+};
 const taskRequest = useVtRequest({ loading });
 const refreshRequest = useVtRequest({ loading: refreshing });
 const optionRequest = useVtRequest();
@@ -260,12 +280,64 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasInternalRelatedKey(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return (normalized.includes('script') && normalized.includes('id')) || (normalized.includes('source') && normalized.includes('type'));
+}
+
+function getRelatedObjectLabel(key: string): string {
+  const labelKey = RELATED_OBJECT_LABEL_KEYS[key];
+  if (labelKey) {
+    return t(labelKey);
+  }
+
+  const normalizedKey = key.toLowerCase();
+  if (normalizedKey.includes('source') && normalizedKey.includes('type')) {
+    return t('taskCenter.relatedObjects.source');
+  }
+
+  if (hasInternalRelatedKey(key) || normalizedKey.includes('content')) {
+    return t('taskCenter.relatedObjects.content');
+  }
+
+  return t('taskCenter.relatedObjects.item');
+}
+
 function formatRelatedValue(value: unknown): string {
+  if (value === undefined || value === null) {
+    return '-';
+  }
+
   if (typeof value === 'string' || typeof value === 'number') {
     return String(value);
   }
 
-  return JSON.stringify(value) ?? String(value);
+  if (typeof value === 'boolean') {
+    return value ? t('taskCenter.relatedObjects.yes') : t('taskCenter.relatedObjects.no');
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return t('taskCenter.relatedObjects.empty');
+    }
+
+    if (value.every((item) => typeof item === 'string' || typeof item === 'number')) {
+      return value.map(String).join('，');
+    }
+
+    return t('taskCenter.relatedObjects.count', { count: value.length });
+  }
+
+  if (isPlainObject(value)) {
+    const requestId = value.requestId;
+    if (typeof requestId === 'string' && requestId.trim()) {
+      return t('taskCenter.relatedObjects.request', { requestId });
+    }
+
+    return t('taskCenter.relatedObjects.count', { count: Object.keys(value).length });
+  }
+
+  return String(value);
 }
 
 function formatRelatedObjects(value: string | null): string {
@@ -284,11 +356,11 @@ function formatRelatedObjects(value: string | null): string {
       return '-';
     }
 
-    return entries.map(([key, item]) => `${key}: ${formatRelatedValue(item)}`).join('，');
+    return entries.map(([key, item]) => `${getRelatedObjectLabel(key)}: ${formatRelatedValue(item)}`).join('，');
   }
 
   if (typeof parsed === 'string') {
-    return value;
+    return hasInternalRelatedKey(parsed) ? t('taskCenter.relatedObjects.rawText') : value;
   }
 
   return value;

@@ -148,4 +148,123 @@ export const productionMigrations: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_production_videos_dependency_status ON production_videos(dependency_status)',
     ],
   },
+  {
+    id: '0018_create_production_contents',
+    name: 'create production content tables',
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS production_contents (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id            INTEGER NOT NULL,
+        title                 TEXT    NOT NULL DEFAULT '内容',
+        body                  TEXT    NOT NULL DEFAULT '',
+        version               INTEGER NOT NULL DEFAULT 1,
+        resource_status       TEXT    NOT NULL DEFAULT 'idle',
+        resource_error_reason TEXT,
+        dependency_status     TEXT    NOT NULL DEFAULT 'valid',
+        dependency_reason     TEXT,
+        created_at            INTEGER NOT NULL,
+        updated_at            INTEGER NOT NULL
+      )
+      `,
+      'CREATE INDEX IF NOT EXISTS idx_production_contents_project_id ON production_contents(project_id)',
+      'CREATE INDEX IF NOT EXISTS idx_production_contents_updated_at ON production_contents(updated_at)',
+      `
+      CREATE TABLE IF NOT EXISTS production_resource_links (
+        content_id INTEGER NOT NULL,
+        asset_id   INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY(content_id, asset_id)
+      )
+      `,
+      'CREATE INDEX IF NOT EXISTS idx_production_resource_links_content ON production_resource_links(content_id)',
+      'CREATE INDEX IF NOT EXISTS idx_production_resource_links_asset ON production_resource_links(asset_id)',
+      `
+      INSERT OR IGNORE INTO production_contents (
+        id, project_id, title, body, version, resource_status, resource_error_reason,
+        dependency_status, dependency_reason, created_at, updated_at
+      )
+      SELECT
+        id,
+        project_id,
+        COALESCE(NULLIF(TRIM(name), ''), '内容'),
+        content,
+        1,
+        CASE
+          WHEN extract_status IN ('waiting', 'running') THEN 'running'
+          WHEN extract_status = 'succeeded' THEN 'succeeded'
+          WHEN extract_status = 'failed' THEN 'failed'
+          ELSE 'idle'
+        END,
+        error_reason,
+        dependency_status,
+        dependency_reason,
+        created_at,
+        updated_at
+      FROM scripts
+      `,
+      `
+      INSERT OR IGNORE INTO production_resource_links (content_id, asset_id, created_at)
+      SELECT script_id, asset_id, created_at
+      FROM script_asset_links
+      `,
+    ],
+  },
+  {
+    id: '0019_create_production_agent_audits',
+    name: 'create production agent audit table',
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS production_agent_audits (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id  INTEGER NOT NULL,
+        content_id  INTEGER NOT NULL,
+        task_id     INTEGER,
+        tool_name   TEXT    NOT NULL,
+        source      TEXT    NOT NULL DEFAULT 'tool',
+        input_json  TEXT    NOT NULL DEFAULT '{}',
+        result_json TEXT    NOT NULL DEFAULT '{}',
+        created_at  INTEGER NOT NULL
+      )
+      `,
+      'CREATE INDEX IF NOT EXISTS idx_production_agent_audits_project_content ON production_agent_audits(project_id, content_id)',
+      'CREATE INDEX IF NOT EXISTS idx_production_agent_audits_tool ON production_agent_audits(tool_name)',
+    ],
+  },
+  {
+    id: '0020_add_production_agent_audit_task_id',
+    name: 'add production agent audit task id',
+    statements: [
+      'ALTER TABLE production_agent_audits ADD COLUMN task_id INTEGER',
+      'CREATE INDEX IF NOT EXISTS idx_production_agent_audits_task ON production_agent_audits(task_id)',
+    ],
+  },
+  {
+    id: '0021_create_production_resource_drafts',
+    name: 'create production resource draft review table',
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS production_resource_drafts (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id       INTEGER NOT NULL,
+        content_id       INTEGER NOT NULL,
+        task_id          INTEGER,
+        asset_id         INTEGER,
+        matched_asset_id INTEGER,
+        type             TEXT    NOT NULL,
+        name             TEXT    NOT NULL,
+        description      TEXT    NOT NULL DEFAULT '',
+        prompt           TEXT    NOT NULL DEFAULT '',
+        action           TEXT    NOT NULL DEFAULT 'create',
+        status           TEXT    NOT NULL DEFAULT 'draft',
+        error_reason     TEXT,
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER NOT NULL
+      )
+      `,
+      'CREATE INDEX IF NOT EXISTS idx_production_resource_drafts_project_content ON production_resource_drafts(project_id, content_id)',
+      'CREATE INDEX IF NOT EXISTS idx_production_resource_drafts_status ON production_resource_drafts(status)',
+      'CREATE INDEX IF NOT EXISTS idx_production_resource_drafts_matched_asset ON production_resource_drafts(matched_asset_id)',
+    ],
+  },
 ];

@@ -6,14 +6,14 @@ import type {
   AgentMessageUpdatePayload,
   AgentSocketErrorPayload,
   AgentThinkConfigPayload,
+  AgentWorkspaceSocketUpdate,
 } from '@shared/types/socket';
-import type { ScriptAgentWorkspaceSocketUpdate } from '@shared/types/script-agent';
 
 export interface AgentSocketData {
   token: string;
   isolationKey: string;
   projectId: string;
-  scriptId?: string;
+  contentId?: string;
 }
 
 export interface ServerToClientEvents {
@@ -21,7 +21,7 @@ export interface ServerToClientEvents {
   'message:update': (payload: AgentMessageUpdatePayload) => void;
   'content:add': (payload: AgentContentAddPayload) => void;
   'content:update': (payload: AgentContentUpdatePayload) => void;
-  'workspace:update': (payload: ScriptAgentWorkspaceSocketUpdate) => void;
+  'workspace:update': (payload: AgentWorkspaceSocketUpdate) => void;
   error: (error: AgentSocketErrorPayload) => void;
   getPlanData: (data: unknown) => void;
 }

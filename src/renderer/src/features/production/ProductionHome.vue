@@ -10,7 +10,7 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
-import { AddIcon, CloseIcon, FolderOpenIcon, FullscreenIcon, GitBranchIcon, ImageIcon, PlayCircleIcon, RefreshIcon, SaveIcon, UserTalkIcon } from 'tdesign-icons-vue-next';
+import { CloseIcon, FolderOpenIcon, FullscreenIcon, GitBranchIcon, PlayCircleIcon, RefreshIcon, SaveIcon, UserTalkIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import VtButton from '@renderer/components/VtButton.vue';
 import VtDialog from '@renderer/components/VtDialog.vue';
@@ -31,35 +31,33 @@ import {
   type ProductionCanvasEdge,
   type ProductionCanvasNode,
 } from './utils/productionFlowBuilder';
-import { PRODUCTION_TASK_STATUS, type ProductionAssetSummary, type ProductionFlowData, type ProductionFlowPositions, type ProductionNodeType, type ProductionScriptOption, type ProductionStoryboardItem, type ProductionVideoTrackItem } from '@shared/types/production';
-import { SCRIPT_EXTRACT_STATUS, type ScriptExtractStatus } from '@shared/types/script-agent';
+import { PRODUCTION_TASK_STATUS, type ProductionAssetSummary, type ProductionContentOption, type ProductionFlowData, type ProductionFlowPositions, type ProductionNodeType, type ProductionResourceDraft, type ProductionResourceDraftAction, type ProductionResourceDraftType, type ProductionResourceExistingAsset, type ProductionStoryboardItem, type ProductionVideoTrackItem } from '@shared/types/production';
+import type { ProjectImageQuality } from '@shared/types/project';
 
 const POLL_INTERVAL = 3000;
 const FLOW_ID = 'productionMainFlow';
-type ExtractableAssetType = Extract<ProductionAssetSummary['type'], 'role' | 'scene' | 'tool'>;
-type AssetExtractGroupStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'done' | 'empty';
-const ASSET_EXTRACT_TYPES: ExtractableAssetType[] = ['role', 'scene', 'tool'];
+const RESOURCE_EXTRACT_STATUS = {
+  IDLE: 'idle',
+  WAITING: 'waiting',
+  RUNNING: 'running',
+  SUCCEEDED: 'succeeded',
+  FAILED: 'failed',
+} as const;
 
-interface AssetExtractGroup {
-  type: ExtractableAssetType;
-  assets: ProductionAssetSummary[];
-  status: AssetExtractGroupStatus;
-  readyCount: number;
-  missingImageCount: number;
-  derivedCount: number;
-}
+type ResourceExtractStatus = (typeof RESOURCE_EXTRACT_STATUS)[keyof typeof RESOURCE_EXTRACT_STATUS];
+const ASSET_EXTRACT_TYPES: ProductionResourceDraftType[] = ['role', 'scene', 'tool'];
+const ASSET_DRAFT_ACTIONS: ProductionResourceDraftAction[] = ['create', 'merge', 'replace', 'skip'];
 
 const { t } = useI18n();
 const router = useRouter();
 const appStore = useAppStore();
 const currentProjectId = computed(() => Number(appStore.currentProject?.id ?? 0));
-const currentProjectName = computed(() => appStore.currentProject?.name ?? t('common.noProject'));
 
 const loading = ref(false);
 const refreshing = ref(false);
 const saving = ref(false);
-const scripts = ref<ProductionScriptOption[]>([]);
-const currentScriptId = ref<number | null>(null);
+const contents = ref<ProductionContentOption[]>([]);
+const currentContentId = ref<number | null>(null);
 const flowData = ref<ProductionFlowData | null>(null);
 const positions = ref<ProductionFlowPositions>(createDefaultProductionPositions());
 const selectedStoryboardIds = ref<number[]>([]);
@@ -114,8 +112,31 @@ const assetExtractVisible = ref(false);
 const assetExtractLoading = ref(false);
 const assetExtractPolling = ref(false);
 const assetExtractTaskId = ref<number | null>(null);
-const assetExtractStatus = ref<ScriptExtractStatus>(SCRIPT_EXTRACT_STATUS.IDLE);
+const assetExtractStatus = ref<ResourceExtractStatus>(RESOURCE_EXTRACT_STATUS.IDLE);
 const assetExtractError = ref<string | null>(null);
+const assetDrafts = ref<ProductionResourceDraft[]>([]);
+const assetExistingAssets = ref<ProductionResourceExistingAsset[]>([]);
+const activeAssetDraftType = ref<ProductionResourceDraftType>('role');
+const activeAssetDraftId = ref<number | null>(null);
+const assetDraftLoading = ref(false);
+const assetDraftSaving = ref(false);
+const assetDraftDeleting = ref(false);
+const assetDraftCommitting = ref(false);
+const assetImageGenerateVisible = ref(false);
+const assetImageGenerating = ref(false);
+const assetDraftForm = reactive({
+  type: 'role' as ProductionResourceDraftType,
+  name: '',
+  description: '',
+  prompt: '',
+  action: 'create' as ProductionResourceDraftAction,
+  matchedAssetId: null as number | null,
+});
+const assetImageForm = reactive({
+  model: '',
+  resolution: '1K' as ProjectImageQuality,
+  prompt: '',
+});
 
 let storyboardPollTimer: number | null = null;
 let derivedPollTimer: number | null = null;
@@ -125,12 +146,12 @@ let assetExtractPollTimer: number | null = null;
 
 const { fitView, getNodes, updateNodeInternals } = useVueFlow(FLOW_ID);
 
-const scriptOptions = computed(() => scripts.value.map((script) => ({ label: script.name, value: script.id })));
-const currentScript = computed(() => scripts.value.find((script) => script.id === currentScriptId.value) ?? null);
-const currentScriptName = computed(() => currentScript.value?.name ?? t('production.node.script.defaultName'));
+const contentOptions = computed(() => contents.value.map((content) => ({ label: content.name, value: content.id })));
+const currentContent = computed(() => contents.value.find((content) => content.id === currentContentId.value) ?? null);
+const currentContentName = computed(() => currentContent.value?.name ?? t('production.node.script.defaultName'));
 const nodes = computed<ProductionCanvasNode[]>(() => buildProductionNodes(flowData.value, positions.value));
 const edges = computed<ProductionCanvasEdge[]>(() => buildProductionEdges(flowData.value));
-const hasFlowData = computed(() => Boolean(flowData.value && currentScriptId.value));
+const hasFlowData = computed(() => Boolean(flowData.value && currentContentId.value));
 const assetOptions = computed(() => flattenAssets(flowData.value?.assets ?? []).map((asset) => ({ label: `${t(`production.assetType.${asset.type}`)} / ${asset.name}`, value: asset.id })));
 const storyboardOptions = computed(() => (flowData.value?.storyboards ?? []).map((storyboard) => ({ label: `S${String(storyboard.index + 1).padStart(2, '0')} / ${previewText(storyboard.videoDesc || storyboard.prompt, 44)}`, value: storyboard.id })));
 const runningStoryboardIds = computed(() => (flowData.value?.storyboards ?? []).filter((storyboard) => storyboard.imageStatus === PRODUCTION_TASK_STATUS.RUNNING).map((storyboard) => storyboard.id));
@@ -151,7 +172,7 @@ const canvasStats = computed(() => ({
 const activeNodeTitle = computed(() => t(`production.node.${activeNodeType.value}.title`));
 const activeNodeHint = computed(() => t(`production.node.${activeNodeType.value}.hint`));
 const activeNodeStats = computed(() => [
-  { label: t('production.nodeDetail.contentChars'), value: flowData.value?.script.length ?? 0 },
+  { label: t('production.nodeDetail.contentChars'), value: flowData.value?.contentBody.length ?? 0 },
   { label: t('production.nodeDetail.assets'), value: `${visualAssetReadyCount.value}/${visualAssets.value.length}` },
   { label: t('production.nodeDetail.storyboards'), value: `${storyboardImageReadyCount.value}/${flowData.value?.storyboards.length ?? 0}` },
   { label: t('production.nodeDetail.videos'), value: `${selectedVideoTrackCount.value}/${flowData.value?.videoTracks.length ?? 0}` },
@@ -161,31 +182,40 @@ const exportBlockers = computed(() => (flowData.value?.videoTracks ?? []).filter
   const selectedVideo = track.videos.find((video) => video.id === track.selectedVideoId);
   return !selectedVideo || selectedVideo.status !== PRODUCTION_TASK_STATUS.SUCCEEDED || !selectedVideo.videoUrl || track.status === PRODUCTION_TASK_STATUS.FAILED;
 }));
-const assetExtractGroups = computed<AssetExtractGroup[]>(() => {
-  const assets = flowData.value?.assets ?? [];
-  return ASSET_EXTRACT_TYPES.map((type) => {
-    const groupAssets = assets.filter((asset) => asset.type === type);
-    const groupDerivedAssets = groupAssets.flatMap((asset) => asset.children);
-    const groupItems = [...groupAssets, ...groupDerivedAssets];
-    return {
-      type,
-      assets: groupAssets,
-      status: resolveAssetExtractGroupStatus(groupAssets.length),
-      readyCount: groupItems.filter((asset) => Boolean(asset.imageUrl)).length,
-      missingImageCount: groupItems.filter((asset) => !asset.imageUrl && asset.imageStatus !== PRODUCTION_TASK_STATUS.RUNNING).length,
-      derivedCount: groupDerivedAssets.length,
-    };
-  });
+const assetDraftTabs = computed(() => ASSET_EXTRACT_TYPES.map((type) => ({
+  type,
+  count: assetDrafts.value.filter((draft) => draft.type === type).length,
+})));
+const activeAssetDrafts = computed(() => assetDrafts.value.filter((draft) => draft.type === activeAssetDraftType.value));
+const selectedAssetDraft = computed(() => assetDrafts.value.find((draft) => draft.id === activeAssetDraftId.value) ?? activeAssetDrafts.value[0] ?? null);
+const assetDraftActionOptions = computed(() => ASSET_DRAFT_ACTIONS.map((action) => ({ label: t(`production.assetExtract.action.${action}`), value: action })));
+const assetDraftTypeOptions = computed(() => ASSET_EXTRACT_TYPES.map((type) => ({ label: t(`production.assetType.${type}`), value: type })));
+const assetDraftMatchedAssetOptions = computed(() => assetExistingAssets.value
+  .filter((asset) => asset.type === assetDraftForm.type)
+  .map((asset) => ({
+    label: `${asset.name} / ${previewText(asset.description || asset.prompt, 34)}`,
+    value: asset.id,
+  })));
+const assetDraftNeedsMatch = computed(() => assetDraftForm.action === 'merge' || assetDraftForm.action === 'replace');
+const assetDraftChanged = computed(() => {
+  const draft = selectedAssetDraft.value;
+  if (!draft) {
+    return false;
+  }
+  return draft.type !== assetDraftForm.type
+    || draft.name !== assetDraftForm.name
+    || draft.description !== assetDraftForm.description
+    || draft.prompt !== assetDraftForm.prompt
+    || draft.action !== assetDraftForm.action
+    || draft.matchedAssetId !== assetDraftForm.matchedAssetId;
 });
-const derivedAssets = computed(() => flattenAssets(flowData.value?.assets ?? []).filter((asset) => asset.parentId));
-const missingDerivedAssets = computed(() => derivedAssets.value.filter((asset) => !asset.imageUrl && asset.imageStatus !== PRODUCTION_TASK_STATUS.RUNNING));
-const effectiveAssetExtractStatus = computed<ScriptExtractStatus>(() => {
-  if (assetExtractStatus.value === SCRIPT_EXTRACT_STATUS.IDLE && (flowData.value?.assets.length ?? 0) > 0) {
-    return SCRIPT_EXTRACT_STATUS.SUCCEEDED;
+const effectiveAssetExtractStatus = computed<ResourceExtractStatus>(() => {
+  if (assetExtractStatus.value === RESOURCE_EXTRACT_STATUS.IDLE && (flowData.value?.assets.length ?? 0) > 0) {
+    return RESOURCE_EXTRACT_STATUS.SUCCEEDED;
   }
   return assetExtractStatus.value;
 });
-const assetExtractActionText = computed(() => (effectiveAssetExtractStatus.value === SCRIPT_EXTRACT_STATUS.FAILED ? t('production.assetExtract.retryExtract') : t('production.assetExtract.extractAll')));
+const assetExtractActionText = computed(() => (effectiveAssetExtractStatus.value === RESOURCE_EXTRACT_STATUS.FAILED ? t('production.assetExtract.retryExtract') : t('production.assetExtract.extractAll')));
 
 function isOk(response: { code: number; msg: string }): boolean {
   return response.code === 200;
@@ -204,85 +234,29 @@ function previewText(value: string | null, limit: number): string {
 }
 
 function getStatusTheme(status: string): 'primary' | 'success' | 'danger' | 'warning' | 'default' {
-  if (status === PRODUCTION_TASK_STATUS.RUNNING || status === SCRIPT_EXTRACT_STATUS.RUNNING) {
+  if (status === PRODUCTION_TASK_STATUS.RUNNING || status === RESOURCE_EXTRACT_STATUS.RUNNING) {
     return 'primary';
   }
-  if (status === SCRIPT_EXTRACT_STATUS.WAITING) {
+  if (status === RESOURCE_EXTRACT_STATUS.WAITING) {
     return 'warning';
   }
-  if (status === PRODUCTION_TASK_STATUS.SUCCEEDED || status === SCRIPT_EXTRACT_STATUS.SUCCEEDED) {
+  if (status === PRODUCTION_TASK_STATUS.SUCCEEDED || status === RESOURCE_EXTRACT_STATUS.SUCCEEDED) {
     return 'success';
   }
-  if (status === PRODUCTION_TASK_STATUS.FAILED || status === PRODUCTION_TASK_STATUS.CANCELLED || status === SCRIPT_EXTRACT_STATUS.FAILED) {
+  if (status === PRODUCTION_TASK_STATUS.FAILED || status === PRODUCTION_TASK_STATUS.CANCELLED || status === RESOURCE_EXTRACT_STATUS.FAILED) {
     return 'danger';
   }
   return 'default';
-}
-
-function getAssetImageStatusLabel(asset: ProductionAssetSummary): string {
-  if (asset.imageUrl) {
-    return t('production.assetExtract.imageReady');
-  }
-  if (asset.imageStatus === PRODUCTION_TASK_STATUS.RUNNING) {
-    return t('production.assetExtract.imageRunning');
-  }
-  if (asset.imageStatus === PRODUCTION_TASK_STATUS.FAILED) {
-    return t('production.assetExtract.imageFailed');
-  }
-  return t('production.assetExtract.imageMissing');
-}
-
-function resolveAssetExtractGroupStatus(count: number): AssetExtractGroupStatus {
-  if (assetExtractStatus.value === SCRIPT_EXTRACT_STATUS.WAITING) {
-    return 'waiting';
-  }
-  if (assetExtractStatus.value === SCRIPT_EXTRACT_STATUS.RUNNING) {
-    return 'running';
-  }
-  if (effectiveAssetExtractStatus.value === SCRIPT_EXTRACT_STATUS.FAILED) {
-    return 'failed';
-  }
-  if (count > 0) {
-    return 'done';
-  }
-  if (effectiveAssetExtractStatus.value === SCRIPT_EXTRACT_STATUS.SUCCEEDED) {
-    return 'empty';
-  }
-  return 'idle';
-}
-
-function getAssetExtractGroupTheme(status: AssetExtractGroupStatus): 'primary' | 'success' | 'danger' | 'warning' | 'default' {
-  if (status === 'waiting' || status === 'running') {
-    return 'primary';
-  }
-  if (status === 'done') {
-    return 'success';
-  }
-  if (status === 'failed') {
-    return 'danger';
-  }
-  if (status === 'empty') {
-    return 'warning';
-  }
-  return 'default';
-}
-
-function getAssetExtractGroupEmptyLabel(group: AssetExtractGroup): string {
-  return t(`production.assetExtract.groupEmpty.${group.status}`, { type: t(`production.assetType.${group.type}`) });
-}
-
-function getGeneratableDerivedAssetIds(asset: ProductionAssetSummary): number[] {
-  return asset.children.filter((child) => !child.imageUrl && child.imageStatus !== PRODUCTION_TASK_STATUS.RUNNING).map((child) => child.id);
 }
 
 function resolveRecommendedNode(data: ProductionFlowData | null): ProductionNodeType {
   if (!data) {
     return 'script';
   }
-  if (!data.script.trim()) {
+  if (!data.contentBody.trim()) {
     return 'script';
   }
-  if (!data.scriptPlan.trim()) {
+  if (!data.directorPlan?.trim()) {
     return 'scriptPlan';
   }
   if (data.assets.length === 0) {
@@ -305,7 +279,7 @@ async function refreshCanvas(): Promise<void> {
 }
 
 function openAiBuilder(): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
@@ -351,13 +325,36 @@ function clearAssetExtractPollTimer(): void {
   assetExtractPollTimer = null;
 }
 
+function resetAssetDraftState(): void {
+  assetDrafts.value = [];
+  assetExistingAssets.value = [];
+  activeAssetDraftType.value = 'role';
+  activeAssetDraftId.value = null;
+  assetDraftLoading.value = false;
+  assetDraftSaving.value = false;
+  assetDraftDeleting.value = false;
+  assetDraftCommitting.value = false;
+  assetImageGenerateVisible.value = false;
+  assetImageGenerating.value = false;
+  assetDraftForm.type = 'role';
+  assetDraftForm.name = '';
+  assetDraftForm.description = '';
+  assetDraftForm.prompt = '';
+  assetDraftForm.action = 'create';
+  assetDraftForm.matchedAssetId = null;
+  assetImageForm.model = '';
+  assetImageForm.resolution = '1K';
+  assetImageForm.prompt = '';
+}
+
 function resetAssetExtractState(): void {
   clearAssetExtractPollTimer();
   assetExtractLoading.value = false;
   assetExtractPolling.value = false;
   assetExtractTaskId.value = null;
-  assetExtractStatus.value = SCRIPT_EXTRACT_STATUS.IDLE;
+  assetExtractStatus.value = RESOURCE_EXTRACT_STATUS.IDLE;
   assetExtractError.value = null;
+  resetAssetDraftState();
 }
 
 function clearPollTimers(): void {
@@ -373,7 +370,7 @@ function clearPollTimers(): void {
 
 function schedulePolls(): void {
   clearPollTimers();
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     return;
   }
   if (runningStoryboardIds.value.length > 0) {
@@ -390,10 +387,10 @@ function schedulePolls(): void {
   }
 }
 
-async function loadWorkspace(options: { keepDataOnError?: boolean; asRefresh?: boolean; scriptId?: number | null; autoLayout?: boolean } = {}): Promise<void> {
+async function loadWorkspace(options: { keepDataOnError?: boolean; asRefresh?: boolean; contentId?: number | null; autoLayout?: boolean } = {}): Promise<void> {
   if (!currentProjectId.value) {
-    scripts.value = [];
-    currentScriptId.value = null;
+    contents.value = [];
+    currentContentId.value = null;
     flowData.value = null;
     selectedStoryboardIds.value = [];
     selectedTrackIds.value = [];
@@ -414,7 +411,7 @@ async function loadWorkspace(options: { keepDataOnError?: boolean; asRefresh?: b
   try {
     const response = await window.vtStudio.production.getWorkspace({
       projectId: currentProjectId.value,
-      scriptId: options.scriptId ?? currentScriptId.value ?? undefined,
+      contentId: options.contentId ?? currentContentId.value ?? undefined,
     });
     if (!isOk(response)) {
       MessagePlugin.error(response.msg);
@@ -424,8 +421,8 @@ async function loadWorkspace(options: { keepDataOnError?: boolean; asRefresh?: b
       return;
     }
 
-    scripts.value = response.data.scripts;
-    currentScriptId.value = response.data.currentScriptId;
+    contents.value = response.data.contents;
+    currentContentId.value = response.data.currentContentId;
     flowData.value = response.data.flowData;
     activeNodeType.value = resolveRecommendedNode(response.data.flowData);
     positions.value = mergeProductionPositions(response.data.flowData?.positions);
@@ -450,9 +447,182 @@ async function refreshWorkspace(): Promise<void> {
   await loadWorkspace({ keepDataOnError: true, asRefresh: true });
 }
 
-async function handleScriptChange(value: unknown): Promise<void> {
-  const nextScriptId = Number(Array.isArray(value) ? value[0] : value);
-  if (!Number.isFinite(nextScriptId) || nextScriptId === currentScriptId.value) {
+function syncAssetDraftForm(draft: ProductionResourceDraft | null): void {
+  if (!draft) {
+    assetDraftForm.type = activeAssetDraftType.value;
+    assetDraftForm.name = '';
+    assetDraftForm.description = '';
+    assetDraftForm.prompt = '';
+    assetDraftForm.action = 'create';
+    assetDraftForm.matchedAssetId = null;
+    return;
+  }
+
+  assetDraftForm.type = draft.type;
+  assetDraftForm.name = draft.name;
+  assetDraftForm.description = draft.description;
+  assetDraftForm.prompt = draft.prompt;
+  assetDraftForm.action = draft.action;
+  assetDraftForm.matchedAssetId = draft.matchedAssetId;
+}
+
+function ensureAssetDraftSelection(preferredId: number | null = activeAssetDraftId.value): void {
+  const preferred = preferredId ? assetDrafts.value.find((draft) => draft.id === preferredId) ?? null : null;
+  const scoped = assetDrafts.value.filter((draft) => draft.type === activeAssetDraftType.value);
+  const next = preferred ?? scoped[0] ?? assetDrafts.value[0] ?? null;
+  if (!next) {
+    activeAssetDraftId.value = null;
+    syncAssetDraftForm(null);
+    return;
+  }
+
+  activeAssetDraftType.value = next.type;
+  activeAssetDraftId.value = next.id;
+  syncAssetDraftForm(next);
+}
+
+function selectAssetDraftType(type: ProductionResourceDraftType): void {
+  activeAssetDraftType.value = type;
+  const next = assetDrafts.value.find((draft) => draft.type === type) ?? null;
+  activeAssetDraftId.value = next?.id ?? null;
+  syncAssetDraftForm(next);
+}
+
+function selectAssetDraft(draft: ProductionResourceDraft): void {
+  activeAssetDraftType.value = draft.type;
+  activeAssetDraftId.value = draft.id;
+  syncAssetDraftForm(draft);
+}
+
+async function loadAssetDrafts(): Promise<void> {
+  if (!currentProjectId.value || !currentContentId.value) {
+    resetAssetDraftState();
+    return;
+  }
+
+  assetDraftLoading.value = true;
+  try {
+    const response = await window.vtStudio.production.resources.listDrafts({
+      projectId: currentProjectId.value,
+      contentId: currentContentId.value,
+    });
+    if (!isOk(response)) {
+      MessagePlugin.error(response.msg);
+      return;
+    }
+    assetDrafts.value = response.data.drafts;
+    assetExistingAssets.value = response.data.existingAssets;
+    ensureAssetDraftSelection();
+  } finally {
+    assetDraftLoading.value = false;
+  }
+}
+
+async function saveSelectedAssetDraft(showMessage = true): Promise<boolean> {
+  const draft = selectedAssetDraft.value;
+  if (!currentProjectId.value || !currentContentId.value || !draft) {
+    MessagePlugin.warning(t('production.assetExtract.noDraftSelected'));
+    return false;
+  }
+  if (assetDraftNeedsMatch.value && !assetDraftForm.matchedAssetId) {
+    MessagePlugin.warning(t('production.assetExtract.matchRequired'));
+    return false;
+  }
+
+  assetDraftSaving.value = true;
+  try {
+    const response = await window.vtStudio.production.resources.saveDraft({
+      projectId: currentProjectId.value,
+      contentId: currentContentId.value,
+      draftId: draft.id,
+      type: assetDraftForm.type,
+      name: assetDraftForm.name,
+      description: assetDraftForm.description,
+      prompt: assetDraftForm.prompt,
+      action: assetDraftForm.action,
+      matchedAssetId: assetDraftForm.matchedAssetId,
+    });
+    if (!isOk(response)) {
+      MessagePlugin.error(response.msg);
+      return false;
+    }
+    assetDrafts.value = assetDrafts.value.map((item) => (item.id === response.data.draft.id ? response.data.draft : item));
+    selectAssetDraft(response.data.draft);
+    if (showMessage) {
+      MessagePlugin.success(t('production.assetExtract.draftSaved'));
+    }
+    return true;
+  } finally {
+    assetDraftSaving.value = false;
+  }
+}
+
+async function deleteSelectedAssetDraft(): Promise<void> {
+  const draft = selectedAssetDraft.value;
+  if (!currentProjectId.value || !currentContentId.value || !draft) {
+    MessagePlugin.warning(t('production.assetExtract.noDraftSelected'));
+    return;
+  }
+
+  assetDraftDeleting.value = true;
+  try {
+    const response = await window.vtStudio.production.resources.deleteDraft({
+      projectId: currentProjectId.value,
+      contentId: currentContentId.value,
+      draftId: draft.id,
+    });
+    if (!isOk(response)) {
+      MessagePlugin.error(response.msg);
+      return;
+    }
+    assetDrafts.value = assetDrafts.value.filter((item) => item.id !== draft.id);
+    ensureAssetDraftSelection(null);
+    MessagePlugin.success(t('production.deleted'));
+  } finally {
+    assetDraftDeleting.value = false;
+  }
+}
+
+async function commitAssetDrafts(): Promise<void> {
+  if (!currentProjectId.value || !currentContentId.value) {
+    MessagePlugin.warning(t('production.noScript'));
+    return;
+  }
+  if (assetDrafts.value.length === 0) {
+    MessagePlugin.warning(t('production.assetExtract.noDrafts'));
+    return;
+  }
+  if (assetDraftChanged.value) {
+    const saved = await saveSelectedAssetDraft(false);
+    if (!saved) {
+      return;
+    }
+  }
+
+  assetDraftCommitting.value = true;
+  try {
+    const response = await window.vtStudio.production.resources.commitDrafts({
+      projectId: currentProjectId.value,
+      contentId: currentContentId.value,
+    });
+    if (!isOk(response)) {
+      MessagePlugin.error(response.msg);
+      return;
+    }
+    flowData.value = response.data.flowData;
+    assetDrafts.value = response.data.drafts;
+    ensureAssetDraftSelection(null);
+    assetExtractVisible.value = false;
+    MessagePlugin.success(t('production.assetExtract.committed', { count: response.data.savedCount }));
+    await loadWorkspace({ keepDataOnError: true, asRefresh: true });
+  } finally {
+    assetDraftCommitting.value = false;
+  }
+}
+
+async function handleContentChange(value: unknown): Promise<void> {
+  const nextContentId = Number(Array.isArray(value) ? value[0] : value);
+  if (!Number.isFinite(nextContentId) || nextContentId === currentContentId.value) {
     return;
   }
   selectedStoryboardIds.value = [];
@@ -461,11 +631,11 @@ async function handleScriptChange(value: unknown): Promise<void> {
   assetExtractVisible.value = false;
   resetAssetExtractState();
   closeNodeDetail();
-  await loadWorkspace({ scriptId: nextScriptId, keepDataOnError: true, autoLayout: true });
+  await loadWorkspace({ contentId: nextContentId, keepDataOnError: true, autoLayout: true });
 }
 
 async function saveWorkspace(showMessage = true): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || !flowData.value) {
+  if (!currentProjectId.value || !currentContentId.value || !flowData.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
@@ -475,8 +645,8 @@ async function saveWorkspace(showMessage = true): Promise<void> {
     const nextPositions = mergeProductionPositions({ ...positions.value, ...collectProductionPositions(getNodes.value) });
     const response = await window.vtStudio.production.saveWorkspace({
       projectId: currentProjectId.value,
-      scriptId: currentScriptId.value,
-      scriptPlan: flowData.value.scriptPlan,
+      contentId: currentContentId.value,
+      directorPlan: flowData.value.directorPlan ?? '',
       storyboardTable: flowData.value.storyboardTable,
       positions: nextPositions,
     });
@@ -527,9 +697,9 @@ function openTextDialog(nodeType: 'script' | 'scriptPlan' | 'storyboardTable'): 
   }
   textDialogType.value = nodeType;
   if (nodeType === 'script') {
-    textDraft.value = flowData.value?.script ?? '';
+    textDraft.value = flowData.value?.contentBody ?? '';
   } else {
-    textDraft.value = nodeType === 'scriptPlan' ? flowData.value!.scriptPlan : flowData.value!.storyboardTable;
+    textDraft.value = nodeType === 'scriptPlan' ? flowData.value!.directorPlan ?? '' : flowData.value!.storyboardTable;
   }
   textDialogVisible.value = true;
 }
@@ -541,34 +711,31 @@ async function confirmTextDialog(): Promise<void> {
   if (textDialogType.value === 'script') {
     saving.value = true;
     try {
-      if (currentScriptId.value) {
-        const response = await window.vtStudio.production.agent.applyWorkspacePatch({
+      if (currentContentId.value) {
+        const response = await window.vtStudio.production.content.save({
           projectId: currentProjectId.value,
-          scriptId: currentScriptId.value,
-          source: 'manual',
-          patches: [{ field: 'script', content: textDraft.value }],
+          contentId: currentContentId.value,
+          title: currentContentName.value,
+          body: textDraft.value,
         });
         if (!isOk(response)) {
           MessagePlugin.error(response.msg);
           return;
         }
       } else {
-        const response = await window.vtStudio.script.save({
+        const response = await window.vtStudio.production.content.save({
           projectId: currentProjectId.value,
-          script: {
-            name: t('production.node.script.defaultName'),
-            content: textDraft.value,
-            assetIds: [],
-          },
+          title: t('production.node.script.defaultName'),
+          body: textDraft.value,
         });
         if (!isOk(response)) {
           MessagePlugin.error(response.msg);
           return;
         }
-        currentScriptId.value = response.data.script.id;
+        currentContentId.value = response.data.content.id;
       }
       textDialogVisible.value = false;
-      await loadWorkspace({ scriptId: currentScriptId.value, keepDataOnError: true, asRefresh: true, autoLayout: true });
+      await loadWorkspace({ contentId: currentContentId.value, keepDataOnError: true, asRefresh: true, autoLayout: true });
     } finally {
       saving.value = false;
     }
@@ -579,7 +746,7 @@ async function confirmTextDialog(): Promise<void> {
     return;
   }
   if (textDialogType.value === 'scriptPlan') {
-    flowData.value.scriptPlan = textDraft.value;
+    flowData.value.directorPlan = textDraft.value;
   } else {
     flowData.value.storyboardTable = textDraft.value;
   }
@@ -620,7 +787,7 @@ function openEditStoryboard(storyboard: ProductionStoryboardItem): void {
 }
 
 async function saveStoryboard(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     return;
   }
   if (!storyboardForm.videoDesc.trim()) {
@@ -629,9 +796,9 @@ async function saveStoryboard(): Promise<void> {
   }
   storyboardSaving.value = true;
   try {
-    const response = await window.vtStudio.production.saveStoryboard({
+    const response = await window.vtStudio.production.storyboard.save({
       projectId: currentProjectId.value,
-      scriptId: currentScriptId.value,
+      contentId: currentContentId.value,
       id: editingStoryboard.value?.id ?? null,
       prompt: storyboardForm.prompt,
       videoDesc: storyboardForm.videoDesc,
@@ -653,7 +820,7 @@ async function saveStoryboard(): Promise<void> {
 }
 
 function confirmDeleteStoryboard(storyboard: ProductionStoryboardItem): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     return;
   }
   const dialog = DialogPlugin.confirm({
@@ -663,7 +830,7 @@ function confirmDeleteStoryboard(storyboard: ProductionStoryboardItem): void {
     cancelBtn: t('production.cancel'),
     theme: 'danger',
     async onConfirm() {
-      const response = await window.vtStudio.production.deleteStoryboard({ projectId: currentProjectId.value, scriptId: currentScriptId.value!, storyboardId: storyboard.id });
+      const response = await window.vtStudio.production.storyboard.delete({ projectId: currentProjectId.value, contentId: currentContentId.value!, storyboardId: storyboard.id });
       if (!isOk(response)) {
         MessagePlugin.error(response.msg);
         return;
@@ -694,7 +861,7 @@ function openProductionDetail(title: string, content: string): void {
 }
 
 function openImageFlow(ownerType: 'storyboard' | 'derivedAsset', item: ProductionStoryboardItem | ProductionAssetSummary): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
@@ -726,7 +893,7 @@ function openImageFlow(ownerType: 'storyboard' | 'derivedAsset', item: Productio
 }
 
 function openWorkbench(): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
@@ -738,7 +905,7 @@ function openExportCenter(): void {
 }
 
 function openAgentPanel(): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
@@ -746,15 +913,11 @@ function openAgentPanel(): void {
 }
 
 function openAssetExtractDialog(): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
-  if (!assetExtractPolling.value) {
-    assetExtractStatus.value = (flowData.value?.assets.length ?? 0) > 0 ? SCRIPT_EXTRACT_STATUS.SUCCEEDED : SCRIPT_EXTRACT_STATUS.IDLE;
-    assetExtractError.value = null;
-  }
-  assetExtractVisible.value = true;
+  void router.push({ name: 'production-resources', query: { contentId: String(currentContentId.value) } });
 }
 
 function openAssetsCenter(): void {
@@ -762,42 +925,23 @@ function openAssetsCenter(): void {
   void router.push({ name: 'assets' });
 }
 
-function openAssetDerivedDialog(asset: ProductionAssetSummary): void {
-  assetExtractVisible.value = false;
-  openDerivedDialog(asset);
-}
-
-function openDerivedAssetImageFlow(asset: ProductionAssetSummary): void {
-  assetExtractVisible.value = false;
-  openImageFlow('derivedAsset', asset);
-}
-
-async function generateMissingDerivedAssetImages(): Promise<void> {
-  const assetIds = missingDerivedAssets.value.map((asset) => asset.id);
-  if (assetIds.length === 0) {
-    MessagePlugin.warning(t('production.assetExtract.noMissingImages'));
-    return;
-  }
-  await generateDerivedAssets(assetIds);
-}
-
 function scheduleAssetExtractPoll(): void {
   clearAssetExtractPollTimer();
-  if (!currentProjectId.value || !currentScriptId.value || !assetExtractPolling.value) {
+  if (!currentProjectId.value || !currentContentId.value || !assetExtractPolling.value) {
     return;
   }
   assetExtractPollTimer = window.setTimeout(() => void pollAssetExtractStatus(), POLL_INTERVAL);
 }
 
 async function pollAssetExtractStatus(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || !assetExtractPolling.value) {
+  if (!currentProjectId.value || !currentContentId.value || !assetExtractPolling.value) {
     clearAssetExtractPollTimer();
     return;
   }
 
-  const response = await window.vtStudio.script.pollExtractStatus({
+  const response = await window.vtStudio.production.resources.pollExtractStatus({
     projectId: currentProjectId.value,
-    scriptIds: [currentScriptId.value],
+    contentIds: [currentContentId.value],
   });
   if (!isOk(response)) {
     assetExtractPolling.value = false;
@@ -805,28 +949,40 @@ async function pollAssetExtractStatus(): Promise<void> {
     return;
   }
 
-  const [script] = response.data.scripts;
-  if (!script) {
-    assetExtractStatus.value = SCRIPT_EXTRACT_STATUS.RUNNING;
+  const [content] = response.data.contents;
+  if (!content) {
+    assetExtractStatus.value = RESOURCE_EXTRACT_STATUS.RUNNING;
     scheduleAssetExtractPoll();
     return;
   }
 
-  assetExtractStatus.value = script.extractStatus;
-  assetExtractError.value = script.errorReason;
+  const nextStatus = content.resourceStatus === PRODUCTION_TASK_STATUS.SUCCEEDED
+    ? RESOURCE_EXTRACT_STATUS.SUCCEEDED
+    : content.resourceStatus === PRODUCTION_TASK_STATUS.FAILED
+      ? RESOURCE_EXTRACT_STATUS.FAILED
+      : content.resourceStatus === PRODUCTION_TASK_STATUS.RUNNING
+        ? RESOURCE_EXTRACT_STATUS.RUNNING
+        : RESOURCE_EXTRACT_STATUS.IDLE;
+  assetExtractStatus.value = nextStatus;
+  assetExtractError.value = content.resourceErrorReason;
+  if (nextStatus === RESOURCE_EXTRACT_STATUS.RUNNING) {
+    scheduleAssetExtractPoll();
+    return;
+  }
   assetExtractPolling.value = false;
   assetExtractTaskId.value = null;
   clearAssetExtractPollTimer();
   await loadWorkspace({ keepDataOnError: true, asRefresh: true });
-  if (script.extractStatus === SCRIPT_EXTRACT_STATUS.SUCCEEDED) {
+  if (nextStatus === RESOURCE_EXTRACT_STATUS.SUCCEEDED) {
+    await loadAssetDrafts();
     MessagePlugin.success(t('production.assetExtract.completed'));
-  } else if (script.extractStatus === SCRIPT_EXTRACT_STATUS.FAILED) {
-    MessagePlugin.error(script.errorReason || t('production.assetExtract.failed'));
+  } else if (nextStatus === RESOURCE_EXTRACT_STATUS.FAILED) {
+    MessagePlugin.error(content.resourceErrorReason || t('production.assetExtract.failed'));
   }
 }
 
 function confirmBatchDeleteStoryboards(): void {
-  if (!currentProjectId.value || !currentScriptId.value || selectedStoryboardIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || selectedStoryboardIds.value.length === 0) {
     MessagePlugin.warning(t('production.node.storyboard.noSelection'));
     return;
   }
@@ -839,9 +995,9 @@ function confirmBatchDeleteStoryboards(): void {
     cancelBtn: t('production.cancel'),
     theme: 'danger',
     async onConfirm() {
-      const response = await window.vtStudio.production.batchDeleteStoryboards({
+      const response = await window.vtStudio.production.storyboard.batchDelete({
         projectId: currentProjectId.value,
-        scriptId: currentScriptId.value!,
+        contentId: currentContentId.value!,
         storyboardIds: ids,
       });
       if (!isOk(response)) {
@@ -857,15 +1013,15 @@ function confirmBatchDeleteStoryboards(): void {
 }
 
 async function generateSelectedStoryboards(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || selectedStoryboardIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || selectedStoryboardIds.value.length === 0) {
     MessagePlugin.warning(t('production.node.storyboard.noSelection'));
     return;
   }
-  const response = await window.vtStudio.production.generateStoryboardImages({
+  const response = await window.vtStudio.production.workflow.runAction({
     projectId: currentProjectId.value,
-    scriptId: currentScriptId.value,
-    storyboardIds: [...selectedStoryboardIds.value],
-    compulsory: true,
+    contentId: currentContentId.value,
+    step: 'storyboardImages',
+    input: { storyboardIds: [...selectedStoryboardIds.value], compulsory: true },
   });
   if (!isOk(response)) {
     MessagePlugin.error(response.msg);
@@ -877,15 +1033,15 @@ async function generateSelectedStoryboards(): Promise<void> {
 }
 
 async function generateStoryboardOne(storyboardId: number): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
-  const response = await window.vtStudio.production.generateStoryboardImages({
+  const response = await window.vtStudio.production.workflow.runAction({
     projectId: currentProjectId.value,
-    scriptId: currentScriptId.value,
-    storyboardIds: [storyboardId],
-    compulsory: true,
+    contentId: currentContentId.value,
+    step: 'storyboardImages',
+    input: { storyboardIds: [storyboardId], compulsory: true },
   });
   if (!isOk(response)) {
     MessagePlugin.error(response.msg);
@@ -920,15 +1076,15 @@ function openEditTrack(track: ProductionVideoTrackItem): void {
 }
 
 async function saveTrack(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     return;
   }
   trackSaving.value = true;
   try {
     const mode = trackForm.mode.trim() ? trackForm.mode.split(',').map((item) => item.trim()).filter(Boolean) : null;
-    const response = await window.vtStudio.production.saveVideoTrack({
+    const response = await window.vtStudio.production.videoTrack.save({
       projectId: currentProjectId.value,
-      scriptId: currentScriptId.value,
+      contentId: currentContentId.value,
       id: editingTrack.value?.id ?? null,
       storyboardIds: trackForm.storyboardIds,
       prompt: trackForm.prompt,
@@ -949,7 +1105,7 @@ async function saveTrack(): Promise<void> {
 }
 
 function confirmDeleteTrack(track: ProductionVideoTrackItem): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     return;
   }
   const dialog = DialogPlugin.confirm({
@@ -959,7 +1115,7 @@ function confirmDeleteTrack(track: ProductionVideoTrackItem): void {
     cancelBtn: t('production.cancel'),
     theme: 'danger',
     async onConfirm() {
-      const response = await window.vtStudio.production.deleteVideoTrack({ projectId: currentProjectId.value, scriptId: currentScriptId.value!, trackId: track.id });
+      const response = await window.vtStudio.production.videoTrack.delete({ projectId: currentProjectId.value, contentId: currentContentId.value!, trackId: track.id });
       if (!isOk(response)) {
         MessagePlugin.error(response.msg);
         return;
@@ -984,11 +1140,11 @@ function clearTrackSelection(): void {
 }
 
 async function generateVideoPrompts(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || selectedTrackIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || selectedTrackIds.value.length === 0) {
     MessagePlugin.warning(t('production.node.workbench.noTrackSelection'));
     return;
   }
-  const response = await window.vtStudio.production.generateVideoPrompts({ projectId: currentProjectId.value, scriptId: currentScriptId.value, trackIds: [...selectedTrackIds.value] });
+  const response = await window.vtStudio.production.workflow.runAction({ projectId: currentProjectId.value, contentId: currentContentId.value, step: 'videoWorkbench', input: { trackIds: [...selectedTrackIds.value] } });
   if (!isOk(response)) {
     MessagePlugin.error(response.msg);
     return;
@@ -998,11 +1154,11 @@ async function generateVideoPrompts(): Promise<void> {
 }
 
 async function generateVideos(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || selectedTrackIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || selectedTrackIds.value.length === 0) {
     MessagePlugin.warning(t('production.node.workbench.noTrackSelection'));
     return;
   }
-  const response = await window.vtStudio.production.generateVideos({ projectId: currentProjectId.value, scriptId: currentScriptId.value, trackIds: [...selectedTrackIds.value] });
+  const response = await window.vtStudio.production.tools.run({ projectId: currentProjectId.value, contentId: currentContentId.value, toolName: 'generate_video', source: 'canvas', input: { trackIds: [...selectedTrackIds.value] } });
   if (!isOk(response)) {
     MessagePlugin.error(response.msg);
     return;
@@ -1020,7 +1176,7 @@ function openDerivedDialog(asset: ProductionAssetSummary): void {
 }
 
 async function saveDerivedAsset(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || !derivedParent.value) {
+  if (!currentProjectId.value || !currentContentId.value || !derivedParent.value) {
     return;
   }
   if (!derivedForm.name.trim()) {
@@ -1029,9 +1185,9 @@ async function saveDerivedAsset(): Promise<void> {
   }
   derivedSaving.value = true;
   try {
-    const response = await window.vtStudio.production.saveDerivedAsset({
+    const response = await window.vtStudio.production.derivedAsset.save({
       projectId: currentProjectId.value,
-      scriptId: currentScriptId.value,
+      contentId: currentContentId.value,
       parentAssetId: derivedParent.value.id,
       name: derivedForm.name,
       description: derivedForm.description,
@@ -1050,7 +1206,7 @@ async function saveDerivedAsset(): Promise<void> {
 }
 
 function confirmDeleteDerivedAsset(asset: ProductionAssetSummary): void {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     return;
   }
   const dialog = DialogPlugin.confirm({
@@ -1060,7 +1216,7 @@ function confirmDeleteDerivedAsset(asset: ProductionAssetSummary): void {
     cancelBtn: t('production.cancel'),
     theme: 'danger',
     async onConfirm() {
-      const response = await window.vtStudio.production.deleteDerivedAsset({ projectId: currentProjectId.value, scriptId: currentScriptId.value!, assetId: asset.id });
+      const response = await window.vtStudio.production.derivedAsset.delete({ projectId: currentProjectId.value, contentId: currentContentId.value!, assetId: asset.id });
       if (!isOk(response)) {
         MessagePlugin.error(response.msg);
         return;
@@ -1073,11 +1229,11 @@ function confirmDeleteDerivedAsset(asset: ProductionAssetSummary): void {
 }
 
 async function generateDerivedAssets(assetIds: number[]): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || assetIds.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || assetIds.length === 0) {
     MessagePlugin.warning(t('production.node.assets.noDerived'));
     return;
   }
-  const response = await window.vtStudio.production.generateDerivedAssetImages({ projectId: currentProjectId.value, scriptId: currentScriptId.value, assetIds });
+  const response = await window.vtStudio.production.tools.run({ projectId: currentProjectId.value, contentId: currentContentId.value, toolName: 'generate_deriveAsset', source: 'canvas', input: { assetIds } });
   if (!isOk(response)) {
     MessagePlugin.error(response.msg);
     return;
@@ -1088,25 +1244,30 @@ async function generateDerivedAssets(assetIds: number[]): Promise<void> {
 }
 
 async function extractCurrentContentResources(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value) {
+  if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
   assetExtractVisible.value = true;
   assetExtractLoading.value = true;
-  assetExtractStatus.value = SCRIPT_EXTRACT_STATUS.WAITING;
+  assetExtractStatus.value = RESOURCE_EXTRACT_STATUS.WAITING;
   assetExtractError.value = null;
+  assetDrafts.value = [];
+  activeAssetDraftId.value = null;
   try {
-    const response = await window.vtStudio.production.extractResources({
+    const response = await window.vtStudio.production.workflow.runAction({
       projectId: currentProjectId.value,
-      contentId: currentScriptId.value,
+      contentId: currentContentId.value,
+      step: 'resources',
+      input: {},
     });
     if (!isOk(response)) {
-      assetExtractStatus.value = SCRIPT_EXTRACT_STATUS.FAILED;
+      assetExtractStatus.value = RESOURCE_EXTRACT_STATUS.FAILED;
       MessagePlugin.error(response.msg);
       return;
     }
-    assetExtractTaskId.value = response.data.taskId;
+    const toolResult = response.data.result as { result?: { taskId?: number } } | undefined;
+    assetExtractTaskId.value = Number(toolResult?.result?.taskId ?? 0) || null;
     assetExtractPolling.value = true;
     MessagePlugin.success(t('production.node.assets.extractStarted'));
     await loadWorkspace({ keepDataOnError: true, asRefresh: true });
@@ -1121,7 +1282,7 @@ function openSyncStoryboardDialog(): void {
 }
 
 async function confirmSyncStoryboardTable(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || !flowData.value) {
+  if (!currentProjectId.value || !currentContentId.value || !flowData.value) {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
@@ -1135,9 +1296,9 @@ async function confirmSyncStoryboardTable(): Promise<void> {
   try {
     const createdStoryboardIds: number[] = [];
     for (const [index, row] of rows.entries()) {
-      const response = await window.vtStudio.production.saveStoryboard({
+      const response = await window.vtStudio.production.storyboard.save({
         projectId: currentProjectId.value,
-        scriptId: currentScriptId.value,
+        contentId: currentContentId.value,
         videoDesc: row,
         prompt: '',
         duration: 4,
@@ -1151,11 +1312,11 @@ async function confirmSyncStoryboardTable(): Promise<void> {
       }
       createdStoryboardIds.push(response.data.storyboard.id);
     }
-    const generateResponse = await window.vtStudio.production.generateStoryboardImages({
+    const generateResponse = await window.vtStudio.production.workflow.runAction({
       projectId: currentProjectId.value,
-      scriptId: currentScriptId.value,
-      storyboardIds: createdStoryboardIds,
-      compulsory: true,
+      contentId: currentContentId.value,
+      step: 'storyboardImages',
+      input: { storyboardIds: createdStoryboardIds, compulsory: true },
     });
     syncStoryboardVisible.value = false;
     if (!isOk(generateResponse)) {
@@ -1180,11 +1341,11 @@ function openExportCheck(): void {
 }
 
 async function pollStoryboards(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || runningStoryboardIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || runningStoryboardIds.value.length === 0) {
     schedulePolls();
     return;
   }
-  const response = await window.vtStudio.production.pollStoryboardImages({ projectId: currentProjectId.value, scriptId: currentScriptId.value, ids: [...runningStoryboardIds.value] });
+  const response = await window.vtStudio.production.storyboard.pollImages({ projectId: currentProjectId.value, contentId: currentContentId.value, ids: [...runningStoryboardIds.value] });
   if (isOk(response) && response.data.storyboards.length > 0) {
     await loadWorkspace({ keepDataOnError: true, asRefresh: true });
     return;
@@ -1193,11 +1354,11 @@ async function pollStoryboards(): Promise<void> {
 }
 
 async function pollDerivedAssets(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || runningDerivedAssetIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || runningDerivedAssetIds.value.length === 0) {
     schedulePolls();
     return;
   }
-  const response = await window.vtStudio.production.pollDerivedAssetImages({ projectId: currentProjectId.value, scriptId: currentScriptId.value, ids: [...runningDerivedAssetIds.value] });
+  const response = await window.vtStudio.production.derivedAsset.pollImages({ projectId: currentProjectId.value, contentId: currentContentId.value, ids: [...runningDerivedAssetIds.value] });
   if (isOk(response) && response.data.assets.length > 0) {
     await loadWorkspace({ keepDataOnError: true, asRefresh: true });
     return;
@@ -1206,11 +1367,11 @@ async function pollDerivedAssets(): Promise<void> {
 }
 
 async function pollVideoPrompts(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || runningVideoPromptTrackIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || runningVideoPromptTrackIds.value.length === 0) {
     schedulePolls();
     return;
   }
-  const response = await window.vtStudio.production.pollVideoPrompts({ projectId: currentProjectId.value, scriptId: currentScriptId.value, ids: [...runningVideoPromptTrackIds.value] });
+  const response = await window.vtStudio.production.videoPrompt.poll({ projectId: currentProjectId.value, contentId: currentContentId.value, ids: [...runningVideoPromptTrackIds.value] });
   if (isOk(response) && response.data.tracks.length > 0) {
     await loadWorkspace({ keepDataOnError: true, asRefresh: true });
     return;
@@ -1219,11 +1380,11 @@ async function pollVideoPrompts(): Promise<void> {
 }
 
 async function pollVideos(): Promise<void> {
-  if (!currentProjectId.value || !currentScriptId.value || runningVideoIds.value.length === 0) {
+  if (!currentProjectId.value || !currentContentId.value || runningVideoIds.value.length === 0) {
     schedulePolls();
     return;
   }
-  const response = await window.vtStudio.production.pollVideos({ projectId: currentProjectId.value, scriptId: currentScriptId.value, ids: [...runningVideoIds.value] });
+  const response = await window.vtStudio.production.video.poll({ projectId: currentProjectId.value, contentId: currentContentId.value, ids: [...runningVideoIds.value] });
   if (isOk(response) && response.data.tracks.length > 0) {
     await loadWorkspace({ keepDataOnError: true, asRefresh: true });
     return;
@@ -1233,6 +1394,18 @@ async function pollVideos(): Promise<void> {
 
 watch(currentProjectId, () => {
   void loadWorkspace({ autoLayout: true });
+});
+
+watch(() => assetDraftForm.type, (type) => {
+  if (assetDraftForm.matchedAssetId && !assetExistingAssets.value.some((asset) => asset.id === assetDraftForm.matchedAssetId && asset.type === type)) {
+    assetDraftForm.matchedAssetId = null;
+  }
+});
+
+watch(() => assetDraftForm.action, (action) => {
+  if (action === 'create' || action === 'skip') {
+    assetDraftForm.matchedAssetId = null;
+  }
 });
 
 onMounted(() => {
@@ -1250,14 +1423,10 @@ onUnmounted(() => {
     <section class="production-canvas-shell min-h-0">
       <div
         v-if="hasFlowData"
-        class="absolute left-3 top-3 z-[8] flex min-w-[min(760px,calc(100%_-_24px))] max-w-[calc(100%_-_24px)] items-center gap-2 rounded-lg border border-line-soft p-2.5 shadow-[0_10px_26px_rgba(16,24,20,0.08)] backdrop-blur-xl [background:color-mix(in_srgb,var(--vt-surface-panel)_92%,transparent)] max-[960px]:right-3 max-[960px]:min-w-0 max-[960px]:flex-wrap">
-        <div class="grid min-w-[140px] max-w-[240px] gap-0.5">
-          <span class="text-xs leading-[1.35] text-text-muted">{{ t('production.title') }}</span>
-          <strong class="truncate text-[13px] leading-[1.35] text-text-primary">{{ currentProjectName }}</strong>
-        </div>
+        class="absolute left-3 top-3 z-[8] flex min-w-[min(560px,calc(100%_-_24px))] max-w-[calc(100%_-_24px)] items-center gap-2 rounded-lg border border-line-soft p-2.5 shadow-[0_10px_26px_rgba(16,24,20,0.08)] backdrop-blur-xl [background:color-mix(in_srgb,var(--vt-surface-panel)_92%,transparent)] max-[960px]:right-3 max-[960px]:min-w-0 max-[960px]:flex-wrap">
         <label class="grid w-[min(320px,34vw)] min-w-[180px] gap-1 max-[960px]:w-[min(300px,100%)]">
           <span class="text-xs leading-[1.35] text-text-muted">{{ t('production.scriptSelect') }}</span>
-          <t-select :model-value="currentScriptId" :options="scriptOptions" :placeholder="t('production.scriptPlaceholder')" :loading="loading" size="small" filterable @change="handleScriptChange" />
+          <t-select :model-value="currentContentId" :options="contentOptions" :placeholder="t('production.scriptPlaceholder')" :loading="loading" size="small" filterable @change="handleContentChange" />
         </label>
         <span class="min-w-[180px] truncate text-xs leading-[1.35] text-text-muted max-[960px]:basis-full max-[960px]:min-w-0">{{ t('production.canvasStatsValue', canvasStats) }}</span>
       </div>
@@ -1495,12 +1664,12 @@ onUnmounted(() => {
       </div>
     </VtDialog>
 
-    <VtDialog :visible="assetExtractVisible" :title="t('production.assetExtract.title')" width="980px" :footer="false" @update:visible="(value) => (assetExtractVisible = value)">
+    <VtDialog :visible="assetExtractVisible" :title="t('production.assetExtract.title')" width="1120px" :footer="false" @update:visible="(value) => (assetExtractVisible = value)">
       <div class="production-asset-extract-dialog">
         <header class="production-asset-extract-head">
           <div class="production-asset-extract-title">
             <span>{{ t('production.assetExtract.current') }}</span>
-            <strong>{{ currentScriptName }}</strong>
+            <strong>{{ currentContentName }}</strong>
           </div>
           <div class="production-asset-extract-head-actions">
             <div class="production-asset-extract-status">
@@ -1513,9 +1682,9 @@ onUnmounted(() => {
                   <template #icon><PlayCircleIcon /></template>
                 </VtButton>
               </t-tooltip>
-              <t-tooltip :content="t('production.assetExtract.generateMissingImages')">
-                <VtButton variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.assetExtract.generateMissingImages')" :disabled="missingDerivedAssets.length === 0" @click="generateMissingDerivedAssetImages">
-                  <template #icon><ImageIcon /></template>
+              <t-tooltip :content="t('production.refresh')">
+                <VtButton variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.refresh')" :loading="assetDraftLoading" @click="loadAssetDrafts">
+                  <template #icon><RefreshIcon /></template>
                 </VtButton>
               </t-tooltip>
               <t-tooltip :content="t('production.assetExtract.assetCenter')">
@@ -1537,65 +1706,90 @@ onUnmounted(() => {
         </div>
 
         <div class="production-asset-extract-content">
-          <section v-for="group in assetExtractGroups" :key="group.type" class="production-asset-extract-group" :class="`is-${group.status}`">
+          <nav class="production-asset-extract-tabs" :aria-label="t('production.assetExtract.typeTabs')">
+            <button v-for="tab in assetDraftTabs" :key="tab.type" type="button" :class="{ 'is-active': activeAssetDraftType === tab.type }" @click="selectAssetDraftType(tab.type)">
+              <span class="production-asset-extract-type-mark">{{ t(`production.assetType.${tab.type}`).slice(0, 1) }}</span>
+              <strong>{{ t(`production.assetType.${tab.type}`) }}</strong>
+              <em>{{ tab.count }}</em>
+            </button>
+          </nav>
+
+          <section class="production-asset-extract-list-panel">
             <header>
-              <div class="production-asset-extract-group-title">
-                <span class="production-asset-extract-type-mark">{{ t(`production.assetType.${group.type}`).slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ t(`production.assetType.${group.type}`) }}</strong>
-                  <span>{{ t('production.assetExtract.groupStats', { count: group.assets.length, ready: group.readyCount, missing: group.missingImageCount, derived: group.derivedCount }) }}</span>
-                </div>
-              </div>
-              <t-tag :theme="getAssetExtractGroupTheme(group.status)" variant="light">{{ t(`production.assetExtract.groupStatus.${group.status}`) }}</t-tag>
+              <strong>{{ t(`production.assetType.${activeAssetDraftType}`) }}</strong>
+              <span>{{ t('production.assetExtract.draftCount', { count: activeAssetDrafts.length }) }}</span>
             </header>
-            <div v-if="group.assets.length > 0" class="production-asset-extract-list">
-              <article v-for="asset in group.assets" :key="asset.id" class="production-asset-extract-card">
-                <div class="production-asset-extract-thumb">
-                  <img v-if="asset.imageUrl" :src="asset.imageUrl" :alt="asset.name" />
-                  <span v-else>{{ t(`production.assetType.${asset.type}`).slice(0, 1) }}</span>
+            <t-loading :loading="assetDraftLoading">
+              <div v-if="activeAssetDrafts.length > 0" class="production-asset-extract-draft-list">
+                <button v-for="draft in activeAssetDrafts" :key="draft.id" type="button" :class="{ 'is-active': selectedAssetDraft?.id === draft.id }" @click="selectAssetDraft(draft)">
+                  <strong>{{ draft.name }}</strong>
+                  <span>{{ previewText(draft.description || draft.prompt, 88) }}</span>
+                  <t-tag size="small" variant="light">{{ t(`production.assetExtract.action.${draft.action}`) }}</t-tag>
+                </button>
+              </div>
+              <VtEmptyState v-else :description="assetExtractPolling ? t('production.assetExtract.waitingDrafts') : t('production.assetExtract.empty')" />
+            </t-loading>
+          </section>
+
+          <section class="production-asset-extract-detail">
+            <template v-if="selectedAssetDraft">
+              <header>
+                <div>
+                  <span>{{ t('production.assetExtract.detail') }}</span>
+                  <strong>{{ selectedAssetDraft.name }}</strong>
                 </div>
-                <div class="production-asset-extract-info">
-                  <strong>{{ asset.name }}</strong>
-                  <p>{{ previewText(asset.description || asset.prompt, 120) }}</p>
-                  <div>
-                    <t-tag size="small" :theme="getStatusTheme(asset.imageStatus)" variant="light">{{ getAssetImageStatusLabel(asset) }}</t-tag>
-                    <t-tag size="small" variant="light">{{ t('production.assetExtract.childCount', { count: asset.children.length }) }}</t-tag>
-                  </div>
-                </div>
-                <div class="production-asset-extract-card-actions">
-                  <t-tooltip :content="t('production.assetExtract.addDerived')">
-                    <VtButton size="small" variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.assetExtract.addDerived')" @click="openAssetDerivedDialog(asset)">
-                      <template #icon><AddIcon /></template>
-                    </VtButton>
-                  </t-tooltip>
-                  <t-tooltip :content="t('production.assetExtract.generateDerived')">
-                    <VtButton size="small" variant="outline" shape="square" icon-only :min-width="0" :aria-label="t('production.assetExtract.generateDerived')" :disabled="getGeneratableDerivedAssetIds(asset).length === 0" @click="generateDerivedAssets(getGeneratableDerivedAssetIds(asset))">
-                      <template #icon><ImageIcon /></template>
-                    </VtButton>
-                  </t-tooltip>
-                </div>
-                <div v-if="asset.children.length" class="production-asset-extract-children">
-                  <article v-for="child in asset.children" :key="child.id">
-                    <div>
-                      <strong>{{ child.name }}</strong>
-                      <span>{{ previewText(child.description || child.prompt, 82) }}</span>
-                    </div>
-                    <t-tag size="small" :theme="getStatusTheme(child.imageStatus)" variant="light">{{ getAssetImageStatusLabel(child) }}</t-tag>
-                    <t-tooltip :content="t('production.assetExtract.openImageFlow')">
-                      <VtButton size="small" variant="text" shape="square" icon-only :min-width="0" :aria-label="t('production.assetExtract.openImageFlow')" @click="openDerivedAssetImageFlow(child)">
-                        <template #icon><ImageIcon /></template>
-                      </VtButton>
-                    </t-tooltip>
-                  </article>
-                </div>
-              </article>
-            </div>
-            <div v-else class="production-asset-extract-task-empty">
-              <strong>{{ t(`production.assetExtract.groupStatus.${group.status}`) }}</strong>
-              <span>{{ getAssetExtractGroupEmptyLabel(group) }}</span>
-            </div>
+                <t-tag :theme="assetDraftChanged ? 'warning' : 'success'" variant="light">{{ assetDraftChanged ? t('production.assetExtract.unsaved') : t('production.assetExtract.saved') }}</t-tag>
+              </header>
+              <div class="production-asset-extract-form">
+                <label>
+                  <span>{{ t('production.assetExtract.field.type') }}</span>
+                  <t-select v-model="assetDraftForm.type" :options="assetDraftTypeOptions" />
+                </label>
+                <label>
+                  <span>{{ t('production.assetExtract.field.action') }}</span>
+                  <t-select v-model="assetDraftForm.action" :options="assetDraftActionOptions" />
+                </label>
+                <label class="is-wide">
+                  <span>{{ t('production.assetExtract.field.matchedAsset') }}</span>
+                  <t-select v-model="assetDraftForm.matchedAssetId" clearable filterable :disabled="!assetDraftNeedsMatch" :options="assetDraftMatchedAssetOptions" :placeholder="assetDraftNeedsMatch ? t('production.assetExtract.matchPlaceholder') : t('production.assetExtract.matchDisabled')" />
+                </label>
+                <label class="is-wide">
+                  <span>{{ t('production.assetExtract.field.name') }}</span>
+                  <t-input v-model="assetDraftForm.name" :disabled="assetDraftForm.action === 'skip'" />
+                </label>
+                <label class="is-wide">
+                  <span>{{ t('production.assetExtract.field.description') }}</span>
+                  <t-textarea v-model="assetDraftForm.description" :disabled="assetDraftForm.action === 'skip'" :autosize="{ minRows: 4, maxRows: 7 }" />
+                </label>
+                <label class="is-wide">
+                  <span>{{ t('production.assetExtract.field.prompt') }}</span>
+                  <t-textarea v-model="assetDraftForm.prompt" :disabled="assetDraftForm.action === 'skip'" :autosize="{ minRows: 6, maxRows: 10 }" />
+                </label>
+              </div>
+            </template>
+            <VtEmptyState v-else :description="t('production.assetExtract.noDraftSelected')" />
           </section>
         </div>
+
+        <footer class="production-asset-extract-footer">
+          <div>
+            <span>{{ t('production.assetExtract.footerStats', { draft: assetDrafts.length, existing: assetExistingAssets.length }) }}</span>
+          </div>
+          <div>
+            <VtButton variant="outline" :disabled="!selectedAssetDraft || assetDraftDeleting || assetDraftCommitting" :loading="assetDraftDeleting" @click="deleteSelectedAssetDraft">
+              <template #icon><CloseIcon /></template>
+              {{ t('production.delete') }}
+            </VtButton>
+            <VtButton variant="outline" :disabled="!selectedAssetDraft || !assetDraftChanged || assetDraftCommitting" :loading="assetDraftSaving" @click="saveSelectedAssetDraft()">
+              <template #icon><SaveIcon /></template>
+              {{ t('production.save') }}
+            </VtButton>
+            <VtButton theme="primary" variant="base" :disabled="assetDrafts.length === 0 || assetExtractPolling" :loading="assetDraftCommitting" @click="commitAssetDrafts">
+              <template #icon><SaveIcon /></template>
+              {{ t('production.assetExtract.commit') }}
+            </VtButton>
+          </div>
+        </footer>
       </div>
     </VtDialog>
 
@@ -1644,12 +1838,12 @@ onUnmounted(() => {
       </div>
     </VtDialog>
 
-    <ProductionAgentPanel v-model:visible="agentPanelVisible" :project-id="currentProjectId" :script-id="currentScriptId" @applied="loadWorkspace({ keepDataOnError: true, asRefresh: true })" />
+    <ProductionAgentPanel v-model:visible="agentPanelVisible" :project-id="currentProjectId" :content-id="currentContentId" @applied="loadWorkspace({ keepDataOnError: true, asRefresh: true })" />
 
     <ProductionImageFlowDialog
       v-model:visible="imageFlowVisible"
       :project-id="currentProjectId"
-      :script-id="currentScriptId"
+      :content-id="currentContentId"
       :owner="imageFlowOwner"
       :storyboards="flowData?.storyboards ?? []"
       :assets="flowData?.assets ?? []"
@@ -1658,7 +1852,7 @@ onUnmounted(() => {
     <ProductionWorkbenchDialog
       v-model:visible="workbenchVisible"
       :project-id="currentProjectId"
-      :script-id="currentScriptId"
+      :content-id="currentContentId"
       @saved="loadWorkspace({ keepDataOnError: true, asRefresh: true })"
       @show-detail="openProductionDetail" />
   </div>
@@ -1693,9 +1887,11 @@ onUnmounted(() => {
 }
 
 .production-asset-extract-title span,
-.production-asset-extract-group header span,
-.production-asset-extract-info p,
-.production-asset-extract-children span {
+.production-asset-extract-list-panel header span,
+.production-asset-extract-detail header span,
+.production-asset-extract-draft-list span,
+.production-asset-extract-form label > span,
+.production-asset-extract-footer span {
   color: var(--vt-text-muted);
   font-size: 12px;
   line-height: 1.6;
@@ -1710,10 +1906,6 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.production-asset-extract-info p {
-  margin: 0;
-}
-
 .production-asset-extract-head-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1724,8 +1916,7 @@ onUnmounted(() => {
 }
 
 .production-asset-extract-status,
-.production-asset-extract-actions,
-.production-asset-extract-info > div {
+.production-asset-extract-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1797,63 +1988,12 @@ onUnmounted(() => {
 
 .production-asset-extract-content {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 132px minmax(260px, 0.76fr) minmax(360px, 1fr);
   align-items: stretch;
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 1px 2px 2px 0;
-  scrollbar-gutter: stable;
-}
-
-.production-asset-extract-group {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  min-height: 320px;
-  padding: 12px;
-  border: 1px solid var(--vt-line-soft);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--vt-surface-panel) 92%, transparent);
-}
-
-.production-asset-extract-group.is-running,
-.production-asset-extract-group.is-waiting {
-  border-color: color-mix(in srgb, var(--vt-brand) 32%, var(--vt-line-soft));
-  background: color-mix(in srgb, var(--vt-brand) 7%, var(--vt-surface-panel));
-}
-
-.production-asset-extract-group.is-failed {
-  border-color: color-mix(in srgb, var(--vt-danger) 34%, var(--vt-line-soft));
-}
-
-.production-asset-extract-group.is-done {
-  border-color: color-mix(in srgb, var(--vt-success) 34%, var(--vt-line-soft));
-}
-
-.production-asset-extract-group header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.production-asset-extract-group-title {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: center;
-  min-width: 0;
-  gap: 9px;
-}
-
-.production-asset-extract-group-title > div {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
+  overflow: hidden;
 }
 
 .production-asset-extract-type-mark {
@@ -1869,86 +2009,132 @@ onUnmounted(() => {
   font-weight: 800;
 }
 
-.production-asset-extract-group header strong {
-  color: var(--vt-text-primary);
-  font-size: 15px;
-  line-height: 1.4;
-}
-
-.production-asset-extract-list {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+.production-asset-extract-tabs,
+.production-asset-extract-list-panel,
+.production-asset-extract-detail {
   min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--vt-line-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vt-surface-panel) 94%, transparent);
 }
 
-.production-asset-extract-task-empty {
+.production-asset-extract-tabs {
   display: grid;
-  align-content: center;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-height: 180px;
-  place-items: center;
-  padding: 18px;
-  border: 1px dashed var(--vt-line-soft);
+  align-content: start;
+  gap: 8px;
+  padding: 8px;
+}
+
+.production-asset-extract-tabs button {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid transparent;
   border-radius: 8px;
+  color: var(--vt-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.production-asset-extract-tabs button:hover,
+.production-asset-extract-tabs button.is-active {
+  border-color: color-mix(in srgb, var(--vt-brand) 28%, var(--vt-line-soft));
+  color: var(--vt-text-primary);
+  background: color-mix(in srgb, var(--vt-brand) 8%, var(--vt-surface-raised));
+}
+
+.production-asset-extract-tabs strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-asset-extract-tabs em {
+  min-width: 24px;
+  padding: 2px 6px;
+  border-radius: 999px;
   color: var(--vt-text-muted);
   background: var(--vt-surface-raised);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.4;
   text-align: center;
 }
 
-.production-asset-extract-task-empty strong {
-  color: var(--vt-text-primary);
-  font-size: 14px;
-  line-height: 1.4;
+.production-asset-extract-list-panel,
+.production-asset-extract-detail {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.production-asset-extract-task-empty span {
-  max-width: 180px;
-}
-
-.production-asset-extract-card {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  align-items: start;
+.production-asset-extract-list-panel > header,
+.production-asset-extract-detail > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--vt-line-soft);
+}
+
+.production-asset-extract-detail > header > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.production-asset-extract-list-panel header strong,
+.production-asset-extract-detail header strong {
+  overflow: hidden;
+  color: var(--vt-text-primary);
+  font-size: 15px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-asset-extract-draft-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  max-height: 100%;
+  overflow: auto;
+  padding: 10px;
+  scrollbar-gutter: stable;
+}
+
+.production-asset-extract-draft-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--vt-line-soft);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--vt-surface-panel) 88%, transparent);
+  background: var(--vt-surface-raised);
+  cursor: pointer;
+  text-align: left;
 }
 
-.production-asset-extract-thumb {
-  display: grid;
-  width: 56px;
-  aspect-ratio: 1;
-  overflow: hidden;
-  place-items: center;
-  border: 1px solid var(--vt-line-soft);
-  border-radius: 8px;
-  color: var(--vt-brand-strong);
-  background: color-mix(in srgb, var(--vt-brand) 9%, var(--vt-surface-raised));
-  font-size: 18px;
-  font-weight: 800;
+.production-asset-extract-draft-list button:hover,
+.production-asset-extract-draft-list button.is-active {
+  border-color: color-mix(in srgb, var(--vt-brand) 34%, var(--vt-line-soft));
+  background: color-mix(in srgb, var(--vt-brand) 7%, var(--vt-surface-panel));
 }
 
-.production-asset-extract-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.production-asset-extract-info {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-}
-
-.production-asset-extract-info strong,
-.production-asset-extract-children strong {
+.production-asset-extract-draft-list strong {
+  grid-column: 1 / -1;
   overflow: hidden;
   color: var(--vt-text-primary);
   font-size: 13px;
@@ -1957,42 +2143,54 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.production-asset-extract-info p,
-.production-asset-extract-children span {
+.production-asset-extract-draft-list span {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
-.production-asset-extract-card-actions {
-  display: grid;
-  gap: 6px;
+.production-asset-extract-draft-list :deep(.t-tag) {
+  justify-self: start;
 }
 
-.production-asset-extract-children {
-  grid-column: 1 / -1;
+.production-asset-extract-form {
   display: grid;
-  gap: 6px;
-  padding-top: 2px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  scrollbar-gutter: stable;
 }
 
-.production-asset-extract-children article {
+.production-asset-extract-form label {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
   min-width: 0;
-  padding: 8px;
+  gap: 6px;
+}
+
+.production-asset-extract-form label.is-wide {
+  grid-column: 1 / -1;
+}
+
+.production-asset-extract-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid var(--vt-line-soft);
   border-radius: 8px;
-  background: var(--vt-surface-raised);
+  background: var(--vt-surface-panel);
 }
 
-.production-asset-extract-children article > div {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
+.production-asset-extract-footer > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 @media (max-width: 720px) {
@@ -2000,14 +2198,13 @@ onUnmounted(() => {
     max-height: calc(100dvh - 128px);
   }
 
-  .production-asset-extract-head,
-  .production-asset-extract-card,
-  .production-asset-extract-children article {
+  .production-asset-extract-head {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .production-asset-extract-content {
     grid-template-columns: minmax(0, 1fr);
+    overflow: auto;
   }
 
   .production-asset-extract-head-actions,
@@ -2015,13 +2212,31 @@ onUnmounted(() => {
     justify-content: flex-start;
   }
 
-  .production-asset-extract-group {
-    min-height: 240px;
+  .production-asset-extract-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .production-asset-extract-card-actions {
-    display: flex;
-    flex-wrap: wrap;
+  .production-asset-extract-tabs button {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    text-align: center;
+  }
+
+  .production-asset-extract-type-mark {
+    width: 30px;
+  }
+
+  .production-asset-extract-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .production-asset-extract-footer {
+    align-items: stretch;
+  }
+
+  .production-asset-extract-footer > div {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 </style>

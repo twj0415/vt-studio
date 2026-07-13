@@ -62,8 +62,8 @@ const { t } = useI18n();
 
 const nodeHint = computed(() => t(`production.node.${props.nodeType}.hint`));
 const nodeStage = computed(() => t(`production.flow.stage.${props.nodeType}`));
-const scriptPreview = computed(() => previewText(props.flowData.script, 420));
-const scriptPlanPreview = computed(() => previewText(props.flowData.scriptPlan, 260));
+const scriptPreview = computed(() => previewText(props.flowData.contentBody, 420));
+const scriptPlanPreview = computed(() => previewText(props.flowData.directorPlan ?? '', 260));
 const storyboardTablePreview = computed(() => previewText(props.flowData.storyboardTable, 260));
 const topAssets = computed(() => props.flowData.assets);
 const derivedAssets = computed(() => props.flowData.assets.flatMap((asset) => asset.children));
@@ -88,8 +88,8 @@ const exportBlockerCount = computed(() => props.flowData.videoTracks.filter((tra
   return !selectedVideo || selectedVideo.status !== PRODUCTION_TASK_STATUS.SUCCEEDED || !selectedVideo.videoUrl;
 }).length);
 
-function previewText(value: string, limit: number): string {
-  const text = value.trim();
+function previewText(value: string | null | undefined, limit: number): string {
+  const text = (value ?? '').trim();
   if (!text) {
     return t('production.emptyText');
   }
@@ -230,7 +230,7 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
     <section v-if="nodeType === 'script'" class="production-node-body">
       <pre class="production-node-text">{{ scriptPreview }}</pre>
       <div class="production-node-meta-grid">
-        <span>{{ t('production.node.script.chars', { count: flowData.script.length }) }}</span>
+        <span>{{ t('production.node.script.chars', { count: (flowData.contentBody ?? '').length }) }}</span>
         <span>{{ t('production.node.script.assets', { count: topAssets.length }) }}</span>
       </div>
     </section>

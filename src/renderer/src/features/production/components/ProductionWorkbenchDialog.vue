@@ -85,7 +85,7 @@ const VIDEO_MODE_LABEL_KEYS: Record<string, string> = {
 const props = defineProps<{
   visible: boolean;
   projectId: number;
-  scriptId: number | null;
+  contentId: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -667,16 +667,16 @@ async function loadProjectVideoDefaults(): Promise<void> {
 }
 
 async function loadWorkbench(asRefresh = false): Promise<void> {
-  if (!props.visible || !props.projectId || !props.scriptId) {
+  if (!props.visible || !props.projectId || !props.contentId) {
     return;
   }
   if (!asRefresh) {
     loading.value = true;
   }
   try {
-    const response = await window.vtStudio.production.getWorkbench({
+    const response = await window.vtStudio.production.workbench.get({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
     });
     if (!isOk(response)) {
       MessagePlugin.error(response.msg);
@@ -715,7 +715,7 @@ function openWorkbenchTab(tab: WorkbenchTab): void {
 }
 
 async function createTrackFromSelection(): Promise<void> {
-  if (!props.projectId || !props.scriptId) {
+  if (!props.projectId || !props.contentId) {
     return;
   }
   const selectedStoryboards = selectedPreviewStoryboardIds.value.length ? selectedPreviewStoryboardIds.value : storyboards.value.slice(0, 1).map((storyboard) => storyboard.id);
@@ -726,9 +726,9 @@ async function createTrackFromSelection(): Promise<void> {
     .join('\n');
   saving.value = true;
   try {
-    const response = await window.vtStudio.production.saveVideoTrack({
+    const response = await window.vtStudio.production.videoTrack.save({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       id: null,
       storyboardIds: selectedStoryboards,
       prompt,
@@ -751,14 +751,14 @@ async function createTrackFromSelection(): Promise<void> {
 }
 
 async function createEmptyTrack(): Promise<void> {
-  if (!props.projectId || !props.scriptId) {
+  if (!props.projectId || !props.contentId) {
     return;
   }
   saving.value = true;
   try {
-    const response = await window.vtStudio.production.saveVideoTrack({
+    const response = await window.vtStudio.production.videoTrack.save({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       id: null,
       storyboardIds: [],
       prompt: '',
@@ -780,15 +780,15 @@ async function createEmptyTrack(): Promise<void> {
 }
 
 async function saveCurrentTrack(showMessage = true): Promise<boolean> {
-  if (!props.projectId || !props.scriptId || !currentTrack.value) {
+  if (!props.projectId || !props.contentId || !currentTrack.value) {
     return false;
   }
   const nextDuration = Math.min(10, Math.max(1, Number(trackForm.duration) || DEFAULT_DURATION));
   saving.value = true;
   try {
-    const response = await window.vtStudio.production.saveVideoTrack({
+    const response = await window.vtStudio.production.videoTrack.save({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       id: currentTrack.value.id,
       storyboardIds: [...trackForm.storyboardIds],
       prompt: trackForm.prompt,
@@ -812,7 +812,7 @@ async function saveCurrentTrack(showMessage = true): Promise<boolean> {
 }
 
 function confirmDeleteTrack(track: ProductionVideoTrackItem): void {
-  if (!props.projectId || !props.scriptId) {
+  if (!props.projectId || !props.contentId) {
     return;
   }
   const dialog = DialogPlugin.confirm({
@@ -822,9 +822,9 @@ function confirmDeleteTrack(track: ProductionVideoTrackItem): void {
     cancelBtn: t('production.cancel'),
     theme: 'danger',
     async onConfirm() {
-      const response = await window.vtStudio.production.deleteVideoTrack({
+      const response = await window.vtStudio.production.videoTrack.delete({
         projectId: props.projectId,
-        scriptId: props.scriptId!,
+        contentId: props.contentId!,
         trackId: track.id,
       });
       if (!isOk(response)) {
@@ -840,15 +840,15 @@ function confirmDeleteTrack(track: ProductionVideoTrackItem): void {
 }
 
 async function generatePromptsForSelected(): Promise<void> {
-  if (!props.projectId || !props.scriptId || selectedTrackIds.value.length === 0) {
+  if (!props.projectId || !props.contentId || selectedTrackIds.value.length === 0) {
     MessagePlugin.warning(t('production.node.workbench.noTrackSelection'));
     return;
   }
   promptGenerating.value = true;
   try {
-    const response = await window.vtStudio.production.generateVideoPrompts({
+    const response = await window.vtStudio.production.videoPrompt.generate({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       trackIds: [...selectedTrackIds.value],
     });
     if (!isOk(response)) {
@@ -864,7 +864,7 @@ async function generatePromptsForSelected(): Promise<void> {
 }
 
 async function generateVideoForTracks(trackIds: number[]): Promise<void> {
-  if (!props.projectId || !props.scriptId || trackIds.length === 0) {
+  if (!props.projectId || !props.contentId || trackIds.length === 0) {
     MessagePlugin.warning(t('production.node.workbench.noTrackSelection'));
     return;
   }
@@ -879,9 +879,9 @@ async function generateVideoForTracks(trackIds: number[]): Promise<void> {
   }
   videoGenerating.value = true;
   try {
-    const response = await window.vtStudio.production.generateVideos({
+    const response = await window.vtStudio.production.video.generate({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       trackIds,
       model: trackForm.model || null,
       mode: normalizeModeValue(trackForm.mode),
@@ -903,12 +903,12 @@ async function generateVideoForTracks(trackIds: number[]): Promise<void> {
 }
 
 async function selectVideo(track: ProductionVideoTrackItem, video: ProductionVideoItem | null): Promise<void> {
-  if (!props.projectId || !props.scriptId) {
+  if (!props.projectId || !props.contentId) {
     return;
   }
-  const response = await window.vtStudio.production.selectVideo({
+  const response = await window.vtStudio.production.video.select({
     projectId: props.projectId,
-    scriptId: props.scriptId,
+    contentId: props.contentId,
     trackId: track.id,
     videoId: video?.id ?? null,
   });
@@ -922,7 +922,7 @@ async function selectVideo(track: ProductionVideoTrackItem, video: ProductionVid
 }
 
 function confirmDeleteVideo(video: ProductionVideoItem): void {
-  if (!props.projectId || !props.scriptId) {
+  if (!props.projectId || !props.contentId) {
     return;
   }
   const dialog = DialogPlugin.confirm({
@@ -934,9 +934,9 @@ function confirmDeleteVideo(video: ProductionVideoItem): void {
     async onConfirm() {
       videoDeleting.value = true;
       try {
-        const response = await window.vtStudio.production.deleteVideo({
+        const response = await window.vtStudio.production.video.delete({
           projectId: props.projectId,
-          scriptId: props.scriptId!,
+          contentId: props.contentId!,
           videoId: video.id,
         });
         if (!isOk(response)) {
@@ -968,14 +968,14 @@ function openVideoPreview(video: ProductionVideoItem): void {
 }
 
 function openDraftDialog(): void {
-  if (!props.projectId || !props.scriptId) {
+  if (!props.projectId || !props.contentId) {
     return;
   }
   if (!exportReady.value) {
     exportCheckVisible.value = true;
     return;
   }
-  draftForm.draftName = `content-${props.scriptId}`;
+  draftForm.draftName = `content-${props.contentId}`;
   draftForm.copyAssets = true;
   draftDialogVisible.value = true;
 }
@@ -1060,7 +1060,7 @@ function clearPollTimers(): void {
 
 function schedulePolls(): void {
   clearPollTimers();
-  if (!props.visible || !props.projectId || !props.scriptId) {
+  if (!props.visible || !props.projectId || !props.contentId) {
     return;
   }
   if (runningPromptTrackIds.value.length > 0) {
@@ -1072,13 +1072,13 @@ function schedulePolls(): void {
 }
 
 async function pollVideoPrompts(): Promise<void> {
-  if (!props.projectId || !props.scriptId || runningPromptTrackIds.value.length === 0) {
+  if (!props.projectId || !props.contentId || runningPromptTrackIds.value.length === 0) {
     schedulePolls();
     return;
   }
-  const response = await window.vtStudio.production.pollVideoPrompts({
+  const response = await window.vtStudio.production.videoPrompt.poll({
     projectId: props.projectId,
-    scriptId: props.scriptId,
+    contentId: props.contentId,
     ids: [...runningPromptTrackIds.value],
   });
   if (isOk(response) && response.data.tracks.length > 0) {
@@ -1089,13 +1089,13 @@ async function pollVideoPrompts(): Promise<void> {
 }
 
 async function pollVideos(): Promise<void> {
-  if (!props.projectId || !props.scriptId || runningVideoIds.value.length === 0) {
+  if (!props.projectId || !props.contentId || runningVideoIds.value.length === 0) {
     schedulePolls();
     return;
   }
-  const response = await window.vtStudio.production.pollVideos({
+  const response = await window.vtStudio.production.video.poll({
     projectId: props.projectId,
-    scriptId: props.scriptId,
+    contentId: props.contentId,
     ids: [...runningVideoIds.value],
   });
   if (isOk(response) && response.data.tracks.length > 0) {
@@ -1298,7 +1298,7 @@ async function downloadUrlsAsZip(items: Array<{ url: string | null; name: string
 }
 
 async function downloadSelectedStoryboards(): Promise<void> {
-  if (!props.projectId || !props.scriptId || selectedPreviewStoryboardIds.value.length === 0) {
+  if (!props.projectId || !props.contentId || selectedPreviewStoryboardIds.value.length === 0) {
     MessagePlugin.warning(t('production.node.storyboard.noSelection'));
     return;
   }
@@ -1307,7 +1307,7 @@ async function downloadSelectedStoryboards(): Promise<void> {
     const orderedIds = sortedPreviewStoryboards.value.map((storyboard) => storyboard.id).filter((id) => selectedPreviewStoryboardIds.value.includes(id));
     const response = await window.vtStudio.export.storyboardImages({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       storyboardIds: [...selectedPreviewStoryboardIds.value],
       order: orderedIds,
     });
@@ -1346,7 +1346,7 @@ async function downloadSelectedVideos(): Promise<void> {
 }
 
 async function createJianyingDraft(): Promise<void> {
-  if (!props.projectId || !props.scriptId) {
+  if (!props.projectId || !props.contentId) {
     return;
   }
   if (!exportReady.value) {
@@ -1358,7 +1358,7 @@ async function createJianyingDraft(): Promise<void> {
   try {
     const response = await window.vtStudio.export.createJianyingDraft({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       draftName: draftForm.draftName,
       copyAssets: draftForm.copyAssets,
     });
@@ -2000,7 +2000,7 @@ onUnmounted(() => {
               <span>{{ t('production.workbench.failureCount', { count: exportResultFailures.length }) }}</span>
             </div>
           </div>
-          <article v-for="failure in exportResultFailures" :key="`${failure.clipId}-${failure.sourceType}-${failure.sourceId}-${failure.reason}`">
+          <article v-for="(failure, index) in exportResultFailures" :key="`${failure.clipId}-${failure.sourceId}-${failure.reason}-${index}`">
             <strong>{{ failureReasonLabel(failure.reason) }}</strong>
             <span>{{ t('production.workbench.failureTrack', { track: failureTrackLabel(failure) }) }}</span>
             <small>{{ failure.message }}</small>

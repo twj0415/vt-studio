@@ -8,6 +8,7 @@ import { VT_STATUS } from '@shared/constants/status';
 import type { BusinessLockScope, BusinessLockSource, BusinessLockSummary } from '@shared/types/business-lock';
 import { getDatabase } from '../database';
 import { createError } from '../result';
+import { normalizeProductionTaskCategory } from './production-format';
 
 interface BusinessLockQuery {
   projectId?: number | null;
@@ -97,7 +98,7 @@ function listRunningTaskLocks(projectId: number | null): BusinessLockSummary[] {
 
   const groups = new Map<string, RunningTaskRow[]>();
   rows.forEach((row) => {
-    const key = row.category || '未分类任务';
+    const key = row.category ? normalizeProductionTaskCategory(row.category) : '未分类任务';
     groups.set(key, [...(groups.get(key) ?? []), row]);
   });
 
@@ -128,7 +129,7 @@ export function listBusinessLocks(input: BusinessLockQuery = {}): BusinessLockSu
   });
   pushLock(locks, {
     source: 'scripts',
-    label: '剧本资产提取',
+    label: '提取资源',
     count: countRows('scripts', 'extract_status IN (?, ?)', [SCRIPT_EXTRACT_STATUSES.WAITING, SCRIPT_EXTRACT_STATUSES.RUNNING], projectId),
     projectId,
   });
@@ -140,7 +141,7 @@ export function listBusinessLocks(input: BusinessLockQuery = {}): BusinessLockSu
   });
   pushLock(locks, {
     source: 'assets',
-    label: '资产图片生成',
+    label: '生成资源图',
     count: countRows('assets', 'image_status = ?', [GENERATION_TASK_STATUSES.RUNNING], projectId),
     projectId,
   });
@@ -158,19 +159,19 @@ export function listBusinessLocks(input: BusinessLockQuery = {}): BusinessLockSu
   });
   pushLock(locks, {
     source: 'production_storyboards',
-    label: '分镜图片生成',
+    label: '生成分镜图',
     count: countRows('production_storyboards', 'image_status = ?', [GENERATION_TASK_STATUSES.RUNNING], projectId),
     projectId,
   });
   pushLock(locks, {
     source: 'production_video_tracks',
-    label: '视频轨道生成',
+    label: '生成视频提示词',
     count: countRows('production_video_tracks', 'status = ?', [GENERATION_TASK_STATUSES.RUNNING], projectId),
     projectId,
   });
   pushLock(locks, {
     source: 'production_videos',
-    label: '视频候选生成',
+    label: '生成视频',
     count: countRows('production_videos', 'status = ?', [GENERATION_TASK_STATUSES.RUNNING], projectId),
     projectId,
   });

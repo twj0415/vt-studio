@@ -3,6 +3,7 @@ export {
   deleteScript,
   deleteScripts,
   exportScriptsZip,
+  extractContentResources,
   extractScriptAssets,
   generateScriptParseRegex,
   listScripts,

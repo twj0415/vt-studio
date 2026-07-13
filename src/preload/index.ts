@@ -91,8 +91,6 @@ const api: VtStudioApi = {
     batchDelete: (payload) => ipcRenderer.invoke('script:batch-delete', payload),
     exportZip: (payload) => ipcRenderer.invoke('script:export-zip', payload),
     generateParseRegex: (payload) => ipcRenderer.invoke('script:generate-parse-regex', payload),
-    extractAssets: (payload) => ipcRenderer.invoke('script:extract-assets', payload),
-    pollExtractStatus: (payload) => ipcRenderer.invoke('script:poll-extract-status', payload),
   },
   assets: {
     list: (payload) => ipcRenderer.invoke('assets:list', payload),
@@ -117,6 +115,36 @@ const api: VtStudioApi = {
     pollAudioBindStatus: (payload) => ipcRenderer.invoke('corner-scape:poll-audio-bind-status', payload),
   },
   production: {
+    getResourceContext: (payload) => ipcRenderer.invoke('production:resource-context:get', payload),
+    getSkillBundle: (payload) => ipcRenderer.invoke('production:skill-bundle:get', payload),
+    content: {
+      list: (payload) => ipcRenderer.invoke('production:content:list', payload),
+      get: (payload) => ipcRenderer.invoke('production:content:get', payload),
+      save: (payload) => ipcRenderer.invoke('production:content:save', payload),
+      delete: (payload) => ipcRenderer.invoke('production:content:delete', payload),
+    },
+    resources: {
+      extract: (payload) => ipcRenderer.invoke('production:resources:extract', payload),
+      pollExtractStatus: (payload) => ipcRenderer.invoke('production:resources:poll-extract-status', payload),
+      listDrafts: (payload) => ipcRenderer.invoke('production:resources:list-drafts', payload),
+      saveDraft: (payload) => ipcRenderer.invoke('production:resources:save-draft', payload),
+      deleteDraft: (payload) => ipcRenderer.invoke('production:resources:delete-draft', payload),
+      commitDrafts: (payload) => ipcRenderer.invoke('production:resources:commit-drafts', payload),
+    },
+    workspace: {
+      get: (payload) => ipcRenderer.invoke('production:flow-data:get', payload),
+      save: (payload) => ipcRenderer.invoke('production:workspace:save', payload),
+      savePositions: (payload) => ipcRenderer.invoke('production:workspace:positions:save', payload),
+      saveDirectorPlan: (payload) => ipcRenderer.invoke('production:director-plan:save', payload),
+      saveStoryboardTable: (payload) => ipcRenderer.invoke('production:storyboard-table:save', payload),
+    },
+    workflow: {
+      getState: (payload) => ipcRenderer.invoke('production:workflow:state', payload),
+      runAction: (payload) => ipcRenderer.invoke('production:workflow:run-action', payload),
+    },
+    tools: {
+      run: (payload) => ipcRenderer.invoke('production:tools:run', payload),
+    },
     getWorkspace: (payload) => ipcRenderer.invoke('production:workspace:get', payload),
     saveWorkspace: (payload) => ipcRenderer.invoke('production:workspace:save', payload),
     extractResources: (payload) => ipcRenderer.invoke('production:resources:extract', payload),
@@ -129,6 +157,41 @@ const api: VtStudioApi = {
       deleteDerivedAsset: (payload) => ipcRenderer.invoke('production:agent:derived-asset:delete', payload),
       generateStoryboardImages: (payload) => ipcRenderer.invoke('production:agent:storyboard:generate-images', payload),
       generateDerivedAssetImages: (payload) => ipcRenderer.invoke('production:agent:derived-asset:generate-images', payload),
+    },
+    storyboard: {
+      save: (payload) => ipcRenderer.invoke('production:storyboard:save', payload),
+      delete: (payload) => ipcRenderer.invoke('production:storyboard:delete', payload),
+      batchDelete: (payload) => ipcRenderer.invoke('production:storyboard:batch-delete', payload),
+      generateImages: (payload) => ipcRenderer.invoke('production:storyboard:generate-images', payload),
+      pollImages: (payload) => ipcRenderer.invoke('production:storyboard:poll-images', payload),
+    },
+    derivedAsset: {
+      save: (payload) => ipcRenderer.invoke('production:derived-asset:save', payload),
+      delete: (payload) => ipcRenderer.invoke('production:derived-asset:delete', payload),
+      generateImages: (payload) => ipcRenderer.invoke('production:derived-asset:generate-images', payload),
+      pollImages: (payload) => ipcRenderer.invoke('production:derived-asset:poll-images', payload),
+    },
+    imageFlow: {
+      get: (payload) => ipcRenderer.invoke('production:image-flow:get', payload),
+      save: (payload) => ipcRenderer.invoke('production:image-flow:save', payload),
+      applyResult: (payload) => ipcRenderer.invoke('production:image-flow:apply-result', payload),
+    },
+    workbench: {
+      get: (payload) => ipcRenderer.invoke('production:workbench:get', payload),
+    },
+    videoTrack: {
+      save: (payload) => ipcRenderer.invoke('production:video-track:save', payload),
+      delete: (payload) => ipcRenderer.invoke('production:video-track:delete', payload),
+    },
+    videoPrompt: {
+      generate: (payload) => ipcRenderer.invoke('production:video-prompt:generate', payload),
+      poll: (payload) => ipcRenderer.invoke('production:video-prompt:poll', payload),
+    },
+    video: {
+      generate: (payload) => ipcRenderer.invoke('production:video:generate', payload),
+      poll: (payload) => ipcRenderer.invoke('production:video:poll', payload),
+      select: (payload) => ipcRenderer.invoke('production:video:select', payload),
+      delete: (payload) => ipcRenderer.invoke('production:video:delete', payload),
     },
     saveStoryboard: (payload) => ipcRenderer.invoke('production:storyboard:save', payload),
     deleteStoryboard: (payload) => ipcRenderer.invoke('production:storyboard:delete', payload),

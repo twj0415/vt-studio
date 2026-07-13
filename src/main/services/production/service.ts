@@ -1,30 +1,32 @@
 import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
+import type Database from 'better-sqlite3';
 import {
   ASSET_TYPE_VALUES,
   COMMON_VIDEO_RESOLUTIONS,
   DEPENDENCY_STATUSES,
   PROJECT_IMAGE_QUALITY_VALUES,
+  PROJECT_TEMPLATE_TYPES,
   PROJECT_VIDEO_RATIOS,
+  SCRIPT_EXTRACT_STATUSES,
 } from '@shared/constants/dictionaries';
 import { parseVideoModeKey, serializeVideoMode } from '@shared/constants/model-capabilities';
 import { VT_STATUS } from '@shared/constants/status';
 import { normalizeUnknownError } from '@shared/errors';
 import { ASSET_IMAGE_USAGES, ASSET_IMAGE_VIEW_MODES, type AssetTaskStatus, type AssetType } from '@shared/types/assets';
-import { SCRIPT_EXTRACT_STATUS } from '@shared/types/script-agent';
 import {
   PRODUCTION_IMAGE_FLOW_OWNER_TYPES,
-  PRODUCTION_AGENT_TOOL_NAMES,
   PRODUCTION_AGENT_WORKSPACE_PATCH_FIELDS,
   PRODUCTION_REFERENCE_FILE_TYPES,
   PRODUCTION_REFERENCE_SOURCES,
+  PRODUCTION_RESOURCE_DRAFT_ACTIONS,
+  PRODUCTION_RESOURCE_DRAFT_STATUSES,
   PRODUCTION_TASK_STATUS,
   type ProductionAgentContextResult,
   type ProductionAgentDerivedAssetPayload,
   type ProductionAgentDerivedAssetResult,
   type ProductionAgentStoryboardPayload,
   type ProductionAgentStoryboardResult,
-  type ProductionAgentToolDescriptor,
   type ProductionAgentToolsResult,
   type ProductionAgentWorkspacePatch,
   type ProductionAgentWorkspacePatchField,
@@ -32,6 +34,14 @@ import {
   type ProductionAgentWorkspacePatchResult,
   type ProductionAssetSummary,
   type ProductionBatchDeleteStoryboardsPayload,
+  type ProductionContentScopedPayload,
+  type ProductionContentDeletePayload,
+  type ProductionContentItem,
+  type ProductionContentListResult,
+  type ProductionContentPayload,
+  type ProductionContentResult,
+  type ProductionContentSavePayload,
+  type ProductionContentSaveResult,
   type ProductionDeleteResult,
   type ProductionDerivedAssetDeletePayload,
   type ProductionDerivedAssetPollResult,
@@ -53,16 +63,36 @@ import {
   type ProductionImageFlowOwnerType,
   type ProductionImageFlowSavePayload,
   type ProductionImageFlowSaveResult,
+  type ProductionFlowDataResult,
   type ProductionPollPayload,
+  type ProductionPollResourceExtractionPayload,
+  type ProductionPollResourceExtractionResult,
+  type ProductionProjectPayload,
   type ProductionReferenceFileType,
   type ProductionReferenceInput,
   type ProductionReferenceSource,
+  type ProductionResourceDraft,
+  type ProductionResourceDraftAction,
+  type ProductionResourceDraftCommitPayload,
+  type ProductionResourceDraftCommitResult,
+  type ProductionResourceDraftDeletePayload,
+  type ProductionResourceDraftListPayload,
+  type ProductionResourceDraftListResult,
+  type ProductionResourceDraftSavePayload,
+  type ProductionResourceDraftSaveResult,
+  type ProductionResourceDraftStatus,
+  type ProductionResourceDraftType,
+  type ProductionResourceExistingAsset,
+  type ProductionRunWorkflowActionPayload,
+  type ProductionRunWorkflowActionResult,
   type ProductionSaveWorkspacePayload,
   type ProductionSaveWorkspaceResult,
+  type ProductionSaveDirectorPlanPayload,
+  type ProductionSaveFlowPositionsPayload,
+  type ProductionSaveStoryboardTablePayload,
   type ProductionSelectVideoPayload,
   type ProductionSelectVideoResult,
-  type ProductionScriptOption,
-  type ProductionScriptPayload,
+  type ProductionContentOption,
   type ProductionStoryboardDeletePayload,
   type ProductionStoryboardItem,
   type ProductionStoryboardPollResult,
@@ -78,9 +108,13 @@ import {
   type ProductionVideoTrackItem,
   type ProductionVideoTrackSavePayload,
   type ProductionVideoTrackSaveResult,
+  type ProductionToolRunPayload,
+  type ProductionToolRunResult,
+  type ProductionWorkflowStateResult,
   type ProductionWorkbenchResult,
   type ProductionWorkspaceResult,
 } from '@shared/types/production';
+import type { Tool } from 'ai';
 import { getDatabase, withTransaction } from '../database';
 import { getRuntimeDirectories, readManagedFile, writeManagedFile } from '../file-system';
 import { logger } from '../logger';
@@ -92,25 +126,31 @@ import { formatManualPromptSection, readManualPromptBundle, toManualPromptSnapsh
 import { getBusinessSettings } from '../settings/business-settings';
 import { resolveModelPromptTemplate } from '../settings/model-prompt';
 import { getEffectivePromptByType } from '../settings/prompt';
-import { extractScriptAssets } from '../script';
+import { extractContentResources } from '../script';
 import { stripThink } from '../socket/stripThink';
-import { createTask, failTask, isTaskCancelled, succeedTask } from '../task';
+import { failTask, isTaskCancelled, succeedTask } from '../task';
+import { createProductionTask } from '../task/production';
+import { createJianyingDraft, validateExportAssets } from '../export';
 import {
   DEPENDENCY_REASON,
   assertDependencyStatus,
   markAssetsDependencyStatus,
   markProductionForAssetsChanged,
-  markProductionForScriptsChanged,
+  markProductionForContentChanged,
   markStoryboardsDependencyStatus,
   markTracksDependencyStatus,
   markVideosDependencyStatus,
   markVideosForStoryboardsChanged,
 } from '../dependency-state';
+import { getProductionResourceContext, getProductionSkillBundle } from './resource-context';
+import { createProductionToolRegistry, listProductionToolDescriptors, type ProductionToolContext, type ProductionToolExecutorServices } from './tools';
+import { ProductionWorkflowOrchestrator } from './workflow-orchestrator';
 
-const STORYBOARD_IMAGE_CATEGORY = '生产分镜图片生成';
-const DERIVED_ASSET_IMAGE_CATEGORY = '生产衍生资产图片生成';
-const VIDEO_PROMPT_CATEGORY = '生产视频提示词生成';
-const VIDEO_CATEGORY = '生产视频生成';
+const STORYBOARD_IMAGE_CATEGORY = '生成分镜图';
+const DERIVED_ASSET_IMAGE_CATEGORY = '生成资源图';
+const VIDEO_PROMPT_CATEGORY = '生成视频提示词';
+const VIDEO_CATEGORY = '生成视频';
+const CONTENT_RESOURCE_EXTRACT_STATUS = SCRIPT_EXTRACT_STATUSES;
 const SECRET_REPLACEMENT = '[hidden]';
 const DEFAULT_VIDEO_RESOLUTION = COMMON_VIDEO_RESOLUTIONS[0];
 
@@ -147,22 +187,6 @@ const REFERENCE_MIME_BY_EXTENSION: Record<string, string> = {
 
 type ImageReferenceItem = Extract<ReferenceItem, { type: 'image' }>;
 
-const PRODUCTION_AGENT_TOOLS: ProductionAgentToolDescriptor[] = [
-  { name: 'get_flowData', status: 'ready', writes: [], inputKeys: ['projectId', 'scriptId'] },
-  { name: 'add_deriveAsset', status: 'ready', writes: ['assets', 'script_asset_links'], inputKeys: ['projectId', 'scriptId', 'parentAssetId', 'name', 'description', 'prompt'] },
-  { name: 'del_deriveAsset', status: 'ready', writes: ['assets', 'script_asset_links', 'production_storyboard_asset_links', 'production_image_flows'], inputKeys: ['projectId', 'scriptId', 'assetId'] },
-  { name: 'generate_deriveAsset', status: 'ready', writes: ['tasks', 'assets.image_status'], inputKeys: ['projectId', 'scriptId', 'assetIds'] },
-  { name: 'generate_storyboard', status: 'ready', writes: ['tasks', 'production_storyboards.image_status'], inputKeys: ['projectId', 'scriptId', 'storyboardIds', 'compulsory'] },
-  { name: 'add_flowData_storyboard', status: 'ready', writes: ['production_storyboards', 'production_storyboard_asset_links'], inputKeys: ['projectId', 'scriptId', 'storyboard'] },
-  { name: 'run_sub_agent_derive_assets', status: 'reserved', writes: ['assets'], inputKeys: ['projectId', 'scriptId', 'instruction'] },
-  { name: 'run_sub_agent_generate_assets', status: 'reserved', writes: ['tasks', 'assets.image_status'], inputKeys: ['projectId', 'scriptId', 'instruction'] },
-  { name: 'run_sub_agent_director_plan', status: 'reserved', writes: ['production_workspaces.script_plan'], inputKeys: ['projectId', 'scriptId', 'instruction'] },
-  { name: 'run_sub_agent_storyboard_gen', status: 'reserved', writes: ['production_storyboards'], inputKeys: ['projectId', 'scriptId', 'instruction'] },
-  { name: 'run_sub_agent_storyboard_panel', status: 'reserved', writes: ['production_storyboards', 'production_storyboard_asset_links'], inputKeys: ['projectId', 'scriptId', 'instruction'] },
-  { name: 'run_sub_agent_storyboard_table', status: 'reserved', writes: ['production_workspaces.storyboard_table'], inputKeys: ['projectId', 'scriptId', 'instruction'] },
-  { name: 'run_sub_agent_supervision', status: 'reserved', writes: [], inputKeys: ['projectId', 'scriptId', 'instruction'] },
-];
-
 interface ProjectRow {
   id: number;
   name: string;
@@ -183,6 +207,27 @@ interface ScriptRow {
   episode_key: string;
   name: string;
   content: string;
+}
+
+interface ContentRow {
+  id: number;
+  project_id: number;
+  title: string;
+  body: string;
+  version: number;
+  resource_status: string;
+  resource_error_reason: string | null;
+  dependency_status: string;
+  dependency_reason: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface ContentExtractRow {
+  id: number;
+  project_id: number;
+  extract_status: string;
+  error_reason: string | null;
 }
 
 interface WorkspaceRow {
@@ -209,6 +254,26 @@ interface AssetRow {
   image_error_reason: string | null;
   dependency_status: string;
   dependency_reason: string | null;
+}
+
+interface ProductionResourceDraftRow {
+  id: number;
+  project_id: number;
+  content_id: number;
+  task_id: number | null;
+  asset_id: number | null;
+  matched_asset_id: number | null;
+  type: string;
+  name: string;
+  description: string;
+  prompt: string;
+  action: string;
+  status: string;
+  error_reason: string | null;
+  created_at: number;
+  updated_at: number;
+  matched_asset_name?: string | null;
+  matched_asset_type?: string | null;
 }
 
 interface AssetMediaRow {
@@ -323,12 +388,12 @@ function normalizeProjectId(projectId: number): number {
   return projectId;
 }
 
-function normalizeScriptId(scriptId: number): number {
-  if (!Number.isInteger(scriptId) || scriptId <= 0) {
-    throw createError(VT_STATUS.INVALID_PARAMS, '剧本 ID 无效');
+function normalizeContentId(contentId: number): number {
+  if (!Number.isInteger(contentId) || contentId <= 0) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '内容 ID 无效');
   }
 
-  return scriptId;
+  return contentId;
 }
 
 function normalizeIds(ids: number[], label: string): number[] {
@@ -366,6 +431,11 @@ function normalizeRequiredText(value: string | null | undefined, label: string):
   return normalized;
 }
 
+function normalizeContentTitle(value: string | null | undefined): string {
+  const normalized = (value ?? '').trim();
+  return normalized || '内容';
+}
+
 function normalizeOptionalText(value: string | null | undefined): string {
   return (value ?? '').trim();
 }
@@ -381,8 +451,8 @@ function normalizeAgentWorkspacePatches(patches: ProductionAgentWorkspacePatch[]
       throw createError(VT_STATUS.INVALID_PARAMS, 'Production Agent 写入字段无效');
     }
     const content = typeof patch.content === 'string' ? patch.content : '';
-    if (field === 'script' && !content.trim()) {
-      throw createError(VT_STATUS.INVALID_PARAMS, '剧本正文不能为空');
+    if (field === 'content' && !content.trim()) {
+      throw createError(VT_STATUS.INVALID_PARAMS, '内容正文不能为空');
     }
 
     return { field, content };
@@ -428,22 +498,69 @@ function assertScript(projectId: number, scriptId: number): ScriptRow {
   return row;
 }
 
-function assertProductionContext(payload: ProductionScriptPayload): { project: ProjectRow; script: ScriptRow } {
+function mapContentRow(row: ContentRow): ProductionContentItem {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    body: row.body,
+    version: row.version,
+    resourceStatus: assertStatus(row.resource_status),
+    resourceErrorReason: row.resource_error_reason,
+    dependencyStatus: assertDependencyStatus(row.dependency_status),
+    dependencyReason: row.dependency_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function getContentRow(projectId: number, contentId: number): ContentRow | null {
+  if (!tableExists('production_contents')) {
+    return null;
+  }
+
+  return getDatabase()
+    .prepare<[number, number], ContentRow>('SELECT * FROM production_contents WHERE project_id = ? AND id = ? LIMIT 1')
+    .get(projectId, contentId) ?? null;
+}
+
+function assertContent(projectId: number, contentId: number): ContentRow {
+  const row = getContentRow(projectId, normalizeContentId(contentId));
+  if (!row) {
+    throw createError(VT_STATUS.NOT_FOUND, '内容不存在');
+  }
+
+  return row;
+}
+
+function resolveScopedContentId(payload: ProductionProjectPayload & { contentId?: number | null }): number {
+  return normalizeContentId(Number(payload.contentId));
+}
+
+function assertProductionContext(payload: ProductionContentScopedPayload): { project: ProjectRow; script: ScriptRow } {
   const projectId = normalizeProjectId(payload.projectId);
-  const scriptId = normalizeScriptId(payload.scriptId);
+  const contentId = resolveScopedContentId(payload);
   return {
     project: assertProject(projectId),
-    script: assertScript(projectId, scriptId),
+    script: assertScript(projectId, contentId),
+  };
+}
+
+function assertContentProductionContext(payload: ProductionContentPayload): { project: ProjectRow; content: ContentRow; script: ScriptRow } {
+  const projectId = normalizeProjectId(payload.projectId);
+  const contentId = normalizeContentId(payload.contentId);
+  return {
+    project: assertProject(projectId),
+    content: assertContent(projectId, contentId),
+    script: assertScript(projectId, contentId),
   };
 }
 
 export function extractProductionResources(payload: ProductionExtractResourcesPayload): ProductionExtractResourcesResult {
   const projectId = normalizeProjectId(payload.projectId);
-  const contentId = Number(payload.contentId);
-  if (!Number.isInteger(contentId) || contentId <= 0) {
-    throw createError(VT_STATUS.INVALID_PARAMS, '内容 ID 无效');
-  }
+  const contentId = normalizeContentId(Number(payload.contentId));
   assertProject(projectId);
+  assertContent(projectId, contentId);
   try {
     assertScript(projectId, contentId);
   } catch (error) {
@@ -452,10 +569,21 @@ export function extractProductionResources(payload: ProductionExtractResourcesPa
     }
     throw error;
   }
-  return extractScriptAssets({
+  const result = extractContentResources({
     projectId,
-    scriptIds: [contentId],
+    contentIds: [contentId],
+    writeMode: 'drafts',
   });
+  getDatabase()
+    .prepare<[ProductionTaskStatus, null, number, number, number]>(
+      'UPDATE production_contents SET resource_status = ?, resource_error_reason = ?, updated_at = ? WHERE project_id = ? AND id = ?',
+    )
+    .run(PRODUCTION_TASK_STATUS.RUNNING, null, Date.now(), projectId, contentId);
+  return {
+    accepted: result.accepted,
+    taskId: result.taskId,
+    contentIds: result.contentIds,
+  };
 }
 
 function assertScriptEditableForAgent(projectId: number, scriptId: number): void {
@@ -465,7 +593,7 @@ function assertScriptEditableForAgent(projectId: number, scriptId: number): void
   if (!row) {
     throw createError(VT_STATUS.NOT_FOUND, '剧本不存在');
   }
-  if (row.extract_status === SCRIPT_EXTRACT_STATUS.WAITING || row.extract_status === SCRIPT_EXTRACT_STATUS.RUNNING) {
+  if (row.extract_status === CONTENT_RESOURCE_EXTRACT_STATUS.WAITING || row.extract_status === CONTENT_RESOURCE_EXTRACT_STATUS.RUNNING) {
     throw createError(VT_STATUS.CONFLICT, '剧本正在资产提取中，暂不能由 Production Agent 改写正文');
   }
 }
@@ -500,6 +628,138 @@ function serializeJson(value: unknown, fallback: string): string {
   } catch {
     return fallback;
   }
+}
+
+function recordProductionAgentAudit(
+  database: Database.Database,
+  input: {
+    projectId: number;
+    contentId: number;
+    toolName: string;
+    source?: string | null;
+    taskId?: number | null;
+    input: unknown;
+    result: unknown;
+  },
+): void {
+  if (!tableExists('production_agent_audits')) {
+    return;
+  }
+
+  database
+    .prepare<[number, number, number | null, string, string, string, string, number]>(
+      `
+      INSERT INTO production_agent_audits (project_id, content_id, task_id, tool_name, source, input_json, result_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(
+      input.projectId,
+      input.contentId,
+      input.taskId ?? null,
+      input.toolName,
+      input.source || 'tool',
+      serializeJson(input.input, '{}'),
+      serializeJson(input.result, '{}'),
+      Date.now(),
+    );
+}
+
+function recordProductionToolAudit(input: {
+  projectId: number;
+  contentId: number;
+  toolName: string;
+  source?: string | null;
+  taskId?: number | null;
+  input: unknown;
+  result: unknown;
+  error?: string | null;
+}): void {
+  recordProductionAgentAudit(getDatabase(), input);
+}
+
+function createProductionToolContext(projectId: number, contentId: number, taskId?: number | null): ProductionToolContext {
+  assertProject(projectId);
+  assertContent(projectId, contentId);
+  const resourcePayload = { projectId, templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA };
+  return {
+    projectId,
+    contentId,
+    taskId: taskId ?? null,
+    templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
+    resourceContext: getProductionResourceContext(resourcePayload),
+    skillBundle: getProductionSkillBundle(resourcePayload),
+  };
+}
+
+function getProductionToolServices(): ProductionToolExecutorServices {
+  return {
+    getFlowData: getProductionFlowData,
+    saveContent: saveProductionContent,
+    extractResources: extractProductionResources,
+    saveDirectorPlan: saveProductionDirectorPlan,
+    saveStoryboardTable: saveProductionStoryboardTable,
+    saveStoryboard: saveProductionStoryboard,
+    deleteStoryboards: deleteProductionStoryboards,
+    saveDerivedAsset: saveProductionDerivedAsset,
+    deleteDerivedAsset: deleteProductionDerivedAsset,
+    generateDerivedAssetImages: generateProductionDerivedAssetImages,
+    generateStoryboardImages: generateProductionStoryboardImages,
+    saveVideoTrack: saveProductionVideoTrack,
+    generateVideoPrompts: generateProductionVideoPrompts,
+    generateVideos: generateProductionVideos,
+    selectVideo: selectProductionVideo,
+    validateExport: validateExportAssets,
+    createExport: createJianyingDraft,
+    recordAudit: recordProductionToolAudit,
+  };
+}
+
+function getProductionToolRegistryFor(projectId: number, contentId: number, taskId?: number | null) {
+  return createProductionToolRegistry(createProductionToolContext(projectId, contentId, taskId), getProductionToolServices());
+}
+
+export function validateProductionToolInput(toolName: string, input: unknown): { valid: true } {
+  if (!listProductionToolDescriptors().some((descriptor) => descriptor.name === toolName)) {
+    throw createError(VT_STATUS.INVALID_PARAMS, 'Production Tool 名称无效');
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw createError(VT_STATUS.INVALID_PARAMS, 'Production Tool 参数必须是对象');
+  }
+
+  return { valid: true };
+}
+
+export function applyProductionAgentToolResult(toolName: string, input: unknown, result: unknown): { toolName: string; input: unknown; result: unknown } {
+  validateProductionToolInput(toolName, input);
+  return { toolName, input, result };
+}
+
+export async function runProductionTool(payload: ProductionToolRunPayload): Promise<ProductionToolRunResult> {
+  const projectId = normalizeProjectId(payload.projectId);
+  const contentId = normalizeContentId(payload.contentId);
+  return getProductionToolRegistryFor(projectId, contentId, payload.taskId).run({ ...payload, projectId, contentId });
+}
+
+export function getProductionAgentAiTools(payload: ProductionContentScopedPayload & { taskId?: number | null }): Record<string, Tool> {
+  const projectId = normalizeProjectId(payload.projectId);
+  const contentId = normalizeContentId(payload.contentId);
+  return getProductionToolRegistryFor(projectId, contentId, payload.taskId).toAiTools();
+}
+
+function createWorkflowOrchestrator(): ProductionWorkflowOrchestrator {
+  return new ProductionWorkflowOrchestrator({
+    getFlowData: getProductionFlowData,
+    runTool: (payload) => runProductionTool(payload),
+  });
+}
+
+export function getProductionWorkflowState(payload: ProductionContentPayload): ProductionWorkflowStateResult {
+  return createWorkflowOrchestrator().getState(payload);
+}
+
+export async function runProductionWorkflowAction(payload: ProductionRunWorkflowActionPayload): Promise<ProductionRunWorkflowActionResult> {
+  return createWorkflowOrchestrator().runStep(payload);
 }
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
@@ -1244,7 +1504,93 @@ function ensureWorkspace(projectId: number, scriptId: number): WorkspaceRow {
   return getWorkspaceRow(projectId, scriptId)!;
 }
 
-function listScriptOptions(projectId: number): ProductionScriptOption[] {
+function createContentEpisodeKey(): string {
+  return `content_${randomUUID().replace(/-/g, '')}`;
+}
+
+function createProductionContentRow(
+  database: Database.Database,
+  input: {
+    projectId: number;
+    title: string;
+    body: string;
+    now: number;
+  },
+): ContentRow {
+  const scriptInsert = database
+    .prepare<[number, string, string, string, string, null, number, number]>(
+      `
+      INSERT INTO scripts (project_id, episode_key, name, content, extract_status, error_reason, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(input.projectId, createContentEpisodeKey(), input.title, input.body, CONTENT_RESOURCE_EXTRACT_STATUS.IDLE, null, input.now, input.now);
+  const contentId = Number(scriptInsert.lastInsertRowid);
+  database
+    .prepare<[number, number, string, string, string, null, string, null, number, number]>(
+      `
+      INSERT INTO production_contents (
+        id, project_id, title, body, resource_status, resource_error_reason,
+        dependency_status, dependency_reason, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(contentId, input.projectId, input.title, input.body, PRODUCTION_TASK_STATUS.IDLE, null, DEPENDENCY_STATUSES.VALID, null, input.now, input.now);
+
+  return getContentRow(input.projectId, contentId)!;
+}
+
+export function ensureDefaultProductionContent(projectId: number, database: Database.Database = getDatabase()): ProductionContentItem {
+  const normalizedProjectId = normalizeProjectId(projectId);
+  const existing = database
+    .prepare<[number], ContentRow>('SELECT * FROM production_contents WHERE project_id = ? ORDER BY created_at ASC, id ASC LIMIT 1')
+    .get(normalizedProjectId);
+  if (existing) {
+    return mapContentRow(existing);
+  }
+
+  const now = Date.now();
+  return mapContentRow(
+    createProductionContentRow(database, {
+      projectId: normalizedProjectId,
+      title: '内容',
+      body: '',
+      now,
+    }),
+  );
+}
+
+function listContentOptions(projectId: number): ProductionContentOption[] {
+  if (!tableExists('production_contents')) {
+    return [];
+  }
+
+  ensureDefaultProductionContent(projectId);
+  return getDatabase()
+    .prepare<[number], ContentRow>(
+      `
+      SELECT *
+      FROM production_contents
+      WHERE project_id = ?
+      ORDER BY created_at ASC, id ASC
+      `,
+    )
+    .all(projectId)
+    .map((row) => ({
+      id: row.id,
+      name: row.title,
+      episodeKey: `content_${row.id}`,
+      content: row.body,
+    }));
+}
+
+function listScriptOptions(projectId: number): ProductionContentOption[] {
+  const contents = listContentOptions(projectId);
+  if (contents.length > 0) {
+    return contents;
+  }
+
   return getDatabase()
     .prepare<[number], ScriptRow>(
       `
@@ -1261,6 +1607,278 @@ function listScriptOptions(projectId: number): ProductionScriptOption[] {
       episodeKey: row.episode_key,
       content: row.content,
     }));
+}
+
+export function listProductionContents(payload: ProductionProjectPayload): ProductionContentListResult {
+  const projectId = normalizeProjectId(payload.projectId);
+  assertProject(projectId);
+  ensureDefaultProductionContent(projectId);
+  const contents = getDatabase()
+    .prepare<[number], ContentRow>(
+      `
+      SELECT *
+      FROM production_contents
+      WHERE project_id = ?
+      ORDER BY created_at ASC, id ASC
+      `,
+    )
+    .all(projectId)
+    .map(mapContentRow);
+
+  return {
+    contents,
+    currentContentId: contents[0]?.id ?? null,
+  };
+}
+
+export function getProductionContent(payload: ProductionContentPayload): ProductionContentResult {
+  const projectId = normalizeProjectId(payload.projectId);
+  assertProject(projectId);
+  return {
+    content: mapContentRow(assertContent(projectId, payload.contentId)),
+  };
+}
+
+export function saveProductionContent(payload: ProductionContentSavePayload): ProductionContentSaveResult {
+  const projectId = normalizeProjectId(payload.projectId);
+  assertProject(projectId);
+  const title = normalizeContentTitle(payload.title);
+  const body = payload.body ?? '';
+  const now = Date.now();
+
+  const contentId = withTransaction((database) => {
+    if (!payload.contentId) {
+      return createProductionContentRow(database, {
+        projectId,
+        title,
+        body,
+        now,
+      }).id;
+    }
+
+    const existing = assertContent(projectId, payload.contentId);
+    const bodyChanged = existing.body !== body;
+    const nextVersion = bodyChanged ? existing.version + 1 : existing.version;
+    database
+      .prepare<[string, string, number, string, null, string, null, number, number, number]>(
+        `
+        UPDATE production_contents
+        SET title = ?,
+            body = ?,
+            version = ?,
+            resource_status = ?,
+            resource_error_reason = ?,
+            dependency_status = ?,
+            dependency_reason = ?,
+            updated_at = ?
+        WHERE project_id = ? AND id = ?
+        `,
+      )
+      .run(title, body, nextVersion, PRODUCTION_TASK_STATUS.IDLE, null, DEPENDENCY_STATUSES.VALID, null, now, projectId, existing.id);
+    database
+      .prepare<[string, string, string, null, string, null, number, number, number]>(
+        `
+        UPDATE scripts
+        SET name = ?,
+            content = ?,
+            extract_status = ?,
+            error_reason = ?,
+            dependency_status = ?,
+            dependency_reason = ?,
+            updated_at = ?
+        WHERE project_id = ? AND id = ?
+        `,
+      )
+      .run(title, body, CONTENT_RESOURCE_EXTRACT_STATUS.IDLE, null, DEPENDENCY_STATUSES.VALID, null, now, projectId, existing.id);
+    if (bodyChanged) {
+      markProductionForContentChanged({
+        projectId,
+        contentIds: [existing.id],
+        status: DEPENDENCY_STATUSES.NEEDS_REVIEW,
+        reason: DEPENDENCY_REASON.SCRIPT_CHANGED,
+        database,
+      });
+    }
+    return existing.id;
+  });
+
+  return {
+    content: mapContentRow(assertContent(projectId, contentId)),
+  };
+}
+
+function countContentDependencies(projectId: number, contentId: number): number {
+  const tables: Array<{ table: string; where: string; params: number[] }> = [
+    { table: 'production_resource_links', where: 'content_id = ?', params: [contentId] },
+    { table: 'production_storyboards', where: 'project_id = ? AND script_id = ?', params: [projectId, contentId] },
+    { table: 'production_video_tracks', where: 'project_id = ? AND script_id = ?', params: [projectId, contentId] },
+    { table: 'production_videos', where: 'project_id = ? AND script_id = ?', params: [projectId, contentId] },
+    { table: 'export_history', where: 'project_id = ? AND script_id = ?', params: [projectId, contentId] },
+  ];
+
+  return tables.reduce((total, item) => {
+    if (!tableExists(item.table)) {
+      return total;
+    }
+
+    const row = getDatabase()
+      .prepare<number[], { count: number }>(`SELECT COUNT(*) AS count FROM ${item.table} WHERE ${item.where}`)
+      .get(...item.params);
+    return total + (row?.count ?? 0);
+  }, 0);
+}
+
+export function deleteProductionContent(payload: ProductionContentDeletePayload): ProductionDeleteResult {
+  const projectId = normalizeProjectId(payload.projectId);
+  const contentId = normalizeContentId(payload.contentId);
+  assertProject(projectId);
+  assertContent(projectId, contentId);
+  if (countContentDependencies(projectId, contentId) > 0) {
+    throw createError(VT_STATUS.CONFLICT, '内容已有资源、分镜、视频或导出结果，暂不能删除');
+  }
+
+  const deletedCount = withTransaction((database) => {
+    if (tableExists('production_image_flows')) {
+      database.prepare<[number, number]>('DELETE FROM production_image_flows WHERE project_id = ? AND script_id = ?').run(projectId, contentId);
+    }
+    if (tableExists('production_agent_audits')) {
+      database.prepare<[number, number]>('DELETE FROM production_agent_audits WHERE project_id = ? AND content_id = ?').run(projectId, contentId);
+    }
+    database.prepare<[number]>('DELETE FROM production_resource_links WHERE content_id = ?').run(contentId);
+    database.prepare<[number, number]>('DELETE FROM production_workspaces WHERE project_id = ? AND script_id = ?').run(projectId, contentId);
+    database.prepare<[number]>('DELETE FROM script_asset_links WHERE script_id = ?').run(contentId);
+    database.prepare<[number, number]>('DELETE FROM scripts WHERE project_id = ? AND id = ?').run(projectId, contentId);
+    return database.prepare<[number, number], { changes: number }>('DELETE FROM production_contents WHERE project_id = ? AND id = ?').run(projectId, contentId).changes;
+  });
+
+  return { deletedCount };
+}
+
+function toProductionResourceStatus(extractStatus: string): ProductionTaskStatus {
+  if (extractStatus === CONTENT_RESOURCE_EXTRACT_STATUS.WAITING || extractStatus === CONTENT_RESOURCE_EXTRACT_STATUS.RUNNING) {
+    return PRODUCTION_TASK_STATUS.RUNNING;
+  }
+  if (extractStatus === CONTENT_RESOURCE_EXTRACT_STATUS.SUCCEEDED) {
+    return PRODUCTION_TASK_STATUS.SUCCEEDED;
+  }
+  if (extractStatus === CONTENT_RESOURCE_EXTRACT_STATUS.FAILED) {
+    return PRODUCTION_TASK_STATUS.FAILED;
+  }
+
+  return PRODUCTION_TASK_STATUS.IDLE;
+}
+
+function syncProductionResourceLinks(database: Database.Database, contentIds: number[]): void {
+  const ids = normalizeOptionalIds(contentIds);
+  if (ids.length === 0 || !tableExists('production_resource_links')) {
+    return;
+  }
+
+  const now = Date.now();
+  for (const contentId of ids) {
+    database
+      .prepare<[number, number]>(
+        `
+        DELETE FROM production_resource_links
+        WHERE content_id = ?
+          AND asset_id NOT IN (SELECT asset_id FROM script_asset_links WHERE script_id = ?)
+        `,
+      )
+      .run(contentId, contentId);
+    database
+      .prepare<[number, number]>(
+        `
+        INSERT OR IGNORE INTO production_resource_links (content_id, asset_id, created_at)
+        SELECT script_id, asset_id, ?
+        FROM script_asset_links
+        WHERE script_id = ?
+        `,
+      )
+      .run(now, contentId);
+  }
+}
+
+export function pollProductionResourceExtraction(payload: ProductionPollResourceExtractionPayload): ProductionPollResourceExtractionResult {
+  const projectId = normalizeProjectId(payload.projectId);
+  assertProject(projectId);
+  const contentIds = normalizeIds(payload.contentIds, '内容 ID');
+  const placeholders = contentIds.map(() => '?').join(', ');
+  const rows = getDatabase()
+    .prepare<Array<number>, ContentExtractRow>(
+      `
+      SELECT id, project_id, extract_status, error_reason
+      FROM scripts
+      WHERE project_id = ?
+        AND id IN (${placeholders})
+      ORDER BY created_at ASC, id ASC
+      `,
+    )
+    .all(projectId, ...contentIds);
+
+  withTransaction((database) => {
+    const update = database.prepare<[ProductionTaskStatus, string | null, number, number, number]>(
+      'UPDATE production_contents SET resource_status = ?, resource_error_reason = ?, updated_at = ? WHERE project_id = ? AND id = ?',
+    );
+    for (const row of rows) {
+      const status = toProductionResourceStatus(row.extract_status);
+      update.run(status, row.error_reason, Date.now(), projectId, row.id);
+    }
+  });
+
+  const contents = contentIds.map((contentId) => mapContentRow(assertContent(projectId, contentId)));
+  return { contents };
+}
+
+export function getProductionFlowData(payload: ProductionContentPayload): ProductionFlowDataResult {
+  const { script } = assertContentProductionContext(payload);
+  const workspace = getProductionWorkspace({ projectId: script.project_id, contentId: script.id });
+  if (!workspace.flowData) {
+    throw createError(VT_STATUS.NOT_FOUND, '生产工作区不存在');
+  }
+
+  return {
+    flowData: workspace.flowData,
+  };
+}
+
+export function saveProductionFlowPositions(payload: ProductionSaveFlowPositionsPayload): ProductionSaveWorkspaceResult {
+  const { script } = assertContentProductionContext(payload);
+  const now = Date.now();
+  const positionsJson = serializeJson(payload.positions ?? {}, '{}');
+  ensureWorkspace(script.project_id, script.id);
+  getDatabase()
+    .prepare<[string, number, number, number]>(
+      'UPDATE production_workspaces SET positions_json = ?, updated_at = ? WHERE project_id = ? AND script_id = ?',
+    )
+    .run(positionsJson, now, script.project_id, script.id);
+
+  return { savedAt: now };
+}
+
+export function saveProductionDirectorPlan(payload: ProductionSaveDirectorPlanPayload): ProductionSaveWorkspaceResult {
+  const { script } = assertContentProductionContext(payload);
+  const now = Date.now();
+  ensureWorkspace(script.project_id, script.id);
+  getDatabase()
+    .prepare<[string, number, number, number]>(
+      'UPDATE production_workspaces SET script_plan = ?, updated_at = ? WHERE project_id = ? AND script_id = ?',
+    )
+    .run(payload.directorPlan ?? '', now, script.project_id, script.id);
+
+  return { savedAt: now };
+}
+
+export function saveProductionStoryboardTable(payload: ProductionSaveStoryboardTablePayload): ProductionSaveWorkspaceResult {
+  const { script } = assertContentProductionContext(payload);
+  const now = Date.now();
+  ensureWorkspace(script.project_id, script.id);
+  getDatabase()
+    .prepare<[string, number, number, number]>(
+      'UPDATE production_workspaces SET storyboard_table = ?, updated_at = ? WHERE project_id = ? AND script_id = ?',
+    )
+    .run(payload.storyboardTable ?? '', now, script.project_id, script.id);
+
+  return { savedAt: now };
 }
 
 function loadAssetMedia(assetIds: number[]): Map<number, AssetMediaRow | null> {
@@ -1386,6 +2004,386 @@ function listProductionAssets(projectId: number, scriptId: number): ProductionAs
     }));
 }
 
+function toResourceDraftType(value: string): ProductionResourceDraftType {
+  if (value === 'role' || value === 'scene' || value === 'tool') {
+    return value;
+  }
+
+  return 'role';
+}
+
+function normalizeResourceDraftType(value: unknown): ProductionResourceDraftType {
+  if (value === 'role' || value === 'scene' || value === 'tool') {
+    return value;
+  }
+
+  throw createError(VT_STATUS.INVALID_PARAMS, '资源类型无效');
+}
+
+function toResourceDraftAction(value: string): ProductionResourceDraftAction {
+  return PRODUCTION_RESOURCE_DRAFT_ACTIONS.includes(value as ProductionResourceDraftAction) ? value as ProductionResourceDraftAction : 'create';
+}
+
+function normalizeResourceDraftAction(value: unknown): ProductionResourceDraftAction {
+  if (PRODUCTION_RESOURCE_DRAFT_ACTIONS.includes(value as ProductionResourceDraftAction)) {
+    return value as ProductionResourceDraftAction;
+  }
+
+  throw createError(VT_STATUS.INVALID_PARAMS, '资源草稿动作无效');
+}
+
+function toResourceDraftStatus(value: string): ProductionResourceDraftStatus {
+  return PRODUCTION_RESOURCE_DRAFT_STATUSES.includes(value as ProductionResourceDraftStatus) ? value as ProductionResourceDraftStatus : 'draft';
+}
+
+function normalizeDraftId(value: number): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '资源草稿 ID 无效');
+  }
+
+  return value;
+}
+
+function mapProductionResourceDraftRow(row: ProductionResourceDraftRow): ProductionResourceDraft {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    contentId: row.content_id,
+    taskId: row.task_id,
+    assetId: row.asset_id,
+    matchedAssetId: row.matched_asset_id,
+    matchedAssetName: row.matched_asset_name ?? null,
+    matchedAssetType: row.matched_asset_type ? toResourceDraftType(row.matched_asset_type) : null,
+    type: toResourceDraftType(row.type),
+    name: row.name,
+    description: row.description,
+    prompt: row.prompt,
+    action: toResourceDraftAction(row.action),
+    status: toResourceDraftStatus(row.status),
+    errorReason: row.error_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function listProductionResourceDraftRows(projectId: number, contentId: number, draftIds?: number[], database: Database.Database = getDatabase()): ProductionResourceDraftRow[] {
+  if (!tableExists('production_resource_drafts')) {
+    return [];
+  }
+
+  const params: Array<number | string> = [projectId, contentId, 'draft'];
+  const idClause = draftIds?.length ? ` AND d.id IN (${draftIds.map(() => '?').join(', ')})` : '';
+  if (draftIds?.length) {
+    params.push(...draftIds);
+  }
+
+  return database
+    .prepare<Array<number | string>, ProductionResourceDraftRow>(
+      `
+      SELECT
+        d.*,
+        a.name AS matched_asset_name,
+        a.type AS matched_asset_type
+      FROM production_resource_drafts d
+      LEFT JOIN assets a ON a.id = d.matched_asset_id AND a.project_id = d.project_id
+      WHERE d.project_id = ?
+        AND d.content_id = ?
+        AND d.status = ?
+        ${idClause}
+      ORDER BY CASE d.type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 9 END,
+               d.created_at ASC,
+               d.id ASC
+      `,
+    )
+    .all(...params);
+}
+
+function getProductionResourceDraftRow(projectId: number, contentId: number, draftId: number, database: Database.Database = getDatabase()): ProductionResourceDraftRow {
+  const row = listProductionResourceDraftRows(projectId, contentId, [draftId], database)[0];
+  if (!row) {
+    throw createError(VT_STATUS.NOT_FOUND, '资源草稿不存在');
+  }
+
+  return row;
+}
+
+function listProductionResourceExistingAssets(projectId: number): ProductionResourceExistingAsset[] {
+  if (!tableExists('assets')) {
+    return [];
+  }
+
+  const rows = getDatabase()
+    .prepare<[number], AssetRow>(
+      `
+      SELECT *
+      FROM assets
+      WHERE project_id = ?
+        AND parent_id IS NULL
+        AND type IN ('role', 'scene', 'tool')
+      ORDER BY CASE type WHEN 'role' THEN 1 WHEN 'scene' THEN 2 WHEN 'tool' THEN 3 ELSE 9 END,
+               name COLLATE NOCASE ASC,
+               id ASC
+      `,
+    )
+    .all(projectId);
+  const mediaByAsset = loadAssetMedia(rows.map((row) => row.id));
+  return rows.map((row) => {
+    const media = mediaByAsset.get(row.id);
+    const urls = mediaUrls(media?.relative_path ?? null, media?.kind === 'audio' ? 'audio' : media?.kind === 'video' ? 'video' : 'image');
+    return {
+      id: row.id,
+      type: toResourceDraftType(row.type),
+      name: row.name,
+      description: row.description,
+      prompt: row.prompt,
+      imageUrl: urls.thumbnailUrl ?? urls.url,
+    };
+  });
+}
+
+function assertProductionResourceAsset(database: Database.Database, projectId: number, assetId: number): AssetRow {
+  const row = database.prepare<[number, number], AssetRow>('SELECT * FROM assets WHERE project_id = ? AND id = ? LIMIT 1').get(projectId, assetId);
+  if (!row || row.parent_id !== null || !['role', 'scene', 'tool'].includes(row.type)) {
+    throw createError(VT_STATUS.NOT_FOUND, '匹配资产不存在');
+  }
+
+  return row;
+}
+
+function resolveDraftMatchedAssetId(database: Database.Database, projectId: number, matchedAssetId: number | null | undefined): number | null {
+  if (!matchedAssetId) {
+    return null;
+  }
+
+  const normalized = normalizeIds([matchedAssetId], '匹配资产 ID')[0]!;
+  assertProductionResourceAsset(database, projectId, normalized);
+  return normalized;
+}
+
+function upsertCommittedResourceAsset(database: Database.Database, projectId: number, row: ProductionResourceDraftRow, now: number): number {
+  const type = normalizeResourceDraftType(row.type);
+  const name = normalizeRequiredText(row.name, '资源名称');
+  const description = normalizeOptionalText(row.description);
+  const prompt = normalizeOptionalText(row.prompt);
+  const existing = database
+    .prepare<[number, string, string], AssetRow>(
+      `
+      SELECT *
+      FROM assets
+      WHERE project_id = ?
+        AND parent_id IS NULL
+        AND type = ?
+        AND lower(name) = lower(?)
+      LIMIT 1
+      `,
+    )
+    .get(projectId, type, name);
+
+  if (existing) {
+    const changed = existing.description !== description || existing.prompt !== prompt;
+    database
+      .prepare<[string, string, number, number, number]>(
+        `
+        UPDATE assets
+        SET description = ?, prompt = ?, updated_at = ?
+        WHERE project_id = ? AND id = ?
+        `,
+      )
+      .run(description, prompt, now, projectId, existing.id);
+    markAssetsDependencyStatus({
+      projectId,
+      assetIds: [existing.id],
+      status: DEPENDENCY_STATUSES.VALID,
+      reason: null,
+      database,
+    });
+    if (changed) {
+      markProductionForAssetsChanged({
+        projectId,
+        assetIds: [existing.id],
+        status: DEPENDENCY_STATUSES.NEEDS_REVIEW,
+        reason: DEPENDENCY_REASON.ASSET_CHANGED,
+        database,
+      });
+    }
+    return existing.id;
+  }
+
+  const insert = database
+    .prepare<[number, null, AssetType, string, string, string, 'extract', number, number]>(
+      `
+      INSERT INTO assets (project_id, parent_id, type, name, description, prompt, source, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(projectId, null, type, name, description, prompt, 'extract', now, now);
+  return Number(insert.lastInsertRowid);
+}
+
+function replaceCommittedResourceAsset(database: Database.Database, projectId: number, row: ProductionResourceDraftRow, now: number): number {
+  const assetId = resolveDraftMatchedAssetId(database, projectId, row.matched_asset_id ?? row.asset_id);
+  if (!assetId) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '替换资源需要选择已有资产');
+  }
+
+  const existing = assertProductionResourceAsset(database, projectId, assetId);
+  const type = normalizeResourceDraftType(row.type);
+  const name = normalizeRequiredText(row.name, '资源名称');
+  const description = normalizeOptionalText(row.description);
+  const prompt = normalizeOptionalText(row.prompt);
+  const changed = existing.type !== type || existing.name !== name || existing.description !== description || existing.prompt !== prompt;
+  database
+    .prepare<[AssetType, string, string, string, number, number, number]>(
+      `
+      UPDATE assets
+      SET type = ?, name = ?, description = ?, prompt = ?, updated_at = ?
+      WHERE project_id = ? AND id = ?
+      `,
+    )
+    .run(type, name, description, prompt, now, projectId, assetId);
+  markAssetsDependencyStatus({
+    projectId,
+    assetIds: [assetId],
+    status: DEPENDENCY_STATUSES.VALID,
+    reason: null,
+    database,
+  });
+  if (changed) {
+    markProductionForAssetsChanged({
+      projectId,
+      assetIds: [assetId],
+      status: DEPENDENCY_STATUSES.NEEDS_REVIEW,
+      reason: DEPENDENCY_REASON.ASSET_CHANGED,
+      database,
+    });
+  }
+  return assetId;
+}
+
+function commitProductionResourceDraftRow(database: Database.Database, projectId: number, contentId: number, row: ProductionResourceDraftRow, now: number): { saved: boolean } {
+  const action = toResourceDraftAction(row.action);
+  if (action === 'skip') {
+    database
+      .prepare<['skipped', number, number, number, number]>(
+        'UPDATE production_resource_drafts SET status = ?, updated_at = ? WHERE project_id = ? AND content_id = ? AND id = ?',
+      )
+      .run('skipped', now, projectId, contentId, row.id);
+    return { saved: false };
+  }
+
+  let assetId: number;
+  if (action === 'merge') {
+    const matchedAssetId = resolveDraftMatchedAssetId(database, projectId, row.matched_asset_id ?? row.asset_id);
+    if (!matchedAssetId) {
+      throw createError(VT_STATUS.INVALID_PARAMS, '合并资源需要选择已有资产');
+    }
+    assetId = matchedAssetId;
+  } else if (action === 'replace') {
+    assetId = replaceCommittedResourceAsset(database, projectId, row, now);
+  } else {
+    assetId = upsertCommittedResourceAsset(database, projectId, row, now);
+  }
+
+  database.prepare<[number, number, number]>('INSERT OR IGNORE INTO script_asset_links (script_id, asset_id, created_at) VALUES (?, ?, ?)').run(contentId, assetId, now);
+  if (tableExists('production_resource_links')) {
+    database.prepare<[number, number, number]>('INSERT OR IGNORE INTO production_resource_links (content_id, asset_id, created_at) VALUES (?, ?, ?)').run(contentId, assetId, now);
+  }
+  database
+    .prepare<[number, 'saved', number, number, number, number]>(
+      'UPDATE production_resource_drafts SET asset_id = ?, status = ?, updated_at = ? WHERE project_id = ? AND content_id = ? AND id = ?',
+    )
+    .run(assetId, 'saved', now, projectId, contentId, row.id);
+
+  return { saved: true };
+}
+
+export function listProductionResourceDrafts(payload: ProductionResourceDraftListPayload): ProductionResourceDraftListResult {
+  const { script } = assertContentProductionContext(payload);
+  return {
+    drafts: listProductionResourceDraftRows(script.project_id, script.id).map(mapProductionResourceDraftRow),
+    existingAssets: listProductionResourceExistingAssets(script.project_id),
+  };
+}
+
+export function saveProductionResourceDraft(payload: ProductionResourceDraftSavePayload): ProductionResourceDraftSaveResult {
+  const { script } = assertContentProductionContext(payload);
+  const draftId = normalizeDraftId(payload.draftId);
+  const now = Date.now();
+  const draft = withTransaction((database) => {
+    const existing = getProductionResourceDraftRow(script.project_id, script.id, draftId, database);
+    const type = payload.type === undefined ? toResourceDraftType(existing.type) : normalizeResourceDraftType(payload.type);
+    const name = payload.name === undefined ? existing.name : normalizeRequiredText(payload.name, '资源名称');
+    const description = payload.description === undefined ? existing.description : normalizeOptionalText(payload.description);
+    const prompt = payload.prompt === undefined ? existing.prompt : normalizeOptionalText(payload.prompt);
+    const action = payload.action === undefined ? toResourceDraftAction(existing.action) : normalizeResourceDraftAction(payload.action);
+    const matchedAssetId = payload.matchedAssetId === undefined ? existing.matched_asset_id : resolveDraftMatchedAssetId(database, script.project_id, payload.matchedAssetId);
+    if ((action === 'merge' || action === 'replace') && !matchedAssetId) {
+      throw createError(VT_STATUS.INVALID_PARAMS, '合并或替换资源需要选择已有资产');
+    }
+    database
+      .prepare<[ProductionResourceDraftType, string, string, string, ProductionResourceDraftAction, number | null, number, number, number, number]>(
+        `
+        UPDATE production_resource_drafts
+        SET type = ?, name = ?, description = ?, prompt = ?, action = ?, matched_asset_id = ?, updated_at = ?
+        WHERE project_id = ? AND content_id = ? AND id = ?
+        `,
+      )
+      .run(type, name, description, prompt, action, matchedAssetId, now, script.project_id, script.id, draftId);
+    return getProductionResourceDraftRow(script.project_id, script.id, draftId, database);
+  });
+
+  return {
+    draft: mapProductionResourceDraftRow(draft),
+  };
+}
+
+export function deleteProductionResourceDraft(payload: ProductionResourceDraftDeletePayload): ProductionDeleteResult {
+  const { script } = assertContentProductionContext(payload);
+  const draftId = normalizeDraftId(payload.draftId);
+  const result = getDatabase()
+    .prepare<[number, number, number, string], { changes: number }>('DELETE FROM production_resource_drafts WHERE project_id = ? AND content_id = ? AND id = ? AND status = ?')
+    .run(script.project_id, script.id, draftId, 'draft');
+  return { deletedCount: result.changes };
+}
+
+export function commitProductionResourceDrafts(payload: ProductionResourceDraftCommitPayload): ProductionResourceDraftCommitResult {
+  const { script } = assertContentProductionContext(payload);
+  const draftIds = payload.draftIds?.length ? normalizeIds(payload.draftIds, '资源草稿 ID') : undefined;
+  const replaceAll = !draftIds?.length;
+  const now = Date.now();
+  const result = withTransaction((database) => {
+    const rows = listProductionResourceDraftRows(script.project_id, script.id, draftIds, database);
+    if (rows.length === 0) {
+      throw createError(VT_STATUS.INVALID_PARAMS, '没有可入库的资源草稿');
+    }
+    if (replaceAll) {
+      database.prepare<[number]>('DELETE FROM script_asset_links WHERE script_id = ?').run(script.id);
+      if (tableExists('production_resource_links')) {
+        database.prepare<[number]>('DELETE FROM production_resource_links WHERE content_id = ?').run(script.id);
+      }
+    }
+    let savedCount = 0;
+    let skippedCount = 0;
+    for (const row of rows) {
+      const committed = commitProductionResourceDraftRow(database, script.project_id, script.id, row, now);
+      if (committed.saved) {
+        savedCount += 1;
+      } else {
+        skippedCount += 1;
+      }
+    }
+    syncProductionResourceLinks(database, [script.id]);
+    return { savedCount, skippedCount };
+  });
+
+  return {
+    ...result,
+    assets: listProductionAssets(script.project_id, script.id),
+    drafts: listProductionResourceDraftRows(script.project_id, script.id).map(mapProductionResourceDraftRow),
+    flowData: loadFlowData(script.project_id, script.id),
+  };
+}
+
 function getStoryboardAssetIds(storyboardIds: number[]): Map<number, number[]> {
   const result = new Map<number, number[]>();
   if (storyboardIds.length === 0) {
@@ -1418,7 +2416,7 @@ function mapStoryboardRow(row: StoryboardRow, associatedAssetIds: number[] = [])
   return {
     id: row.id,
     projectId: row.project_id,
-    scriptId: row.script_id,
+    contentId: row.script_id,
     index: row.sort_index,
     prompt: row.prompt,
     videoDesc: row.video_desc,
@@ -1478,7 +2476,7 @@ function mapVideoRow(row: VideoRow): ProductionVideoItem {
   return {
     id: row.id,
     projectId: row.project_id,
-    scriptId: row.script_id,
+    contentId: row.script_id,
     trackId: row.track_id,
     status: assertStatus(row.status),
     errorReason: row.error_reason,
@@ -1530,7 +2528,7 @@ function mapTrackRow(row: VideoTrackRow, videos: ProductionVideoItem[] = []): Pr
   return {
     id: row.id,
     projectId: row.project_id,
-    scriptId: row.script_id,
+    contentId: row.script_id,
     sortIndex: row.sort_index ?? 0,
     prompt: row.prompt,
     duration: Number(row.duration),
@@ -1626,7 +2624,7 @@ function mapImageFlowRow(row: ImageFlowRow): ProductionImageFlowItem {
   return {
     id: row.id,
     projectId: row.project_id,
-    scriptId: row.script_id,
+    contentId: row.script_id,
     ownerType: normalizeOwnerType(row.owner_type as ProductionImageFlowOwnerType),
     ownerId: row.owner_id ?? null,
     flowData: validateFlowData(parseJson<ProductionImageFlowData>(row.flow_data, { nodes: [], edges: [] })),
@@ -1643,27 +2641,29 @@ function getImageFlowRow(projectId: number, scriptId: number, flowId: string): I
     .get(projectId, scriptId, flowId) ?? null;
 }
 
-export function getProductionWorkspace(payload: ProductionScriptPayload | { projectId: number; scriptId?: number | null }): ProductionWorkspaceResult {
+export function getProductionWorkspace(payload: ProductionProjectPayload & { contentId?: number | null }): ProductionWorkspaceResult {
   const projectId = normalizeProjectId(payload.projectId);
   assertProject(projectId);
-  const scripts = listScriptOptions(projectId);
-  const requestedScriptId = payload.scriptId ? normalizeScriptId(payload.scriptId) : scripts[0]?.id ?? null;
-  if (!requestedScriptId) {
+  const contents = listScriptOptions(projectId);
+  const requestedContentId = payload.contentId ? resolveScopedContentId(payload) : contents[0]?.id ?? null;
+  if (!requestedContentId) {
     return {
-      scripts,
-      currentScriptId: null,
+      contents,
+      currentContentId: null,
       flowData: null,
     };
   }
 
-  const script = assertScript(projectId, requestedScriptId);
+  const script = assertScript(projectId, requestedContentId);
+  const content = tableExists('production_contents') ? assertContent(projectId, script.id) : null;
   const workspace = ensureWorkspace(projectId, script.id);
   return {
-    scripts,
-    currentScriptId: script.id,
+    contents,
+    currentContentId: script.id,
     flowData: {
-      script: script.content,
-      scriptPlan: workspace.script_plan,
+      content: content ? mapContentRow(content) : undefined,
+      contentBody: content?.body ?? script.content,
+      directorPlan: workspace.script_plan,
       storyboardTable: workspace.storyboard_table,
       positions: parseJson(workspace.positions_json, {}),
       assets: listProductionAssets(projectId, script.id),
@@ -1696,12 +2696,12 @@ export function saveProductionWorkspace(payload: ProductionSaveWorkspacePayload)
       .run(
         script.project_id,
         script.id,
-        payload.scriptPlan ?? '',
+        payload.directorPlan ?? '',
         payload.storyboardTable ?? '',
         positionsJson,
         now,
         now,
-        payload.scriptPlan ?? '',
+        payload.directorPlan ?? '',
         payload.storyboardTable ?? '',
         positionsJson,
         now,
@@ -1712,31 +2712,36 @@ export function saveProductionWorkspace(payload: ProductionSaveWorkspacePayload)
 }
 
 export function getProductionAgentTools(): ProductionAgentToolsResult {
-  const knownToolNames = new Set(PRODUCTION_AGENT_TOOL_NAMES);
   return {
-    tools: PRODUCTION_AGENT_TOOLS.filter((tool) => knownToolNames.has(tool.name)),
+    tools: listProductionToolDescriptors(),
     xmlTags: [
-      { tag: 'script', writes: 'script', status: 'ready' },
-      { tag: 'scriptPlan', writes: 'scriptPlan', status: 'ready' },
+      { tag: 'content', writes: 'content', status: 'ready' },
+      { tag: 'directorPlan', writes: 'directorPlan', status: 'ready' },
       { tag: 'storyboardTable', writes: 'storyboardTable', status: 'ready' },
       { tag: 'storyboardItem', writes: 'storyboard', status: 'ready' },
     ],
   };
 }
 
-export function getProductionAgentContext(payload: ProductionScriptPayload): ProductionAgentContextResult {
+export function getProductionAgentContext(payload: ProductionContentScopedPayload): ProductionAgentContextResult {
   const { script, project } = assertProductionContext(payload);
-  const workspace = getProductionWorkspace({ projectId: script.project_id, scriptId: script.id });
+  const workspace = getProductionWorkspace({ projectId: script.project_id, contentId: script.id });
   if (!workspace.flowData) {
     throw createError(VT_STATUS.NOT_FOUND, '生产工作区不存在');
   }
   const tools = getProductionAgentTools();
   const manuals = readProductionStoryboardManuals(project);
+  const resourceContextPayload = {
+    projectId: script.project_id,
+    templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
+  };
   return {
     projectId: script.project_id,
-    scriptId: script.id,
-    scriptName: script.name,
+    contentId: script.id,
+    contentTitle: workspace.flowData.content?.title ?? script.name,
     flowData: workspace.flowData,
+    resourceContext: getProductionResourceContext(resourceContextPayload),
+    skillBundle: getProductionSkillBundle(resourceContextPayload),
     manuals: {
       visual: {
         ...toManualPromptSnapshot(manuals.visual),
@@ -1752,7 +2757,7 @@ export function getProductionAgentContext(payload: ProductionScriptPayload): Pro
 }
 
 function loadFlowData(projectId: number, scriptId: number): ProductionFlowData {
-  const workspace = getProductionWorkspace({ projectId, scriptId });
+  const workspace = getProductionWorkspace({ projectId, contentId: scriptId });
   if (!workspace.flowData) {
     throw createError(VT_STATUS.NOT_FOUND, '生产工作区不存在');
   }
@@ -1764,15 +2769,16 @@ export function applyProductionAgentWorkspacePatch(payload: ProductionAgentWorks
   const { script } = assertProductionContext(payload);
   const patches = normalizeAgentWorkspacePatches(payload.patches);
   const workspace = ensureWorkspace(script.project_id, script.id);
-  const scriptPatch = patches.find((patch) => patch.field === 'script');
-  const scriptPlanPatch = patches.find((patch) => patch.field === 'scriptPlan');
+  const contentPatch = patches.find((patch) => patch.field === 'content');
+  const directorPlanPatch = patches.find((patch) => patch.field === 'directorPlan');
   const storyboardTablePatch = patches.find((patch) => patch.field === 'storyboardTable');
   const now = Date.now();
 
   withTransaction((database) => {
-    if (scriptPatch) {
+    if (contentPatch) {
       assertScriptEditableForAgent(script.project_id, script.id);
-      const contentChanged = script.content !== scriptPatch.content;
+      const contentChanged = script.content !== contentPatch.content;
+      const contentRow = tableExists('production_contents') ? getContentRow(script.project_id, script.id) : null;
       database
         .prepare<[string, string, null, string, null, number, number, number]>(
           `
@@ -1781,18 +2787,45 @@ export function applyProductionAgentWorkspacePatch(payload: ProductionAgentWorks
           WHERE project_id = ? AND id = ?
           `,
         )
-        .run(scriptPatch.content, SCRIPT_EXTRACT_STATUS.IDLE, null, DEPENDENCY_STATUSES.VALID, null, now, script.project_id, script.id);
+        .run(contentPatch.content, CONTENT_RESOURCE_EXTRACT_STATUS.IDLE, null, DEPENDENCY_STATUSES.VALID, null, now, script.project_id, script.id);
+      if (contentRow) {
+        database
+          .prepare<[string, number, string, null, string, null, number, number, number]>(
+            `
+            UPDATE production_contents
+            SET body = ?,
+                version = ?,
+                resource_status = ?,
+                resource_error_reason = ?,
+                dependency_status = ?,
+                dependency_reason = ?,
+                updated_at = ?
+            WHERE project_id = ? AND id = ?
+            `,
+          )
+          .run(
+            contentPatch.content,
+            contentChanged ? contentRow.version + 1 : contentRow.version,
+            PRODUCTION_TASK_STATUS.IDLE,
+            null,
+            DEPENDENCY_STATUSES.VALID,
+            null,
+            now,
+            script.project_id,
+            script.id,
+          );
+      }
       if (contentChanged) {
-        markProductionForScriptsChanged({
+        markProductionForContentChanged({
           projectId: script.project_id,
-          scriptIds: [script.id],
+          contentIds: [script.id],
           status: DEPENDENCY_STATUSES.NEEDS_REVIEW,
           reason: DEPENDENCY_REASON.SCRIPT_CHANGED,
           database,
         });
       }
     }
-    if (scriptPlanPatch || storyboardTablePatch) {
+    if (directorPlanPatch || storyboardTablePatch) {
       database
         .prepare<[string, string, number, number, number]>(
           `
@@ -1804,13 +2837,21 @@ export function applyProductionAgentWorkspacePatch(payload: ProductionAgentWorks
           `,
         )
         .run(
-          scriptPlanPatch?.content ?? workspace.script_plan,
+          directorPlanPatch?.content ?? workspace.script_plan,
           storyboardTablePatch?.content ?? workspace.storyboard_table,
           now,
           script.project_id,
           script.id,
         );
     }
+    recordProductionAgentAudit(database, {
+      projectId: script.project_id,
+      contentId: script.id,
+      toolName: 'apply_workspace_patch',
+      source: payload.source,
+      input: payload,
+      result: { appliedFields: patches.map((patch) => patch.field) },
+    });
   });
 
   return {
@@ -1907,7 +2948,7 @@ export function createProductionAgentStoryboard(payload: ProductionAgentStoryboa
   const { script } = assertProductionContext(payload);
   const result = saveProductionStoryboard({
     projectId: script.project_id,
-    scriptId: script.id,
+    contentId: script.id,
     id: payload.storyboard.id ?? null,
     prompt: payload.storyboard.prompt ?? '',
     videoDesc: payload.storyboard.videoDesc,
@@ -1962,7 +3003,7 @@ export function deleteProductionStoryboards(payload: ProductionBatchDeleteStoryb
 export function deleteProductionStoryboard(payload: ProductionStoryboardDeletePayload): ProductionDeleteResult {
   return deleteProductionStoryboards({
     projectId: payload.projectId,
-    scriptId: payload.scriptId,
+    contentId: resolveScopedContentId(payload),
     storyboardIds: [payload.storyboardId],
   });
 }
@@ -2008,7 +3049,7 @@ async function generateProductionStoryboardImage(project: ProjectRow, script: Sc
         projectId: script.project_id,
         category: STORYBOARD_IMAGE_CATEGORY,
         description: `Generate storyboard image ${storyboard.id}`,
-        relatedObjects: { scriptId: script.id, storyboardId: storyboard.id, manuals: toProductionManualSnapshots(manuals) },
+        relatedObjects: { contentId: script.id, storyboardId: storyboard.id, manuals: toProductionManualSnapshots(manuals) },
         isCancelled: () => isStoryboardImageCancelled(script.project_id, storyboard.id, taskId),
       },
     });
@@ -2096,10 +3137,10 @@ export function generateProductionStoryboardImages(payload: ProductionGenerateSt
 
   const model = normalizeOptionalText(project.image_model_id);
   const manuals = toProductionManualSnapshots(readProductionStoryboardManuals(project));
-  const task = createTask({
+  const task = createProductionTask({
     projectId: script.project_id,
     category: STORYBOARD_IMAGE_CATEGORY,
-    relatedObjects: { ids: idsToGenerate, manuals },
+    relatedObjects: { contentId: script.id, storyboardIds: idsToGenerate, manuals },
     modelName: model || null,
     description: `Generate ${idsToGenerate.length} storyboard images`,
   });
@@ -2211,7 +3252,7 @@ export function createProductionAgentDerivedAsset(payload: ProductionAgentDerive
   const { script } = assertProductionContext(payload);
   const result = saveProductionDerivedAsset({
     projectId: script.project_id,
-    scriptId: script.id,
+    contentId: script.id,
     id: payload.asset.id ?? null,
     parentAssetId: payload.asset.parentAssetId,
     name: payload.asset.name,
@@ -2333,7 +3374,7 @@ async function generateProductionDerivedAssetImage(project: ProjectRow, script: 
         projectId: script.project_id,
         category: DERIVED_ASSET_IMAGE_CATEGORY,
         description: `Generate derived asset image ${asset.id}`,
-        relatedObjects: { scriptId: script.id, assetId: asset.id, mediaId },
+        relatedObjects: { contentId: script.id, assetId: asset.id, mediaId },
         isCancelled: () => isDerivedAssetImageCancelled(script.project_id, asset.id, mediaId, taskId),
       },
     });
@@ -2416,10 +3457,10 @@ export function generateProductionDerivedAssetImages(payload: ProductionGenerate
 
   const model = normalizeOptionalText(project.image_model_id);
   const manuals = toProductionManualSnapshots(readProductionStoryboardManuals(project));
-  const task = createTask({
+  const task = createProductionTask({
     projectId: script.project_id,
     category: DERIVED_ASSET_IMAGE_CATEGORY,
-    relatedObjects: { ids: assetIds, manuals },
+    relatedObjects: { contentId: script.id, assetIds, manuals },
     modelName: model || null,
     description: `Generate ${assetIds.length} derived asset images`,
   });
@@ -2795,10 +3836,10 @@ export function generateProductionVideoPrompts(payload: ProductionGenerateVideoP
   const trackIds = normalizeIds(payload.trackIds, '轨道 ID');
   trackIds.forEach((id) => getTrackRow(script.project_id, script.id, id));
   const manuals = toProductionManualSnapshots(readProductionVideoManuals(project));
-  const task = createTask({
+  const task = createProductionTask({
     projectId: script.project_id,
     category: VIDEO_PROMPT_CATEGORY,
-    relatedObjects: { ids: trackIds, manuals },
+    relatedObjects: { contentId: script.id, trackIds, manuals },
     modelName: 'universalAi',
     description: `生成 ${trackIds.length} 条视频提示词`,
   });
@@ -2874,7 +3915,7 @@ async function generateProductionVideoCandidate(project: ProjectRow, script: Scr
         projectId: script.project_id,
         category: VIDEO_CATEGORY,
         description: `Generate video candidate ${video.id}`,
-        relatedObjects: { scriptId: script.id, videoId: video.id, trackId: video.track_id },
+        relatedObjects: { contentId: script.id, videoId: video.id, trackId: video.track_id },
         isCancelled: () => isProductionVideoCancelled(script.project_id, video.id, taskId),
       },
     });
@@ -2995,10 +4036,10 @@ export function generateProductionVideos(payload: ProductionGenerateVideoPayload
     return Number(insert.lastInsertRowid);
   }));
 
-  const task = createTask({
+  const task = createProductionTask({
     projectId: script.project_id,
     category: VIDEO_CATEGORY,
-    relatedObjects: { ids: videoIds, trackIds },
+    relatedObjects: { contentId: script.id, videoIds, trackIds },
     modelName: model || null,
     description: `Generate ${videoIds.length} video candidates`,
   });
@@ -3115,7 +4156,7 @@ export function deleteProductionVideo(payload: ProductionVideoDeletePayload): Pr
   return { deletedCount };
 }
 
-export function getProductionWorkbench(payload: ProductionScriptPayload): ProductionWorkbenchResult {
+export function getProductionWorkbench(payload: ProductionContentScopedPayload): ProductionWorkbenchResult {
   const { script } = assertProductionContext(payload);
   return {
     tracks: listVideoTracks(script.project_id, script.id),

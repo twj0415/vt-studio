@@ -14,7 +14,7 @@ const props = defineProps<{
   id: string;
   kind: ProductionImageFlowNodeKind;
   data: ProductionImageFlowNodeData;
-  sourceTypeOptions: Array<{ label: string; value: ProductionImageFlowSourceType }>;
+  sourceKindOptions: Array<{ label: string; value: ProductionImageFlowSourceType }>;
   sourceOptions: ProductionImageFlowSourceOption[];
   ratioOptions: Array<{ label: string; value: string }>;
   qualityOptions: Array<{ label: string; value: string }>;
@@ -92,7 +92,7 @@ function updateSourceId(value: unknown): void {
       <div class="production-image-flow-node-grid">
         <label>
           <span>{{ kind === 'upload' ? t('production.imageFlow.node.source') : t('production.imageFlow.node.seedSource') }}</span>
-          <t-select :model-value="data.source" :options="sourceTypeOptions" @change="updateSource" />
+          <t-select :model-value="data.source" :options="sourceKindOptions" @change="updateSource" />
         </label>
         <label v-if="hasSourceSelect">
           <span>{{ t('production.imageFlow.node.sourceItem') }}</span>

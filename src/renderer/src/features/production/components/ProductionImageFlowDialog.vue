@@ -51,7 +51,7 @@ const DEFAULT_MODEL = 'project-default-image-model';
 const props = defineProps<{
   visible: boolean;
   projectId: number;
-  scriptId: number | null;
+  contentId: number | null;
   owner: ProductionImageFlowOwnerContext | null;
   storyboards: ProductionStoryboardItem[];
   assets: ProductionAssetSummary[];
@@ -74,7 +74,7 @@ const selectedGeneratedNodeId = ref<string | null>(null);
 const { fitView, getNodes } = useVueFlow(FLOW_ID);
 
 const title = computed(() => (props.owner ? t('production.imageFlow.title', { name: props.owner.title }) : t('production.imageFlow.titleFallback')));
-const sourceTypeOptions = computed<Array<{ label: string; value: ProductionImageFlowSourceType }>>(() => [
+const sourceKindOptions = computed<Array<{ label: string; value: ProductionImageFlowSourceType }>>(() => [
   { label: t('production.imageFlow.source.storyboard'), value: 'storyboard' },
   { label: t('production.imageFlow.source.assets'), value: 'assets' },
   { label: t('production.imageFlow.source.manual'), value: 'manual' },
@@ -295,7 +295,7 @@ function getSourceOptions(source: ProductionImageFlowSourceType): ProductionImag
 }
 
 async function openDialog(): Promise<void> {
-  if (!props.visible || !props.projectId || !props.scriptId || !props.owner) {
+  if (!props.visible || !props.projectId || !props.contentId || !props.owner) {
     return;
   }
 
@@ -304,9 +304,9 @@ async function openDialog(): Promise<void> {
     let flowData: ProductionImageFlowData | null = null;
     currentFlowId.value = props.owner.flowId;
     if (props.owner.flowId) {
-      const response = await window.vtStudio.production.getImageFlow({
+      const response = await window.vtStudio.production.imageFlow.get({
         projectId: props.projectId,
-        scriptId: props.scriptId,
+        contentId: props.contentId,
         flowId: props.owner.flowId,
       });
       if (!isOk(response)) {
@@ -421,15 +421,15 @@ function autoLayout(): void {
 }
 
 async function saveFlow(showMessage = true): Promise<string | null> {
-  if (!props.projectId || !props.scriptId || !props.owner) {
+  if (!props.projectId || !props.contentId || !props.owner) {
     return null;
   }
 
   saving.value = true;
   try {
-    const response = await window.vtStudio.production.saveImageFlow({
+    const response = await window.vtStudio.production.imageFlow.save({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       flowId: currentFlowId.value,
       ownerType: props.owner.ownerType,
       ownerId: props.owner.ownerId,
@@ -457,16 +457,16 @@ async function applyResult(): Promise<void> {
 
   const flowId = currentFlowId.value ?? await saveFlow(false);
   const generatedImage = selectedGeneratedNode.value?.data.generatedImage;
-  if (!flowId || !generatedImage || !props.projectId || !props.scriptId) {
+  if (!flowId || !generatedImage || !props.projectId || !props.contentId) {
     MessagePlugin.warning(t('production.imageFlow.noResultToApply'));
     return;
   }
 
   applying.value = true;
   try {
-    const response = await window.vtStudio.production.applyImageFlowResult({
+    const response = await window.vtStudio.production.imageFlow.applyResult({
       projectId: props.projectId,
-      scriptId: props.scriptId,
+      contentId: props.contentId,
       flowId,
       ownerType: props.owner.ownerType,
       ownerId: props.owner.ownerId,
@@ -560,7 +560,7 @@ watch(() => props.visible, (visible) => {
                 :id="id"
                 :kind="data.kind === 'generated' ? 'generated' : 'upload'"
                 :data="data"
-                :source-type-options="sourceTypeOptions"
+                :source-kind-options="sourceKindOptions"
                 :source-options="getSourceOptions(data.source)"
                 :ratio-options="ratioOptions"
                 :quality-options="qualityOptions"

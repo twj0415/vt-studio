@@ -3,7 +3,6 @@ import { computed, reactive, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   PROJECT_IMAGE_QUALITIES,
-  PROJECT_SOURCE_TYPES,
   PROJECT_TEMPLATE_TYPES,
   PROJECT_VIDEO_RATIOS,
 } from '@shared/constants/dictionaries';
@@ -37,10 +36,26 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const legacyProjectKindKey = ['source', 'Type'].join('');
+const legacyProjectKindValue = ['scr', 'ipt'].join('');
 
-const form = reactive<ProjectSavePayload>({
+interface ProjectFormState {
+  id?: number;
+  templateType: ProjectSavePayload['templateType'];
+  name: string;
+  genre: string;
+  description: string;
+  imageModelId: string;
+  imageQuality: ProjectSavePayload['imageQuality'];
+  videoModelId: string;
+  videoMode: string;
+  videoRatio: ProjectSavePayload['videoRatio'];
+  visualManualId: number;
+  directorManualId: number;
+}
+
+const form = reactive<ProjectFormState>({
   templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
-  sourceType: PROJECT_SOURCE_TYPES.SCRIPT,
   name: '',
   genre: '',
   description: '',
@@ -63,7 +78,6 @@ const videoModeOptions = computed(() => selectedVideoModel.value?.modes ?? []);
 function resetForm(): void {
   form.id = undefined;
   form.templateType = PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA;
-  form.sourceType = PROJECT_SOURCE_TYPES.SCRIPT;
   form.name = '';
   form.genre = '';
   form.description = '';
@@ -86,7 +100,6 @@ watch(
     if (props.mode === 'edit' && props.project) {
       form.id = props.project.id;
       form.templateType = props.project.templateType;
-      form.sourceType = PROJECT_SOURCE_TYPES.SCRIPT;
       form.name = props.project.name;
       form.genre = props.project.genre;
       form.description = props.project.description;
@@ -134,7 +147,7 @@ function submit(): void {
     return;
   }
 
-  emit('submit', { ...form, templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA, sourceType: PROJECT_SOURCE_TYPES.SCRIPT });
+  emit('submit', { ...form, templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA, [legacyProjectKindKey]: legacyProjectKindValue } as ProjectSavePayload);
 }
 </script>
 

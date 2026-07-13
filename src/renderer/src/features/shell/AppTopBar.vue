@@ -1,54 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { BrowseIcon } from 'tdesign-icons-vue-next';
 import { MessagePlugin } from 'tdesign-vue-next';
 import WindowControls from './WindowControls.vue';
-import { globalMenus, projectWorkspaceRouteNames } from '@renderer/router/menu';
 import { useAppStore } from '@renderer/stores/app';
-import type { MenuModule } from '@shared/types/app';
 import type { ExternalLinkKey } from '@shared/types/shell';
 
-interface LocalizedMenu extends MenuModule {
-  title: string;
-  shortTitle: string;
-}
-
-const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
 const { t } = useI18n();
-const { needUpdate, externalLinks } = storeToRefs(appStore);
+const { externalLinks } = storeToRefs(appStore);
 
-const activeRoute = computed(() => String(route.name ?? 'projects'));
 const isElectron = computed(() => Boolean(window.vtStudio?.window));
 const visibleExternalLinks = computed(() => externalLinks.value.filter((item) => item.configured));
-const aiToolRouteNames = new Set(['script-agent', 'script']);
-
-function localizeMenu(menu: MenuModule): LocalizedMenu {
-  return {
-    ...menu,
-    title: t(menu.titleKey),
-    shortTitle: t(menu.shortTitleKey ?? menu.titleKey),
-  };
-}
-
-const localizedGlobalMenus = computed(() => globalMenus.map(localizeMenu));
-const isAiToolRoute = computed(() => aiToolRouteNames.has(activeRoute.value));
-const isProjectRoute = computed(() => projectWorkspaceRouteNames.some((projectRouteName) => projectRouteName === activeRoute.value) && !isAiToolRoute.value);
-
-function isGlobalMenuActive(menu: MenuModule): boolean {
-  if (menu.routeName === 'ai-tool-library') {
-    return activeRoute.value === menu.routeName || isAiToolRoute.value;
-  }
-  return activeRoute.value === menu.routeName || (menu.routeName === 'projects' && isProjectRoute.value);
-}
-
-function openMenu(menu: MenuModule): void {
-  void router.push({ name: menu.routeName });
-}
 
 function openProjects(): void {
   void router.push({ name: 'projects' });
@@ -69,23 +36,6 @@ async function openExternalLink(key: ExternalLinkKey): Promise<void> {
         <span class="app-topbar-mark">VT</span>
         <strong>Studio</strong>
       </button>
-
-      <nav class="app-topbar-nav" :aria-label="t('common.global')">
-        <button
-          v-for="menu in localizedGlobalMenus"
-          :key="menu.id"
-          class="app-topbar-nav-item"
-          :class="{ 'is-active': isGlobalMenuActive(menu), 'has-dot': menu.routeName === 'settings' && needUpdate }"
-          type="button"
-          :title="menu.title"
-          :aria-label="menu.title"
-          :aria-current="isGlobalMenuActive(menu) ? 'page' : undefined"
-          @click="openMenu(menu)"
-        >
-          {{ menu.shortTitle }}
-          <i v-if="menu.routeName === 'settings' && needUpdate" class="app-topbar-dot" />
-        </button>
-      </nav>
     </div>
 
     <div class="app-topbar-drag" aria-hidden="true" />
@@ -114,7 +64,6 @@ async function openExternalLink(key: ExternalLinkKey): Promise<void> {
 }
 
 .app-topbar-main,
-.app-topbar-nav,
 .app-topbar-tools {
   display: flex;
   align-items: center;
@@ -161,11 +110,6 @@ async function openExternalLink(key: ExternalLinkKey): Promise<void> {
   line-height: 1;
 }
 
-.app-topbar-nav {
-  gap: 4px;
-}
-
-.app-topbar-nav-item,
 .app-topbar-tool {
   position: relative;
   display: inline-flex;
@@ -184,33 +128,6 @@ async function openExternalLink(key: ExternalLinkKey): Promise<void> {
     background 160ms ease,
     border-color 160ms ease,
     color 160ms ease;
-}
-
-.app-topbar-nav-item {
-  min-width: 42px;
-  padding: 0 10px;
-}
-
-.app-topbar-nav-item:hover,
-.app-topbar-nav-item.is-active {
-  border-color: var(--vt-line-strong);
-  color: var(--vt-text-primary);
-  background: var(--vt-surface-raised);
-}
-
-.app-topbar-nav-item.is-active {
-  color: var(--vt-brand-strong);
-  background: color-mix(in srgb, var(--vt-brand) 10%, var(--vt-surface-raised));
-}
-
-.app-topbar-dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--vt-danger);
 }
 
 .app-topbar-drag {
@@ -243,10 +160,6 @@ async function openExternalLink(key: ExternalLinkKey): Promise<void> {
 @media (max-width: 1180px) {
   .app-topbar-brand strong {
     display: none;
-  }
-
-  .app-topbar-nav-item {
-    padding: 0 8px;
   }
 }
 </style>

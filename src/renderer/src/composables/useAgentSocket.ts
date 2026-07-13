@@ -14,8 +14,8 @@ import type {
   AgentSocketAuth,
   AgentSocketErrorPayload,
   AgentThinkConfigPayload,
+  AgentWorkspaceSocketUpdate,
 } from '@shared/types/socket';
-import type { ScriptAgentWorkspaceSocketUpdate } from '@shared/types/script-agent';
 
 interface UseAgentSocketOptions {
   namespace: AgentNamespace;
@@ -35,8 +35,8 @@ export function useAgentSocket() {
   const messages = ref<AgentMessage[]>([]);
   const messageUpdates = ref<AgentMessageUpdatePayload[]>([]);
   const contentBlocks = ref<Record<string, AgentContentBlock[]>>({});
-  const workspaceUpdates = ref<ScriptAgentWorkspaceSocketUpdate[]>([]);
-  const lastWorkspaceUpdate = ref<ScriptAgentWorkspaceSocketUpdate | null>(null);
+  const workspaceUpdates = ref<AgentWorkspaceSocketUpdate[]>([]);
+  const lastWorkspaceUpdate = ref<AgentWorkspaceSocketUpdate | null>(null);
   const lastError = ref<AgentSocketErrorPayload | null>(null);
 
   async function connect(options: UseAgentSocketOptions): Promise<void> {
@@ -101,7 +101,7 @@ export function useAgentSocket() {
       };
     });
 
-    client.on('workspace:update', (payload: ScriptAgentWorkspaceSocketUpdate) => {
+    client.on('workspace:update', (payload: AgentWorkspaceSocketUpdate) => {
       workspaceUpdates.value.push(payload);
       lastWorkspaceUpdate.value = payload;
     });

@@ -1,4 +1,5 @@
 import { TASK_STATUS_VALUES, type TaskStatus } from './constants';
+import { normalizeProductionTaskCategory } from './production-format';
 import type { TaskListItem, TaskRecord } from './types';
 
 export interface TaskRow {
@@ -28,7 +29,7 @@ export function mapTaskRow(row: TaskRow): TaskRecord {
   return {
     id: row.id,
     projectId: row.project_id,
-    category: row.category,
+    category: normalizeProductionTaskCategory(row.category),
     relatedObjects: row.related_objects,
     modelName: row.model_name,
     description: row.description,

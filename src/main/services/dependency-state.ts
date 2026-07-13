@@ -209,6 +209,22 @@ export function markProductionForScriptsChanged(input: {
   updateRows(database, 'production_videos', `project_id = ? AND script_id IN (${inSql})`, [input.projectId, ...scriptIds], status, reason);
 }
 
+export function markProductionForContentChanged(input: {
+  projectId: number;
+  contentIds: number[];
+  status?: DependencyStatus;
+  reason?: string;
+  database?: Database.Database;
+}): void {
+  markProductionForScriptsChanged({
+    projectId: input.projectId,
+    scriptIds: input.contentIds,
+    status: input.status,
+    reason: input.reason,
+    database: input.database,
+  });
+}
+
 export function markProductionForAssetsChanged(input: {
   projectId: number;
   assetIds: number[];

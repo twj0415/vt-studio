@@ -52,8 +52,6 @@ export const globalMenus: MenuModule[] = [
 export const projectWorkspaceRouteNames: readonly ProjectRouteName[] = [
   'project-overview',
   'novel',
-  'script-agent',
-  'script',
   'assets',
   'corner-scape',
   'production',
@@ -61,6 +59,15 @@ export const projectWorkspaceRouteNames: readonly ProjectRouteName[] = [
 ];
 
 const projectMenuItems: MenuModule[] = [
+  {
+    id: 'M-015',
+    titleKey: 'route.projectOverview',
+    shortTitleKey: 'routeShort.projectOverview',
+    routeName: 'project-overview',
+    scope: 'project',
+    descriptionKey: 'routeDescription.projectOverview',
+    status: 'planned',
+  },
   {
     id: 'M-004',
     titleKey: 'route.novel',
@@ -70,25 +77,6 @@ const projectMenuItems: MenuModule[] = [
     descriptionKey: 'routeDescription.novel',
     status: 'planned',
     novelOnly: true,
-  },
-  {
-    id: 'M-011',
-    titleKey: 'route.script-agent',
-    shortTitleKey: 'routeShort.script-agent',
-    routeName: 'script-agent',
-    scope: 'project',
-    descriptionKey: 'routeDescription.script-agent',
-    status: 'planned',
-    novelOnly: true,
-  },
-  {
-    id: 'M-005',
-    titleKey: 'route.script',
-    shortTitleKey: 'routeShort.script',
-    routeName: 'script',
-    scope: 'project',
-    descriptionKey: 'routeDescription.script',
-    status: 'planned',
   },
   {
     id: 'M-006',

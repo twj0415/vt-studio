@@ -20,10 +20,17 @@ import { logger } from '../logger';
 import { cancelTask, createTask, failTask, succeedTask } from '../task/service';
 import { createScriptAgentRunContext, type ScriptAgentSubAgentUpdate } from '../agent/script-runner';
 import {
+  consumeProductionAgentStream,
+  createProductionAgentRunContext,
+  repairProductionAgentOutput,
+  validateProductionAgentOutput,
+} from '../agent/production-runner';
+import {
   applyScriptAgentXmlOutput,
   createScriptAgentWorkspaceSocketUpdate,
   stripScriptAgentXmlForDisplay,
 } from '../agent/script-xml';
+import { getProductionFlowData } from '../production';
 import { ThinkStreamParser } from './stripThink';
 import type { AgentSessionState, AgentSocket } from './types';
 
@@ -58,6 +65,15 @@ function readSocketProjectId(socket: AgentSocket): number {
   }
 
   return projectId;
+}
+
+function readSocketContentId(socket: AgentSocket): number {
+  const contentId = Number(socket.data.contentId);
+  if (!Number.isInteger(contentId) || contentId <= 0) {
+    throw new Error('内容 ID 无效');
+  }
+
+  return contentId;
 }
 
 function emitContentBlock(
@@ -148,14 +164,16 @@ function sanitizeToolDisplayResult(toolName: string, value: unknown): unknown {
   };
 }
 
+interface ToolStepResult {
+  toolCalls?: Array<{ toolCallId: string; toolName: string; input?: unknown }>;
+  toolResults?: Array<{ toolCallId: string; toolName: string; output?: unknown; result?: unknown }>;
+}
+
 function emitToolStepContent(
   socket: AgentSocket,
   messageId: string,
   emittedContentIds: Set<string>,
-  stepResult: {
-    toolCalls?: Array<{ toolCallId: string; toolName: string; input?: unknown }>;
-    toolResults?: Array<{ toolCallId: string; toolName: string; output?: unknown; result?: unknown }>;
-  },
+  stepResult: ToolStepResult,
 ): void {
   for (const toolCall of stepResult.toolCalls ?? []) {
     const toolResult = (stepResult.toolResults ?? []).find((item) => item.toolCallId === toolCall.toolCallId);
@@ -179,6 +197,33 @@ function emitToolStepContent(
       },
       emittedContentIds,
     );
+  }
+}
+
+function hasProductionFlowDataResult(stepResult: ToolStepResult): boolean {
+  return (stepResult.toolResults ?? []).some((toolResult) => {
+    const output = toolResult.output ?? toolResult.result;
+    return Boolean(output && typeof output === 'object' && 'flowData' in output);
+  });
+}
+
+function emitProductionWorkspaceUpdate(socket: AgentSocket, projectId: number, contentId: number, stepResult?: ToolStepResult): void {
+  if (stepResult && !hasProductionFlowDataResult(stepResult)) {
+    return;
+  }
+
+  try {
+    const flowData = getProductionFlowData({ projectId, contentId }).flowData;
+    socket.emit('workspace:update', {
+      projectId,
+      contentId,
+      source: 'tool',
+      flowData,
+      summary: 'Production Tool 已更新画布',
+    });
+  } catch (error) {
+    logger.warn('Production Agent', '画布刷新事件发送失败，已跳过');
+    logger.detail('Production Agent', '画布刷新事件发送失败详情', normalizeUnknownError(error));
   }
 }
 
@@ -213,7 +258,7 @@ function emitSubAgentContent(
   );
 }
 
-function updateAgentTask(taskId: number | null, action: 'succeed' | 'fail' | 'cancel', error?: unknown): void {
+function updateAgentTask(taskId: number | null, action: 'succeed' | 'fail' | 'cancel', error?: unknown, label = 'Agent'): void {
   if (!taskId) {
     return;
   }
@@ -224,13 +269,13 @@ function updateAgentTask(taskId: number | null, action: 'succeed' | 'fail' | 'ca
       return;
     }
     if (action === 'cancel') {
-      cancelTask(taskId, '改编助手生成已停止');
+      cancelTask(taskId, `${label}生成已停止`);
       return;
     }
-    failTask(taskId, error ?? '改编助手生成失败');
+    failTask(taskId, error ?? `${label}生成失败`);
   } catch (taskError) {
-    logger.warn('任务中心', '改编助手任务状态更新失败，已跳过');
-    logger.detail('任务中心', '改编助手任务状态更新失败详情', normalizeUnknownError(taskError));
+    logger.warn('任务中心', `${label}任务状态更新失败，已跳过`);
+    logger.detail('任务中心', `${label}任务状态更新失败详情`, normalizeUnknownError(taskError));
   }
 }
 
@@ -344,13 +389,24 @@ async function consumeModelStream(
 
   try {
     await persistSocketMemory(socket, namespace, 'user', content);
-    const projectId = namespace === 'scriptAgent' ? readSocketProjectId(socket) : null;
+    const projectId = readSocketProjectId(socket);
+    const productionContentId = namespace === 'productionAgent' ? readSocketContentId(socket) : null;
     if (namespace === 'scriptAgent' && projectId) {
       const task = createTask({
         projectId,
         category: '改编助手',
         relatedObjects: { projectId, messageId, action: 'chat' },
         modelName: 'scriptAgent:decisionAgent',
+        description: content.slice(0, 200),
+      });
+      taskId = task.taskId;
+    }
+    if (namespace === 'productionAgent' && productionContentId) {
+      const task = createTask({
+        projectId,
+        category: '生产助手',
+        relatedObjects: { projectId, contentId: productionContentId, messageId, action: 'chat' },
+        modelName: 'productionAgent:decisionAgent',
         description: content.slice(0, 200),
       });
       taskId = task.taskId;
@@ -374,22 +430,43 @@ async function consumeModelStream(
           })
         : null;
 
-    const result = await streamModelText({
-      modelKey: scriptAgentRunContext?.modelKey ?? namespace,
-      ...(scriptAgentRunContext ? { system: scriptAgentRunContext.system } : {}),
-      messages: [{ role: 'user', content }],
-      think: state.thinkConfig.think,
-      thinkLevel: state.thinkConfig.thinkLevel,
-      abortSignal: state.abortController.signal,
-      ...(scriptAgentRunContext ? { tools: scriptAgentRunContext.tools } : {}),
-      ...(namespace === 'scriptAgent'
-        ? {
-            onStepFinish: (stepResult) => {
-              emitToolStepContent(socket, messageId, emittedContentIds, stepResult);
-            },
-          }
-        : {}),
-    });
+    const productionAgentRunContext =
+      namespace === 'productionAgent' && productionContentId
+        ? await createProductionAgentRunContext({
+            projectId,
+            contentId: productionContentId,
+            taskId,
+            userContent: content,
+            thinkConfig: state.thinkConfig,
+            abortSignal: state.abortController.signal,
+          })
+        : null;
+
+    const onStepFinish = (stepResult: ToolStepResult) => {
+      emitToolStepContent(socket, messageId, emittedContentIds, stepResult);
+      if (productionContentId) {
+        emitProductionWorkspaceUpdate(socket, projectId, productionContentId, stepResult);
+      }
+    };
+
+    const result = productionAgentRunContext
+      ? await consumeProductionAgentStream({
+          runContext: productionAgentRunContext,
+          userContent: content,
+          thinkConfig: state.thinkConfig,
+          abortSignal: state.abortController.signal,
+          onStepFinish,
+        })
+      : await streamModelText({
+          modelKey: scriptAgentRunContext?.modelKey ?? namespace,
+          ...(scriptAgentRunContext ? { system: scriptAgentRunContext.system } : {}),
+          messages: [{ role: 'user', content }],
+          think: state.thinkConfig.think,
+          thinkLevel: state.thinkConfig.thinkLevel,
+          abortSignal: state.abortController.signal,
+          ...(scriptAgentRunContext ? { tools: scriptAgentRunContext.tools } : {}),
+          ...(namespace === 'scriptAgent' ? { onStepFinish } : {}),
+        });
 
     for await (const delta of result.textStream) {
       if (state.abortController.signal.aborted) {
@@ -484,16 +561,46 @@ async function consumeModelStream(
           emitSocketError(socket, completionError.message, String(VT_STATUS.AGENT_ERROR));
         }
       }
+      if (namespace === 'productionAgent') {
+        const validation = validateProductionAgentOutput(markdownContent);
+        if (!validation.ok) {
+          const repaired = repairProductionAgentOutput(markdownContent);
+          if (!repaired.ok) {
+            completionError = new Error(validation.error ?? 'Production Agent 输出结构无效');
+            emitSocketError(socket, completionError.message, String(VT_STATUS.INVALID_PARAMS));
+          } else {
+            markdownContent = repaired.content;
+            visibleMarkdownContent = repaired.content;
+            emitContentBlock(
+              socket,
+              {
+                id: markdownContentId,
+                messageId,
+                type: 'markdown',
+                content: repaired.content,
+                status: finalStatus,
+              },
+              emittedContentIds,
+            );
+          }
+        }
+      }
 
       const memoryContent = namespace === 'scriptAgent' ? stripScriptAgentXmlForDisplay(markdownContent) : markdownContent;
       await persistSocketMemory(socket, namespace, 'assistant', memoryContent, namespace === 'scriptAgent' ? '改编助手' : '生产 Agent');
     }
     if (namespace === 'scriptAgent') {
-      updateAgentTask(taskId, finalStatus === 'stop' ? 'cancel' : completionError ? 'fail' : 'succeed', completionError ?? undefined);
+      updateAgentTask(taskId, finalStatus === 'stop' ? 'cancel' : completionError ? 'fail' : 'succeed', completionError ?? undefined, '改编助手');
+    }
+    if (namespace === 'productionAgent') {
+      updateAgentTask(taskId, finalStatus === 'stop' ? 'cancel' : completionError ? 'fail' : 'succeed', completionError ?? undefined, '生产助手');
     }
   } catch (error) {
     if (namespace === 'scriptAgent') {
-      updateAgentTask(taskId, state.abortController.signal.aborted ? 'cancel' : 'fail', error);
+      updateAgentTask(taskId, state.abortController.signal.aborted ? 'cancel' : 'fail', error, '改编助手');
+    }
+    if (namespace === 'productionAgent') {
+      updateAgentTask(taskId, state.abortController.signal.aborted ? 'cancel' : 'fail', error, '生产助手');
     }
     const normalized = normalizeUnknownError(error);
     const errorMessage: AgentMessage = {

@@ -50,7 +50,7 @@ const baseSteps: FlowStepBase[] = [
 
 const currentProject = computed(() => appStore.currentProject);
 const currentProjectId = computed(() => Number(currentProject.value?.id ?? 0));
-const stats = computed(() => flowStats.value ?? createEmptyStats(currentProjectId.value, currentProject.value?.sourceType ?? 'script'));
+const stats = computed(() => flowStats.value ?? createEmptyStats(currentProjectId.value));
 const currentTemplateType = computed(() => currentProject.value?.templateType ?? PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA);
 
 const flowSteps = computed<FlowStep[]>(() =>
@@ -71,21 +71,20 @@ const actionableCount = computed(() => flowSteps.value.filter((step) => !step.di
 const nextStep = computed(() => flowSteps.value.find((step) => step.displayStatus !== 'done' && !step.disabled) ?? flowSteps.value.find((step) => !step.disabled));
 const failedTaskSummaries = computed(() => stats.value.failedTaskSummaries);
 
-function createEmptyStats(projectId: number, sourceType: ProjectFlowStatsResult['sourceType']): ProjectFlowStatsResult {
+function createEmptyStats(projectId: number): ProjectFlowStatsResult {
   return {
     projectId,
     templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
-    sourceType,
     sourceChapterCount: 0,
     sourceEventSucceededCount: 0,
     sourceEventFailedCount: 0,
     sourceEventRunningCount: 0,
     sourceEventStaleCount: 0,
     agentWorkspaceCount: 0,
-    scriptCount: 0,
-    scriptExtractSucceededCount: 0,
-    scriptExtractFailedCount: 0,
-    scriptExtractRunningCount: 0,
+    contentCount: 0,
+    resourceExtractSucceededCount: 0,
+    resourceExtractFailedCount: 0,
+    resourceExtractRunningCount: 0,
     assetCount: 0,
     visualAssetCount: 0,
     assetImageReadyCount: 0,
@@ -117,31 +116,31 @@ function resolveStepStatus(key: FlowStepKey, value: ProjectFlowStatsResult): Flo
   }
 
   if (key === 'content') {
-    return value.scriptCount > 0 ? 'done' : 'pending';
+    return value.contentCount > 0 ? 'done' : 'pending';
   }
 
   if (key === 'resources') {
-    if (value.scriptCount === 0) {
+    if (value.contentCount === 0) {
       return 'blocked';
     }
-    if (value.scriptExtractFailedCount > 0) {
+    if (value.resourceExtractFailedCount > 0) {
       return 'failed';
     }
-    if (value.scriptExtractRunningCount > 0) {
+    if (value.resourceExtractRunningCount > 0) {
       return 'running';
     }
-    return value.scriptExtractSucceededCount > 0 || value.assetCount > 0 ? 'done' : 'pending';
+    return value.resourceExtractSucceededCount > 0 || value.assetCount > 0 ? 'done' : 'pending';
   }
 
   if (key === 'directorPlan') {
-    if (value.scriptCount === 0) {
+    if (value.contentCount === 0) {
       return 'blocked';
     }
     return value.storyboardCount > 0 ? 'done' : 'pending';
   }
 
   if (key === 'storyboardTable') {
-    if (value.scriptCount === 0) {
+    if (value.contentCount === 0) {
       return 'blocked';
     }
     return value.storyboardCount > 0 ? 'done' : 'pending';
@@ -238,11 +237,11 @@ function metricParams(key: FlowStepKey): Record<string, number> {
     sourceSucceeded: value.sourceEventSucceededCount,
     sourceFailed: value.sourceEventFailedCount,
     sourceRunning: value.sourceEventRunningCount,
-    scripts: value.scriptCount,
+    contents: value.contentCount,
     agentWorkspace: value.agentWorkspaceCount,
-    extractSucceeded: value.scriptExtractSucceededCount,
-    extractFailed: value.scriptExtractFailedCount,
-    extractRunning: value.scriptExtractRunningCount,
+    extractSucceeded: value.resourceExtractSucceededCount,
+    extractFailed: value.resourceExtractFailedCount,
+    extractRunning: value.resourceExtractRunningCount,
     assets: value.assetCount,
     visualAssets: value.visualAssetCount,
     assetImagesReady: value.assetImageReadyCount,

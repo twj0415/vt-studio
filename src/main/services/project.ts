@@ -66,6 +66,7 @@ import type {
 } from '@shared/types/project';
 import type { VendorVideoModel } from '@shared/types/vendor';
 import { createMediaUrl } from './media/url';
+import { ensureDefaultProductionContent } from './production';
 import { getApiConnectionList } from './settings/model-config';
 import { getDatabase, withTransaction } from './database';
 import {
@@ -99,6 +100,8 @@ const PROJECT_PACKAGE_TABLE_ORDER = [
   'asset_media',
   'asset_audio_links',
   'script_asset_links',
+  'production_contents',
+  'production_resource_links',
   'production_workspaces',
   'production_video_tracks',
   'production_storyboards',
@@ -182,8 +185,6 @@ const RECENT_PROJECT_SETTING_KEY = 'recentProject.v1';
 const PROJECT_ROUTE_NAMES: ProjectRouteName[] = [
   'project-overview',
   'novel',
-  'script-agent',
-  'script',
   'assets',
   'corner-scape',
   'production',
@@ -352,6 +353,7 @@ function readPackageProjectRows(projectId: number): ProjectPackageDatabase {
   tables.scripts = readProjectTableRows('scripts', projectId);
   tables.assets = readProjectTableRows('assets', projectId);
   tables.asset_media = readProjectTableRows('asset_media', projectId);
+  tables.production_contents = readProjectTableRows('production_contents', projectId);
   tables.production_workspaces = readProjectTableRows('production_workspaces', projectId);
   tables.production_video_tracks = readProjectTableRows('production_video_tracks', projectId);
   tables.production_storyboards = readProjectTableRows('production_storyboards', projectId);
@@ -361,6 +363,7 @@ function readPackageProjectRows(projectId: number): ProjectPackageDatabase {
 
   const scriptIds = idsFromRows(tables.scripts);
   const assetIds = idsFromRows(tables.assets);
+  const contentIds = idsFromRows(tables.production_contents);
   const storyboardIds = idsFromRows(tables.production_storyboards);
 
   tables.asset_audio_links = assetIds.length
@@ -368,6 +371,9 @@ function readPackageProjectRows(projectId: number): ProjectPackageDatabase {
     : [];
   tables.script_asset_links = scriptIds.length
     ? readRowsByIds('script_asset_links', 'script_id', scriptIds).filter((row) => assetIds.includes(Number(row.asset_id)))
+    : [];
+  tables.production_resource_links = contentIds.length
+    ? readRowsByIds('production_resource_links', 'content_id', contentIds).filter((row) => assetIds.includes(Number(row.asset_id)))
     : [];
   tables.production_storyboard_asset_links = storyboardIds.length
     ? readRowsByIds('production_storyboard_asset_links', 'storyboard_id', storyboardIds).filter((row) => assetIds.includes(Number(row.asset_id)))
@@ -837,6 +843,33 @@ function importProjectPackageRows(input: {
     }, []);
   }
 
+  for (const row of tableRows(input.packageDatabase, 'production_contents')) {
+    const contentId = mapId(scriptIdMap, row.id);
+    if (!contentId) {
+      continue;
+    }
+
+    insertJsonRow('production_contents', {
+      ...row,
+      id: contentId,
+      project_id: input.newProjectId,
+    }, []);
+  }
+
+  for (const row of tableRows(input.packageDatabase, 'production_resource_links')) {
+    const contentId = mapId(scriptIdMap, row.content_id);
+    const assetId = mapId(assetIdMap, row.asset_id);
+    if (!contentId || !assetId) {
+      continue;
+    }
+
+    insertJsonRow('production_resource_links', {
+      ...row,
+      content_id: contentId,
+      asset_id: assetId,
+    }, []);
+  }
+
   for (const row of tableRows(input.packageDatabase, 'production_workspaces')) {
     const scriptId = mapId(scriptIdMap, row.script_id);
     if (!scriptId) {
@@ -1050,7 +1083,7 @@ function getProjectEntryRoute(): ProjectRouteName {
 }
 
 function normalizeProjectRouteName(value: unknown, _sourceType: ProjectSourceType = 'novel'): ProjectRouteName {
-  if (value === 'project-overview') {
+  if (value === 'project-overview' || value === 'script-agent' || value === 'script') {
     return getProjectEntryRoute();
   }
 
@@ -1115,7 +1148,6 @@ function toCurrentProjectContext(project: ProjectRow): ProjectCurrentContext {
     id: String(project.id),
     name: project.name,
     templateType: DEFAULT_PROJECT_TEMPLATE_TYPE,
-    sourceType: project.source_type,
   };
 }
 
@@ -1125,7 +1157,6 @@ function toProjectRecentContext(stored: StoredRecentProject): ProjectRecentConte
       id: String(stored.projectId),
       name: stored.projectName,
       templateType: stored.templateType,
-      sourceType: stored.sourceType,
     },
     lastRoute: stored.lastRoute,
     openedAt: stored.openedAt,
@@ -1657,6 +1688,7 @@ export function createProject(payload: ProjectSavePayload): ProjectSaveResult {
     const projectId = Number(insert.lastInsertRowid);
     const workspacePath = ensureProjectDirectory(projectId);
     database.prepare<[string, number]>('UPDATE projects SET workspace_path = ? WHERE id = ?').run(workspacePath, projectId);
+    ensureDefaultProductionContent(projectId, database);
     return projectId;
   });
 
@@ -1767,8 +1799,38 @@ export function deleteProject(payload: ProjectDeletePayload): ProjectDeleteResul
     if (tableExists('agent_work_data')) {
       database.prepare<[number]>('DELETE FROM agent_work_data WHERE project_id = ?').run(payload.projectId);
     }
+    if (tableExists('export_history')) {
+      database.prepare<[number]>('DELETE FROM export_history WHERE project_id = ?').run(payload.projectId);
+    }
+    if (tableExists('production_storyboard_asset_links') && tableExists('production_storyboards')) {
+      database.prepare<[number]>('DELETE FROM production_storyboard_asset_links WHERE storyboard_id IN (SELECT id FROM production_storyboards WHERE project_id = ?)').run(payload.projectId);
+    }
+    if (tableExists('production_image_flows')) {
+      database.prepare<[number]>('DELETE FROM production_image_flows WHERE project_id = ?').run(payload.projectId);
+    }
+    if (tableExists('production_videos')) {
+      database.prepare<[number]>('DELETE FROM production_videos WHERE project_id = ?').run(payload.projectId);
+    }
+    if (tableExists('production_video_tracks')) {
+      database.prepare<[number]>('DELETE FROM production_video_tracks WHERE project_id = ?').run(payload.projectId);
+    }
+    if (tableExists('production_storyboards')) {
+      database.prepare<[number]>('DELETE FROM production_storyboards WHERE project_id = ?').run(payload.projectId);
+    }
+    if (tableExists('production_workspaces')) {
+      database.prepare<[number]>('DELETE FROM production_workspaces WHERE project_id = ?').run(payload.projectId);
+    }
     if (tableExists('script_asset_links') && tableExists('scripts')) {
       database.prepare<[number]>('DELETE FROM script_asset_links WHERE script_id IN (SELECT id FROM scripts WHERE project_id = ?)').run(payload.projectId);
+    }
+    if (tableExists('production_resource_links') && tableExists('production_contents')) {
+      database.prepare<[number]>('DELETE FROM production_resource_links WHERE content_id IN (SELECT id FROM production_contents WHERE project_id = ?)').run(payload.projectId);
+    }
+    if (tableExists('production_agent_audits')) {
+      database.prepare<[number]>('DELETE FROM production_agent_audits WHERE project_id = ?').run(payload.projectId);
+    }
+    if (tableExists('production_contents')) {
+      database.prepare<[number]>('DELETE FROM production_contents WHERE project_id = ?').run(payload.projectId);
     }
     if (tableExists('asset_audio_links') && tableExists('assets')) {
       database.prepare<[number, number]>('DELETE FROM asset_audio_links WHERE asset_id IN (SELECT id FROM assets WHERE project_id = ?) OR audio_asset_id IN (SELECT id FROM assets WHERE project_id = ?)').run(payload.projectId, payload.projectId);
@@ -1884,24 +1946,23 @@ export function clearRecentProject(payload: ProjectClearRecentPayload = {}): Pro
 
 export function getProjectFlowStats(payload: ProjectFlowStatsPayload): ProjectFlowStatsResult {
   const projectId = assertProjectId(payload.projectId);
-  const project = getProjectRowById(projectId);
+  getProjectRowById(projectId);
   const visualAssetTypes = [ASSET_TYPES.ROLE, ASSET_TYPES.SCENE, ASSET_TYPES.TOOL];
   const visualAssetTypePlaceholders = visualAssetTypes.map(() => '?').join(', ');
 
   return {
     projectId,
     templateType: DEFAULT_PROJECT_TEMPLATE_TYPE,
-    sourceType: project.source_type,
     sourceChapterCount: countRows('source_chapters', 'project_id = ?', [projectId]),
     sourceEventSucceededCount: countRows('source_chapters', 'project_id = ? AND event_status = ?', [projectId, SOURCE_EVENT_STATUSES.SUCCEEDED]),
     sourceEventFailedCount: countRows('source_chapters', 'project_id = ? AND event_status = ?', [projectId, SOURCE_EVENT_STATUSES.FAILED]),
     sourceEventRunningCount: countRows('source_chapters', 'project_id = ? AND event_status = ?', [projectId, SOURCE_EVENT_STATUSES.RUNNING]),
     sourceEventStaleCount: countRows('source_chapters', 'project_id = ? AND event_status = ?', [projectId, SOURCE_EVENT_STATUSES.STALE]),
     agentWorkspaceCount: countRows('agent_work_data', 'project_id = ?', [projectId]),
-    scriptCount: countRows('scripts', 'project_id = ?', [projectId]),
-    scriptExtractSucceededCount: countRows('scripts', 'project_id = ? AND extract_status = ?', [projectId, SCRIPT_EXTRACT_STATUSES.SUCCEEDED]),
-    scriptExtractFailedCount: countRows('scripts', 'project_id = ? AND extract_status = ?', [projectId, SCRIPT_EXTRACT_STATUSES.FAILED]),
-    scriptExtractRunningCount: countRows('scripts', 'project_id = ? AND extract_status IN (?, ?)', [
+    contentCount: countRows('production_contents', 'project_id = ?', [projectId]) || countRows('scripts', 'project_id = ?', [projectId]),
+    resourceExtractSucceededCount: countRows('production_contents', 'project_id = ? AND resource_status = ?', [projectId, GENERATION_TASK_STATUSES.SUCCEEDED]) || countRows('scripts', 'project_id = ? AND extract_status = ?', [projectId, SCRIPT_EXTRACT_STATUSES.SUCCEEDED]),
+    resourceExtractFailedCount: countRows('production_contents', 'project_id = ? AND resource_status = ?', [projectId, GENERATION_TASK_STATUSES.FAILED]) || countRows('scripts', 'project_id = ? AND extract_status = ?', [projectId, SCRIPT_EXTRACT_STATUSES.FAILED]),
+    resourceExtractRunningCount: countRows('production_contents', 'project_id = ? AND resource_status = ?', [projectId, GENERATION_TASK_STATUSES.RUNNING]) || countRows('scripts', 'project_id = ? AND extract_status IN (?, ?)', [
       projectId,
       SCRIPT_EXTRACT_STATUSES.WAITING,
       SCRIPT_EXTRACT_STATUSES.RUNNING,

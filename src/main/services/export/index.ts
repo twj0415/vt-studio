@@ -26,7 +26,7 @@ import type {
   ExportMediaType,
   ExportOpenDirectoryPayload,
   ExportOpenDirectoryResult,
-  ExportScriptPayload,
+  ExportContentPayload,
   ExportStaleConfirmationSnapshot,
   ExportStoryboardImagesPayload,
   ExportStoryboardImagesResult,
@@ -44,9 +44,10 @@ import { getMediaMimeInfo } from '../media/mime';
 import { resolveMediaPath } from '../media/path';
 import { createError } from '../result';
 import { createStoredZip } from '../script/zip';
-import { createTask, failTask, succeedTask } from '../task';
+import { failTask, succeedTask } from '../task';
+import { createProductionTask } from '../task/production';
 
-const JIANYING_DRAFT_CATEGORY = '剪映草稿导出';
+const JIANYING_DRAFT_CATEGORY = '导出';
 const STORYBOARD_ZIP_ROOT = 'storyboards';
 const JIANYING_ROOT = 'jianying';
 
@@ -167,9 +168,13 @@ function normalizeProjectId(projectId: number): number {
 
 function normalizeScriptId(scriptId: number): number {
   if (!Number.isInteger(scriptId) || scriptId <= 0) {
-    throw createError(VT_STATUS.INVALID_PARAMS, '剧本 ID 无效');
+    throw createError(VT_STATUS.INVALID_PARAMS, '内容 ID 无效');
   }
   return scriptId;
+}
+
+function normalizeExportContentId(payload: ExportContentPayload): number {
+  return normalizeScriptId(Number(payload.contentId));
 }
 
 function normalizeIds(ids: number[] | null | undefined, label: string): number[] {
@@ -244,9 +249,9 @@ function assertScript(projectId: number, scriptId: number): ScriptRow {
   return row;
 }
 
-function assertExportContext(payload: ExportScriptPayload): { project: ProjectRow; script: ScriptRow } {
+function assertExportContext(payload: ExportContentPayload): { project: ProjectRow; script: ScriptRow } {
   const project = assertProject(payload.projectId);
-  const script = assertScript(project.id, normalizeScriptId(payload.scriptId));
+  const script = assertScript(project.id, normalizeExportContentId(payload));
   return { project, script };
 }
 
@@ -398,7 +403,7 @@ function buildTimelineFromDatabase(payload: ExportBuildTimelinePayload): ExportT
       selectedVideoId: video.id,
       storyboardIds: readStoryboardIdsByTrack(track.id),
       mediaType: 'video',
-      sourceType: 'production_video',
+      sourceKind: 'production_video',
       sourceId: video.id,
       relativePath: video.relative_path,
       filePath: video.relative_path,
@@ -416,8 +421,8 @@ function buildTimelineFromDatabase(payload: ExportBuildTimelinePayload): ExportT
   return {
     projectId: project.id,
     projectName: project.name,
-    scriptId: script.id,
-    scriptName: script.name,
+    contentId: script.id,
+    contentName: script.name,
     source: 'productionVideoTracks',
     timebase: 'ms',
     durationMs: cursorMs,
@@ -429,7 +434,7 @@ function failure(input: {
   clip?: ExportTimelineClip;
   trackId?: number | null;
   mediaType?: ExportMediaType;
-  sourceType?: ExportValidationFailure['sourceType'];
+  sourceKind?: ExportValidationFailure['sourceKind'];
   sourceId?: number | null;
   path?: string | null;
   reason: ExportValidationReason;
@@ -440,7 +445,7 @@ function failure(input: {
     trackId: input.clip?.trackId ?? input.trackId ?? null,
     clipId: input.clip?.id ?? null,
     mediaType: input.clip?.mediaType ?? input.mediaType ?? 'video',
-    sourceType: input.clip?.sourceType ?? input.sourceType ?? 'production_video',
+    sourceKind: input.clip?.sourceKind ?? input.sourceKind ?? 'production_video',
     sourceId: input.clip?.sourceId ?? input.sourceId ?? null,
     path: input.clip?.relativePath ?? input.path ?? null,
     reason: input.reason,
@@ -552,7 +557,7 @@ function validateStoryboardDependencies(timeline: ExportTimeline): ExportValidat
     return [];
   }
 
-  const rows = readStoryboards(timeline.projectId, timeline.scriptId, storyboardIds);
+  const rows = readStoryboards(timeline.projectId, timeline.contentId, storyboardIds);
   const rowById = new Map(rows.map((row) => [row.id, row]));
   const trackIdByStoryboardId = new Map<number, number>();
   for (const clip of timeline.clips) {
@@ -566,7 +571,7 @@ function validateStoryboardDependencies(timeline: ExportTimeline): ExportValidat
       failures.push(failure({
         trackId: trackIdByStoryboardId.get(storyboardId) ?? null,
         mediaType: 'image',
-        sourceType: 'storyboard',
+        sourceKind: 'storyboard',
         sourceId: storyboardId,
         path: null,
         reason: 'dependencyMissing',
@@ -582,7 +587,7 @@ function validateStoryboardDependencies(timeline: ExportTimeline): ExportValidat
       failures.push(failure({
         trackId: trackIdByStoryboardId.get(row.id) ?? null,
         mediaType: 'image',
-        sourceType: 'storyboard',
+        sourceKind: 'storyboard',
         sourceId: row.id,
         path: row.relative_path,
         reason,
@@ -648,7 +653,7 @@ function buildDraftContent(input: { timeline: ExportTimeline; assetPaths: Map<st
       id: clip.id,
       type: clip.mediaType,
       path: input.assetPaths.get(clip.id) ?? clip.relativePath,
-      sourceType: clip.sourceType,
+      sourceKind: clip.sourceKind,
       sourceId: clip.sourceId,
     })),
     tracks: [
@@ -773,7 +778,7 @@ function createMediaSnapshotItem(input: { clip: ExportTimelineClip; absolutePath
       clipId: input.clip.id,
       trackId: input.clip.trackId,
       selectedVideoId: input.clip.selectedVideoId,
-      sourceType: input.clip.sourceType,
+      sourceKind: input.clip.sourceKind,
       sourceId: input.clip.sourceId,
       relativePath: input.clip.relativePath,
       copiedPath: input.copiedPath,
@@ -788,7 +793,7 @@ function createMediaSnapshotItem(input: { clip: ExportTimelineClip; absolutePath
       clipId: input.clip.id,
       trackId: input.clip.trackId,
       selectedVideoId: input.clip.selectedVideoId,
-      sourceType: input.clip.sourceType,
+      sourceKind: input.clip.sourceKind,
       sourceId: input.clip.sourceId,
       relativePath: input.clip.relativePath,
       copiedPath: input.copiedPath,
@@ -927,8 +932,8 @@ function mapHistoryRow(row: ExportHistoryRow): ExportHistoryItem {
     id: row.id,
     projectId: row.project_id,
     projectName: row.project_name ?? String(row.project_id),
-    scriptId: row.script_id,
-    scriptName: row.script_name ?? String(row.script_id),
+    contentId: row.script_id,
+    contentName: row.script_name ?? String(row.script_id),
     taskId: row.task_id,
     exportType: row.export_type === 'jianyingDraft' ? 'jianyingDraft' : 'jianyingDraft',
     draftName: row.draft_name,
@@ -998,7 +1003,7 @@ export function exportStoryboardImages(payload: ExportStoryboardImagesPayload): 
   for (const storyboardId of orderedIds) {
     const row = rowById.get(storyboardId);
     if (!row) {
-      failures.push(failure({ mediaType: 'image', sourceType: 'storyboard', sourceId: storyboardId, path: null, reason: 'fileMissing', message: '分镜不存在' }));
+      failures.push(failure({ mediaType: 'image', sourceKind: 'storyboard', sourceId: storyboardId, path: null, reason: 'fileMissing', message: '分镜不存在' }));
       continue;
     }
     const dependencyStatus = normalizeDependencyStatus(row.dependency_status);
@@ -1006,7 +1011,7 @@ export function exportStoryboardImages(payload: ExportStoryboardImagesPayload): 
     if (dependencyReason) {
       failures.push(failure({
         mediaType: 'image',
-        sourceType: 'storyboard',
+        sourceKind: 'storyboard',
         sourceId: row.id,
         path: row.relative_path,
         reason: dependencyReason,
@@ -1016,7 +1021,7 @@ export function exportStoryboardImages(payload: ExportStoryboardImagesPayload): 
       continue;
     }
     if (!row.relative_path) {
-      failures.push(failure({ mediaType: 'image', sourceType: 'storyboard', sourceId: row.id, path: null, reason: 'emptyPath', message: '分镜图片路径为空' }));
+      failures.push(failure({ mediaType: 'image', sourceKind: 'storyboard', sourceId: row.id, path: null, reason: 'emptyPath', message: '分镜图片路径为空' }));
       continue;
     }
     let absolutePath = '';
@@ -1024,13 +1029,13 @@ export function exportStoryboardImages(payload: ExportStoryboardImagesPayload): 
       absolutePath = resolveMediaPath('project', row.relative_path);
       const stat = statSync(absolutePath);
       if (!stat.isFile()) {
-        failures.push(failure({ mediaType: 'image', sourceType: 'storyboard', sourceId: row.id, path: row.relative_path, reason: 'notFile', message: '分镜图片不是文件' }));
+        failures.push(failure({ mediaType: 'image', sourceKind: 'storyboard', sourceId: row.id, path: row.relative_path, reason: 'notFile', message: '分镜图片不是文件' }));
         continue;
       }
       accessSync(absolutePath, constants.R_OK);
       const mime = getMediaMimeInfo(absolutePath);
       if (!mime || mime.kind !== 'image') {
-        failures.push(failure({ mediaType: 'image', sourceType: 'storyboard', sourceId: row.id, path: row.relative_path, reason: 'unsupportedType', message: '分镜图片格式不支持' }));
+        failures.push(failure({ mediaType: 'image', sourceKind: 'storyboard', sourceId: row.id, path: row.relative_path, reason: 'unsupportedType', message: '分镜图片格式不支持' }));
         continue;
       }
       const ext = extensionForPath(absolutePath, 'jpg');
@@ -1039,7 +1044,7 @@ export function exportStoryboardImages(payload: ExportStoryboardImagesPayload): 
         content: readFileSync(absolutePath),
       });
     } catch {
-      failures.push(failure({ mediaType: 'image', sourceType: 'storyboard', sourceId: row.id, path: row.relative_path, reason: 'unreadable', message: '分镜图片读取失败' }));
+      failures.push(failure({ mediaType: 'image', sourceKind: 'storyboard', sourceId: row.id, path: row.relative_path, reason: 'unreadable', message: '分镜图片读取失败' }));
     }
   }
 
@@ -1068,10 +1073,10 @@ export function createJianyingDraft(payload: ExportCreateJianyingDraftPayload): 
   const { project, script } = assertExportContext(payload);
   const draftName = safeFileStem(payload.draftName?.trim() || `${project.name}-${script.name}`, 'jianying-draft');
   const copyAssets = payload.copyAssets !== false;
-  const task = createTask({
+  const task = createProductionTask({
     projectId: project.id,
     category: JIANYING_DRAFT_CATEGORY,
-    relatedObjects: { projectId: project.id, scriptId: script.id, draftName, copyAssets },
+    relatedObjects: { projectId: project.id, contentId: script.id, draftName, copyAssets },
     modelName: null,
     description: `导出剪映草稿：${draftName}`,
   });
@@ -1092,7 +1097,7 @@ export function createJianyingDraft(payload: ExportCreateJianyingDraftPayload): 
   let copiedAssetCount = 0;
 
   try {
-    timeline = buildTimelineFromDatabase({ projectId: project.id, scriptId: script.id });
+    timeline = buildTimelineFromDatabase({ projectId: project.id, contentId: script.id });
     const validation = validateTimeline(timeline);
     resolvedClips = validation.resolvedClips;
     if (validation.failures.length > 0) {
@@ -1216,7 +1221,7 @@ export function createJianyingDraft(payload: ExportCreateJianyingDraftPayload): 
 
 export function listExportHistory(payload: ExportHistoryListPayload): ExportHistoryListResult {
   const project = assertProject(payload.projectId);
-  const scriptId = payload.scriptId == null ? null : normalizeScriptId(payload.scriptId);
+  const scriptId = payload.contentId == null ? null : normalizeScriptId(Number(payload.contentId));
   const status = normalizeHistoryStatus(payload.status);
   const limit = normalizeHistoryLimit(payload.limit);
   const where: string[] = ['h.project_id = ?'];

@@ -5,6 +5,7 @@ import { getDatabase } from '../database';
 import { createError } from '../result';
 import { DEFAULT_TASK_CANCEL_REASON, DEFAULT_TASK_RECOVER_REASON, TASK_STATUS, type TaskStatus } from './constants';
 import { isTaskStatus, mapTaskListRow, mapTaskRow, type TaskListRow, type TaskRow } from './mapper';
+import { getProductionTaskCategoryFilterValues, normalizeProductionTaskCategory } from './production-format';
 import type {
   CreateTaskInput,
   CreateTaskResult,
@@ -216,8 +217,9 @@ export function listTasks(input: ListTasksInput = {}): TaskListResult {
   }
 
   if (input.category) {
-    where.push('t.category = ?');
-    params.push(normalizeCategory(input.category));
+    const categoryValues = getProductionTaskCategoryFilterValues(normalizeCategory(input.category));
+    where.push(`t.category IN (${categoryValues.map(() => '?').join(', ')})`);
+    params.push(...categoryValues);
   }
 
   if (input.status) {
@@ -287,7 +289,7 @@ export function getTaskCategories(input: TaskCategoryOptionsPayload = {}): strin
     .prepare<number[], { category: string }>(`SELECT category FROM tasks WHERE ${whereSql} GROUP BY category ORDER BY category ASC`)
     .all(...params);
 
-  return rows.map((row) => row.category);
+  return Array.from(new Set(rows.map((row) => normalizeProductionTaskCategory(row.category)))).sort((a, b) => a.localeCompare(b, 'zh-CN'));
 }
 
 export function getTaskCategoryOptions(input: TaskCategoryOptionsPayload = {}): TaskCategoryOptionsResult {

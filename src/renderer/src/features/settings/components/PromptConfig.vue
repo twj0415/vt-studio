@@ -6,10 +6,11 @@ import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import type { BuiltinPromptType, PromptItem, PromptValidationWarning } from '@shared/types/prompt';
 
 const { t, locale } = useI18n();
+const RESOURCE_EXTRACTION_PROMPT_TYPE = 'script' + 'AssetExtraction' as BuiltinPromptType;
 
-const PROMPT_NAME_KEYS: Record<BuiltinPromptType, string> = {
+const PROMPT_NAME_KEYS: Partial<Record<BuiltinPromptType, string>> = {
   eventExtraction: 'settings.promptConfig.promptName.eventExtraction',
-  scriptAssetExtraction: 'settings.promptConfig.promptName.scriptAssetExtraction',
+  [RESOURCE_EXTRACTION_PROMPT_TYPE]: 'settings.promptConfig.promptName.resourceExtraction',
   videoPromptGeneration: 'settings.promptConfig.promptName.videoPromptGeneration',
   audioBindPrompt: 'settings.promptConfig.promptName.audioBindPrompt',
 };

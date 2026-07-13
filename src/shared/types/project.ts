@@ -156,7 +156,6 @@ export interface ProjectCurrentContext {
   id: string;
   name: string;
   templateType: ProjectTemplateType;
-  sourceType: ProjectSourceType;
 }
 
 export interface ProjectOpenResult {
@@ -167,8 +166,6 @@ export interface ProjectOpenResult {
 export type ProjectRouteName =
   | 'project-overview'
   | 'novel'
-  | 'script-agent'
-  | 'script'
   | 'assets'
   | 'corner-scape'
   | 'production'
@@ -222,17 +219,16 @@ export interface ProjectFlowFailedTaskSummary {
 export interface ProjectFlowStatsResult {
   projectId: number;
   templateType: ProjectTemplateType;
-  sourceType: ProjectSourceType;
   sourceChapterCount: number;
   sourceEventSucceededCount: number;
   sourceEventFailedCount: number;
   sourceEventRunningCount: number;
   sourceEventStaleCount: number;
   agentWorkspaceCount: number;
-  scriptCount: number;
-  scriptExtractSucceededCount: number;
-  scriptExtractFailedCount: number;
-  scriptExtractRunningCount: number;
+  contentCount: number;
+  resourceExtractSucceededCount: number;
+  resourceExtractFailedCount: number;
+  resourceExtractRunningCount: number;
   assetCount: number;
   visualAssetCount: number;
   assetImageReadyCount: number;

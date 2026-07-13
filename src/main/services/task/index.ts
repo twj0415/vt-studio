@@ -21,6 +21,17 @@ export {
   formatBusinessLockSummary,
   listBusinessLocks,
 } from './locks';
+export {
+  createProductionTask,
+  formatProductionRelatedObjects,
+  recordProductionModelDiagnostics,
+} from './production';
+export type {
+  ProductionModelDiagnosticsInput,
+  ProductionTaskCategory,
+  ProductionTaskCreateInput,
+  ProductionTaskRelatedObjects,
+} from './production';
 export type {
   CreateTaskInput,
   CreateTaskResult,

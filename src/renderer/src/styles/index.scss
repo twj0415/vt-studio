@@ -127,7 +127,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -138,12 +138,44 @@ button {
     var(--vt-surface-app);
 }
 
+.app-shell.has-side-nav {
+  grid-template-columns: 70px minmax(0, 1fr);
+}
+
+.production-route-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(color-mix(in srgb, var(--vt-line-soft) 42%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(90deg, color-mix(in srgb, var(--vt-line-soft) 38%, transparent) 1px, transparent 1px) 0 0 / 44px 44px,
+    var(--vt-surface-app);
+}
+
+.production-route-content {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.production-route-content > * {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
   gap: 14px;
   align-items: center;
-  height: 100vh;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   padding: 14px 10px;
@@ -152,33 +184,6 @@ button {
   box-shadow: 1px 0 0 color-mix(in srgb, var(--vt-surface-raised) 64%, transparent);
 }
 
-.brand {
-  display: grid;
-  place-items: center;
-  width: 50px;
-  height: 50px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.brand-mark {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border: 1px solid var(--vt-line-strong);
-  border-radius: 8px;
-  color: var(--vt-brand-strong);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--vt-brand) 14%, transparent), transparent 54%),
-    var(--vt-surface-raised);
-  box-shadow: 0 10px 28px color-mix(in srgb, var(--vt-brand) 14%, transparent);
-  font-size: 14px;
-  font-weight: 800;
-}
-
-.brand-copy,
 .nav-item-label {
   position: absolute;
   width: 1px;
@@ -256,8 +261,37 @@ button {
   justify-items: center;
   gap: 8px;
   width: 100%;
+  margin-top: auto;
   padding-top: 12px;
   border-top: 1px solid var(--vt-line-soft);
+}
+
+.side-nav-project {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--vt-line-soft);
+  border-radius: 8px;
+  color: var(--vt-text-primary);
+  background: var(--vt-surface-raised);
+}
+
+.side-nav-project:hover {
+  border-color: var(--vt-line-strong);
+  color: var(--vt-brand-strong);
+}
+
+.side-nav-project-initial {
+  display: block;
+  max-width: 24px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item-with-dot {
@@ -4282,15 +4316,6 @@ button {
   word-break: break-word;
 }
 
-.script-agent-page {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  gap: 16px;
-  overflow: hidden;
-}
-
 .assets-page,
 .corner-page {
   display: flex;
@@ -4734,43 +4759,20 @@ button {
   border-radius: 999px;
 }
 
-.script-agent-layout,
-.script-agent-source-warning,
-.script-agent-bottom-actions,
 .script-chat-panel,
-.script-workspace-panel,
-.script-agent-settings {
+.script-workspace-panel {
   min-width: 0;
 }
 
-.script-agent-source-actions,
 .script-chat-panel-actions,
 .script-composer-toolbar,
 .script-composer-tools,
-.script-send-actions,
-.script-agent-settings-actions {
+.script-send-actions {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.script-agent-bottom-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.script-agent-source-warning {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--vt-warning) 36%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--vt-warning) 8%, var(--vt-surface-raised));
-}
-
-.script-agent-source-warning strong,
 .script-chat-panel-head strong,
 .script-workspace-head strong {
   display: block;
@@ -4779,22 +4781,12 @@ button {
   line-height: 1.4;
 }
 
-.script-agent-source-warning p,
 .script-chat-panel-head p,
 .script-workspace-head p {
   margin: 4px 0 0;
   color: var(--vt-text-muted);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.script-agent-layout {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.95fr) minmax(300px, 1fr) minmax(320px, 1.08fr);
-  flex: 1 1 auto;
-  gap: 16px;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .script-chat-panel,
@@ -4861,39 +4853,6 @@ button {
   display: grid;
   gap: 4px;
   min-width: 0;
-}
-
-.script-agent-title-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.script-agent-connection {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--vt-text-muted);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.script-agent-connection-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--vt-text-muted);
-}
-
-.script-agent-connection.is-connected {
-  color: var(--vt-success);
-}
-
-.script-agent-connection.is-connected .script-agent-connection-dot {
-  background: var(--vt-success);
 }
 
 .script-message-list {
@@ -4969,16 +4928,6 @@ button {
   font-size: 11px;
 }
 
-.script-agent-error {
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--vt-danger) 34%, transparent);
-  border-radius: 8px;
-  color: var(--vt-danger);
-  background: color-mix(in srgb, var(--vt-danger) 8%, var(--vt-surface-raised));
-  font-size: 13px;
-  line-height: 1.6;
-}
-
 .script-chat-input {
   display: grid;
   gap: 10px;
@@ -5005,36 +4954,6 @@ button {
 .script-send-actions {
   flex: 0 0 auto;
   justify-content: flex-end;
-}
-
-.script-agent-settings {
-  display: grid;
-  gap: 12px;
-}
-
-.script-agent-setting-row,
-.script-agent-setting-field {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
-}
-
-.script-agent-setting-row > span,
-.script-agent-setting-field > span {
-  color: var(--vt-text-secondary);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.script-agent-setting-row b {
-  color: var(--vt-text-primary);
-  font-size: 13px;
-}
-
-.script-agent-settings-actions {
-  justify-content: flex-end;
-  padding-top: 4px;
 }
 
 .script-workspace-head svg {
@@ -6231,6 +6150,82 @@ button {
   display: grid;
   min-width: 0;
   gap: 7px;
+}
+
+.production-agent-chat-section {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 72vh;
+}
+
+.production-agent-message-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  max-height: 54vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.production-agent-empty,
+.production-agent-message,
+.production-agent-block {
+  min-width: 0;
+  border: 1px solid var(--vt-line-soft);
+  border-radius: 8px;
+  background: var(--vt-surface-raised);
+}
+
+.production-agent-empty {
+  padding: 16px;
+  color: var(--vt-text-muted);
+  font-size: 13px;
+}
+
+.production-agent-message {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.production-agent-message.is-error {
+  border-color: color-mix(in srgb, var(--vt-danger) 34%, transparent);
+}
+
+.production-agent-message pre,
+.production-agent-block pre {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--vt-text-primary);
+  font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.production-agent-block-list {
+  display: grid;
+  gap: 8px;
+}
+
+.production-agent-block {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--vt-brand) 6%, var(--vt-surface-panel));
+}
+
+.production-agent-block strong {
+  color: var(--vt-brand-strong);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.production-agent-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
 }
 
 .production-track-list {
@@ -7791,13 +7786,11 @@ button {
   .ai-tool-library-page,
   .assets-page,
   .corner-page,
-  .script-agent-page,
   .production-page {
     overflow: auto;
   }
 
-  .corner-layout,
-  .script-agent-layout {
+  .corner-layout {
     overflow: visible;
   }
 
@@ -7820,7 +7813,6 @@ button {
   .script-dialog-footer,
   .script-import-preview-head,
   .script-result-actions,
-  .script-agent-source-warning,
   .script-composer-toolbar,
   .script-workspace-editor-head,
   .script-list-toolbar,
@@ -7829,12 +7821,6 @@ button {
   .script-editor-actions {
     display: grid;
     justify-content: stretch;
-  }
-
-  .script-agent-layout,
-  .script-agent-setting-row,
-  .script-agent-setting-field {
-    grid-template-columns: 1fr;
   }
 
   .source-table-toolbar {

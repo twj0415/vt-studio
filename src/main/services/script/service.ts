@@ -34,13 +34,15 @@ import {
   type ScriptSavePayload,
   type ScriptSaveResult,
 } from '@shared/types/script';
+import type { ProductionExtractResourcesResult } from '@shared/types/production';
 import { getDatabase, withTransaction } from '../database';
 import { createModelRequestId, invokeText } from '../model';
 import { createError } from '../result';
 import { getBusinessSettings } from '../settings/business-settings';
 import { getEffectivePromptByType } from '../settings/prompt';
 import { stripThink } from '../socket/stripThink';
-import { createTask, failTask, succeedTask, updateTaskMeta } from '../task';
+import { failTask, succeedTask, updateTaskMeta } from '../task';
+import { createProductionTask } from '../task/production';
 import { logger } from '../logger';
 import {
   DEPENDENCY_REASON,
@@ -56,7 +58,7 @@ const MAX_MODEL_DIAGNOSTIC_TEXT_LENGTH = 12000;
 const MAX_MODEL_DIAGNOSTIC_ARRAY_ITEMS = 30;
 const MAX_MODEL_DIAGNOSTIC_OBJECT_KEYS = 80;
 const MAX_MODEL_DIAGNOSTIC_DEPTH = 5;
-const SCRIPT_ASSET_EXTRACTION_TASK_CATEGORY = '剧本资产提取';
+const SCRIPT_ASSET_EXTRACTION_TASK_CATEGORY = '提取资源';
 const RECOVER_REASON = '软件退出导致资产提取中断';
 const SECRET_REPLACEMENT = '[已隐藏]';
 
@@ -98,6 +100,7 @@ interface ExtractedAsset {
   prompt?: string;
   type: ScriptAssetType;
   scriptIds: number[];
+  matchedAssetId?: number | null;
 }
 
 interface ExtractedAssetInput {
@@ -116,6 +119,8 @@ interface ExtractAssetsToolResult {
   newAssets?: ExtractedAssetInput[];
   existingAssetRefs?: ExtractedAssetInput[];
 }
+
+type ContentResourceWriteMode = 'assets' | 'drafts';
 
 interface ToolResultRecord {
   toolName?: string;
@@ -501,7 +506,7 @@ function normalizeErrorReason(error: unknown): string {
 
 function buildExtractAssetsTaskRelatedObjects(scriptIds: number[], modelDiagnostics: ExtractAssetsModelDiagnostics | null): Record<string, unknown> {
   return {
-    scriptIds,
+    contentIds: scriptIds,
     ...(modelDiagnostics ? { modelDiagnostics } : {}),
   };
 }
@@ -731,6 +736,7 @@ function resolveExistingAsset(input: ExtractedAssetInput, existingAssets: Script
     prompt: normalizeOptionalText(input.prompt) ?? matched.prompt,
     type: matched.type,
     scriptIds: [],
+    matchedAssetId: matched.id,
   };
 }
 
@@ -818,7 +824,53 @@ function upsertExtractedAssets(projectId: number, assets: ExtractedAsset[], scri
   }
 }
 
-async function runAssetExtraction(projectId: number, scriptIds: number[], taskId: number): Promise<void> {
+function writeExtractedAssetDrafts(projectId: number, assets: ExtractedAsset[], scriptIds: number[], taskId: number): void {
+  if (!tableExists('production_resource_drafts')) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '资源草稿表未初始化');
+  }
+
+  const contentIds = normalizeScriptIds(scriptIds);
+  const contentSet = new Set(contentIds);
+  const now = Date.now();
+  const placeholders = contentIds.map(() => '?').join(', ');
+  getDatabase()
+    .prepare<Array<number>>(`DELETE FROM production_resource_drafts WHERE project_id = ? AND content_id IN (${placeholders})`)
+    .run(projectId, ...contentIds);
+
+  const insert = getDatabase().prepare<[number, number, number, number | null, ScriptAssetType, string, string, string, 'create' | 'merge', 'draft', number, number]>(
+    `
+    INSERT INTO production_resource_drafts (
+      project_id, content_id, task_id, matched_asset_id, type, name, description,
+      prompt, action, status, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  );
+
+  for (const asset of assets) {
+    const targetContentIds = asset.scriptIds.filter((scriptId) => contentSet.has(scriptId));
+    const scopedContentIds = targetContentIds.length > 0 ? targetContentIds : contentIds;
+    const action = asset.matchedAssetId ? 'merge' : 'create';
+    for (const contentId of scopedContentIds) {
+      insert.run(
+        projectId,
+        contentId,
+        taskId,
+        asset.matchedAssetId ?? null,
+        asset.type,
+        asset.name,
+        asset.desc,
+        asset.prompt ?? '',
+        action,
+        'draft',
+        now,
+        now,
+      );
+    }
+  }
+}
+
+async function runAssetExtraction(projectId: number, scriptIds: number[], taskId: number, writeMode: ContentResourceWriteMode): Promise<void> {
   const requestId = createModelRequestId();
   let modelDiagnostics: ExtractAssetsModelDiagnostics | null = {
     requestId,
@@ -833,6 +885,16 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
     const rows = getScriptRows(projectId, scriptIds);
     const existingAssets = getAssetsByProject(projectId);
     const prompt = getEffectivePromptByType('scriptAssetExtraction');
+    const userContent = [
+      '已有资产：',
+      JSON.stringify(existingAssets.map((asset) => ({ id: asset.id, type: asset.type, name: asset.name, desc: asset.description }))),
+      '',
+      '待提取剧本：',
+      rows.map((script) => `# ${script.id} ${script.name}\n${script.content}`).join('\n\n---\n\n'),
+      '',
+      '请在每个资产对象里返回 scriptIds，表示该资产属于哪些剧本；如果是已有资产，优先返回 existingAssetRefs 的 id 和 scriptIds。',
+      '优先调用 resultTool 返回结果；如果当前模型或供应商无法调用工具，则只输出一个 JSON 对象，不要解释，格式为 {"assetsList":[{"name":"","desc":"","prompt":"","type":"role|scene|tool","scriptIds":[剧本ID]}]}。',
+    ].join('\n');
     const result = await invokeText({
       requestId,
       modelKey: 'universalAi',
@@ -840,16 +902,7 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
       messages: [
         {
           role: 'user',
-          content: [
-            '已有资产：',
-            JSON.stringify(existingAssets.map((asset) => ({ id: asset.id, type: asset.type, name: asset.name, desc: asset.description }))),
-            '',
-            '待提取剧本：',
-            rows.map((script) => `# ${script.id} ${script.name}\n${script.content}`).join('\n\n---\n\n'),
-            '',
-            '请在每个资产对象里返回 scriptIds，表示该资产属于哪些剧本；如果是已有资产，优先返回 existingAssetRefs 的 id 和 scriptIds。',
-            '优先调用 resultTool 返回结果；如果当前模型或供应商无法调用工具，则只输出一个 JSON 对象，不要解释，格式为 {"assetsList":[{"name":"","desc":"","prompt":"","type":"role|scene|tool","scriptIds":[剧本ID]}]}。',
-          ].join('\n'),
+          content: userContent,
         },
       ],
       tools: {
@@ -909,11 +962,33 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
         }),
       },
     });
-    const output = getResultToolOutput(result);
+    let output = getResultToolOutput(result);
     modelDiagnostics = buildExtractAssetsModelDiagnostics(requestId, result, output);
     updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
     if (!output) {
-      throw createError(VT_STATUS.MODEL_ERROR, '模型没有返回可用资产，请重试或切换支持工具调用的文本模型');
+      const fallbackRequestId = createModelRequestId();
+      const fallbackResult = await invokeText({
+        requestId: fallbackRequestId,
+        modelKey: 'universalAi',
+        system: [
+          prompt,
+          '当前模型未返回可用工具结果。请只输出纯 JSON，不要解释，不要 Markdown，不要代码块。',
+          '{"assetsList":[{"name":"","desc":"","prompt":"","type":"role","scriptIds":[1]}]}',
+        ].join('\n\n'),
+        messages: [{ role: 'user', content: userContent }],
+      });
+      output = parseExtractAssetsTextResult(fallbackResult.text ?? '');
+      modelDiagnostics = {
+        ...buildExtractAssetsModelDiagnostics(requestId, fallbackResult, output),
+        warnings: sanitizeDiagnosticValue({
+          fallback: 'tools_result_missing_json_retry',
+          fallbackRequestId,
+        }),
+      };
+      updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
+    }
+    if (!output) {
+      throw createError(VT_STATUS.MODEL_ERROR, '模型没有返回可解析资源，已尝试结构化输出和 JSON 兜底。');
     }
 
     const assets = normalizeExtractedAssets(output, scriptIds, existingAssets);
@@ -932,9 +1007,13 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
     };
     updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
     withTransaction(() => {
-      const placeholders = scriptIds.map(() => '?').join(', ');
-      getDatabase().prepare<Array<number>>(`DELETE FROM script_asset_links WHERE script_id IN (${placeholders})`).run(...scriptIds);
-      upsertExtractedAssets(projectId, assets, scriptIds);
+      if (writeMode === 'drafts') {
+        writeExtractedAssetDrafts(projectId, assets, scriptIds, taskId);
+      } else {
+        const placeholders = scriptIds.map(() => '?').join(', ');
+        getDatabase().prepare<Array<number>>(`DELETE FROM script_asset_links WHERE script_id IN (${placeholders})`).run(...scriptIds);
+        upsertExtractedAssets(projectId, assets, scriptIds);
+      }
       updateScriptsExtractStatus(projectId, scriptIds, SCRIPT_EXTRACT_STATUS.SUCCEEDED, null);
     });
     succeedTask(taskId);
@@ -1159,26 +1238,36 @@ export async function generateScriptParseRegex(payload: ScriptGenerateParseRegex
 }
 
 export function extractScriptAssets(payload: ScriptExtractAssetsPayload): ScriptExtractAssetsResult {
+  const result = extractContentResources({ projectId: payload.projectId, contentIds: payload.scriptIds });
+  return {
+    accepted: result.accepted,
+    taskId: result.taskId,
+    scriptIds: result.contentIds,
+  };
+}
+
+export function extractContentResources(payload: { projectId: number; contentIds: number[]; writeMode?: ContentResourceWriteMode }): ProductionExtractResourcesResult {
   const projectId = normalizeProjectId(payload.projectId);
   const project = assertProject(projectId);
-  const scriptIds = normalizeScriptIds(payload.scriptIds);
-  const rows = getScriptRows(projectId, scriptIds);
+  const contentIds = normalizeScriptIds(payload.contentIds);
+  const writeMode = payload.writeMode ?? 'assets';
+  const rows = getScriptRows(projectId, contentIds);
   assertNotExtractLocked(rows, '重新提取');
-  const task = createTask({
+  const task = createProductionTask({
     projectId,
     category: SCRIPT_ASSET_EXTRACTION_TASK_CATEGORY,
-    relatedObjects: { scriptIds },
+    relatedObjects: buildExtractAssetsTaskRelatedObjects(contentIds, null),
     modelName: 'universalAi',
-    description: `提取 ${project.name} 的 ${scriptIds.length} 个剧本资产`,
+    description: `提取 ${project.name} 的 ${contentIds.length} 个内容资源`,
   });
 
-  updateScriptsExtractStatus(projectId, scriptIds, SCRIPT_EXTRACT_STATUS.WAITING);
-  void runAssetExtraction(projectId, scriptIds, task.taskId);
+  updateScriptsExtractStatus(projectId, contentIds, SCRIPT_EXTRACT_STATUS.WAITING);
+  void runAssetExtraction(projectId, contentIds, task.taskId, writeMode);
 
   return {
     accepted: true,
     taskId: task.taskId,
-    scriptIds,
+    contentIds,
   };
 }
 

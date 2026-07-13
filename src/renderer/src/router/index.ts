@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router';
 import LoginHome from '@renderer/features/auth/LoginHome.vue';
 import WorkbenchLayout from '@renderer/layouts/WorkbenchLayout.vue';
+import ProductionCanvasLayout from '@renderer/layouts/ProductionCanvasLayout.vue';
 import ProjectHome from '@renderer/features/project/ProjectHome.vue';
 import AiToolLibraryHome from '@renderer/features/ai-tool-library/index.vue';
 import ResourceLibraryHome from '@renderer/features/resource-library/ResourceLibraryHome.vue';
@@ -8,10 +9,9 @@ import ProjectOverviewHome from '@renderer/features/project-overview/ProjectOver
 import TaskCenter from '@renderer/features/task-center/TaskCenter.vue';
 import SettingsHome from '@renderer/features/settings/SettingsHome.vue';
 import NovelHome from '@renderer/features/novel/index.vue';
-import ScriptAgentHome from '@renderer/features/script-agent/ScriptAgentHome.vue';
-import ScriptHome from '@renderer/features/script/ScriptHome.vue';
 import CornerScapeHome from '@renderer/features/corner-scape/CornerScapeHome.vue';
 import ProductionHome from '@renderer/features/production/ProductionHome.vue';
+import ProductionResourceWorkbench from '@renderer/features/production/ProductionResourceWorkbench.vue';
 import AssetsHome from '@renderer/features/assets/AssetsHome.vue';
 import ExportHome from '@renderer/features/export/ExportHome.vue';
 import { useAppStore } from '@renderer/stores/app';
@@ -21,8 +21,6 @@ import type { ProjectRouteName } from '@shared/types/project';
 const PROJECT_ROUTE_NAMES: ProjectRouteName[] = [
   'project-overview',
   'novel',
-  'script-agent',
-  'script',
   'assets',
   'corner-scape',
   'production',
@@ -46,79 +44,80 @@ const routes: RouteRecordRaw[] = [
         path: 'projects',
         name: 'projects',
         component: ProjectHome,
-        meta: { titleKey: 'route.projects' },
+        meta: { titleKey: 'route.projects', navMode: 'global' },
       },
       {
         path: 'ai-tool-library',
         name: 'ai-tool-library',
         component: AiToolLibraryHome,
-        meta: { titleKey: 'route.aiToolLibrary' },
+        meta: { titleKey: 'route.aiToolLibrary', navMode: 'global' },
       },
       {
         path: 'resource-library',
         name: 'resource-library',
         component: ResourceLibraryHome,
-        meta: { titleKey: 'route.resourceLibrary' },
+        meta: { titleKey: 'route.resourceLibrary', navMode: 'global' },
       },
       {
         path: 'tasks',
         name: 'tasks',
         component: TaskCenter,
-        meta: { titleKey: 'route.tasks' },
+        meta: { titleKey: 'route.tasks', navMode: 'global' },
       },
       {
         path: 'settings',
         name: 'settings',
         component: SettingsHome,
-        meta: { titleKey: 'route.settings' },
+        meta: { titleKey: 'route.settings', navMode: 'global' },
       },
       {
         path: 'project-overview',
         name: 'project-overview',
         component: ProjectOverviewHome,
-        meta: { titleKey: 'route.projectOverview', requiresProject: true },
+        meta: { titleKey: 'route.projectOverview', requiresProject: true, navMode: 'project' },
       },
       {
         path: 'novel',
         name: 'novel',
         component: NovelHome,
-        meta: { titleKey: 'route.novel', requiresProject: true },
-      },
-      {
-        path: 'script-agent',
-        name: 'script-agent',
-        component: ScriptAgentHome,
-        meta: { titleKey: 'route.script-agent', requiresProject: true },
-      },
-      {
-        path: 'script',
-        name: 'script',
-        component: ScriptHome,
-        meta: { titleKey: 'route.script', requiresProject: true },
+        meta: { titleKey: 'route.novel', requiresProject: true, navMode: 'project' },
       },
       {
         path: 'corner-scape',
         name: 'corner-scape',
         component: CornerScapeHome,
-        meta: { titleKey: 'route.corner-scape', requiresProject: true },
+        meta: { titleKey: 'route.corner-scape', requiresProject: true, navMode: 'project' },
       },
       {
-        path: 'production',
-        name: 'production',
-        component: ProductionHome,
-        meta: { titleKey: 'route.production', requiresProject: true },
+        path: 'production/resources',
+        name: 'production-resources',
+        component: ProductionResourceWorkbench,
+        meta: { titleKey: 'route.productionResources', requiresProject: true, navMode: 'project' },
       },
       {
         path: 'assets',
         name: 'assets',
         component: AssetsHome,
-        meta: { titleKey: 'route.assets', requiresProject: true },
+        meta: { titleKey: 'route.assets', requiresProject: true, navMode: 'project' },
       },
       {
         path: 'export',
         name: 'export',
         component: ExportHome,
-        meta: { titleKey: 'route.export', requiresProject: true },
+        meta: { titleKey: 'route.export', requiresProject: true, navMode: 'project' },
+      },
+    ],
+  },
+  {
+    path: '/production',
+    component: ProductionCanvasLayout,
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'production',
+        component: ProductionHome,
+        meta: { titleKey: 'route.production', requiresProject: true },
       },
     ],
   },

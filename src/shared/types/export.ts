@@ -28,9 +28,9 @@ export const EXPORT_DRAFT_STATUS = SHARED_EXPORT_DRAFT_STATUSES;
 export const EXPORT_DRAFT_STATUSES = SHARED_EXPORT_DRAFT_STATUS_VALUES;
 export type ExportDraftStatus = (typeof EXPORT_DRAFT_STATUSES)[number];
 
-export interface ExportScriptPayload {
+export interface ExportContentPayload {
   projectId: number;
-  scriptId: number;
+  contentId: number;
 }
 
 export interface ExportTimelineClip {
@@ -40,7 +40,7 @@ export interface ExportTimelineClip {
   selectedVideoId: number;
   storyboardIds: number[];
   mediaType: ExportMediaType;
-  sourceType: 'production_video';
+  sourceKind: 'production_video';
   sourceId: number;
   relativePath: string | null;
   filePath: string | null;
@@ -57,27 +57,27 @@ export interface ExportTimelineClip {
 export interface ExportTimeline {
   projectId: number;
   projectName: string;
-  scriptId: number;
-  scriptName: string;
+  contentId: number;
+  contentName: string;
   source: ExportTimelineSource;
   timebase: 'ms';
   durationMs: number;
   clips: ExportTimelineClip[];
 }
 
-export type ExportBuildTimelinePayload = ExportScriptPayload;
+export type ExportBuildTimelinePayload = ExportContentPayload;
 
 export interface ExportBuildTimelineResult {
   timeline: ExportTimeline;
 }
 
-export type ExportValidateAssetsPayload = ExportScriptPayload;
+export type ExportValidateAssetsPayload = ExportContentPayload;
 
 export interface ExportValidationFailure {
   trackId: number | null;
   clipId: string | null;
   mediaType: ExportMediaType;
-  sourceType: ExportTimelineClip['sourceType'] | 'storyboard';
+  sourceKind: ExportTimelineClip['sourceKind'] | 'storyboard';
   sourceId: number | null;
   path: string | null;
   reason: ExportValidationReason;
@@ -91,7 +91,7 @@ export interface ExportValidateAssetsResult {
   failures: ExportValidationFailure[];
 }
 
-export interface ExportStoryboardImagesPayload extends ExportScriptPayload {
+export interface ExportStoryboardImagesPayload extends ExportContentPayload {
   storyboardIds: number[];
   order?: number[];
 }
@@ -104,7 +104,7 @@ export interface ExportStoryboardImagesResult {
   failures: ExportValidationFailure[];
 }
 
-export interface ExportCreateJianyingDraftPayload extends ExportScriptPayload {
+export interface ExportCreateJianyingDraftPayload extends ExportContentPayload {
   draftName?: string | null;
   copyAssets?: boolean | null;
 }
@@ -121,7 +121,7 @@ export interface ExportMediaSnapshotItem {
   clipId: string;
   trackId: number;
   selectedVideoId: number;
-  sourceType: ExportTimelineClip['sourceType'];
+  sourceKind: ExportTimelineClip['sourceKind'];
   sourceId: number;
   relativePath: string | null;
   copiedPath: string | null;
@@ -155,8 +155,8 @@ export interface ExportHistoryItem {
   id: number;
   projectId: number;
   projectName: string;
-  scriptId: number;
-  scriptName: string;
+  contentId: number;
+  contentName: string;
   taskId: number | null;
   exportType: ExportHistoryType;
   draftName: string;
@@ -184,7 +184,7 @@ export interface ExportHistoryDetail extends ExportHistoryItem {
 
 export interface ExportHistoryListPayload {
   projectId: number;
-  scriptId?: number | null;
+  contentId?: number | null;
   status?: ExportDraftStatus | null;
   limit?: number | null;
 }

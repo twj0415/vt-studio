@@ -57,7 +57,16 @@ export interface AgentSocketAuth {
   token: string;
   isolationKey: string;
   projectId: string | number;
-  scriptId?: string | number;
+  contentId?: string | number;
+}
+
+export interface AgentWorkspaceSocketUpdate {
+  projectId: number;
+  contentId?: number;
+  source: 'xml' | 'tool' | 'manual' | 'system';
+  result?: unknown;
+  flowData?: unknown;
+  summary?: string;
 }
 
 export interface AgentChatPayload {

@@ -35,7 +35,7 @@ export function authenticateAgentSocket(auth: unknown, namespace: AgentNamespace
   const token = readAuthString(authRecord, 'token');
   const isolationKey = readAuthString(authRecord, 'isolationKey');
   const projectId = readAuthString(authRecord, 'projectId');
-  const scriptId = readAuthString(authRecord, 'scriptId');
+  const contentId = readAuthString(authRecord, 'contentId');
 
   if (!token || token !== getTokenKey()) {
     throw Object.assign(new Error('Socket token 无效'), { code: VT_STATUS.UNAUTHORIZED });
@@ -46,9 +46,9 @@ export function authenticateAgentSocket(auth: unknown, namespace: AgentNamespace
   if (!projectId) {
     throw new Error('projectId 缺失');
   }
-  if (namespace === 'productionAgent' && !scriptId) {
-    throw new Error('scriptId 缺失');
+  if (namespace === 'productionAgent' && !contentId) {
+    throw new Error('contentId 缺失');
   }
 
-  return { token, isolationKey, projectId, scriptId: scriptId ?? undefined };
+  return { token, isolationKey, projectId, contentId: contentId ?? undefined };
 }

@@ -90,14 +90,10 @@ import type {
   ScriptDeleteResult,
   ScriptExportZipPayload,
   ScriptExportZipResult,
-  ScriptExtractAssetsPayload,
-  ScriptExtractAssetsResult,
   ScriptGenerateParseRegexPayload,
   ScriptGenerateParseRegexResult,
   ScriptListPayload,
   ScriptListResult,
-  ScriptPollExtractStatusPayload,
-  ScriptPollExtractStatusResult,
   ScriptSavePayload,
   ScriptSaveResult,
 } from '@shared/types/script';
@@ -269,12 +265,20 @@ import type {
   ProductionAgentWorkspacePatchPayload,
   ProductionAgentWorkspacePatchResult,
   ProductionBatchDeleteStoryboardsPayload,
+  ProductionContentDeletePayload,
+  ProductionContentListResult,
+  ProductionContentPayload,
+  ProductionContentResult,
+  ProductionContentScopedPayload,
+  ProductionContentSavePayload,
+  ProductionContentSaveResult,
   ProductionDeleteResult,
   ProductionDerivedAssetDeletePayload,
   ProductionDerivedAssetPollResult,
   ProductionDerivedAssetSavePayload,
   ProductionExtractResourcesPayload,
   ProductionExtractResourcesResult,
+  ProductionFlowDataResult,
   ProductionGenerateAcceptedResult,
   ProductionGenerateDerivedAssetsPayload,
   ProductionGenerateStoryboardsPayload,
@@ -287,22 +291,41 @@ import type {
   ProductionImageFlowSavePayload,
   ProductionImageFlowSaveResult,
   ProductionPollPayload,
+  ProductionPollResourceExtractionPayload,
+  ProductionPollResourceExtractionResult,
   ProductionProjectPayload,
+  ProductionResourceContext,
+  ProductionResourceContextPayload,
+  ProductionResourceDraftCommitPayload,
+  ProductionResourceDraftCommitResult,
+  ProductionResourceDraftDeletePayload,
+  ProductionResourceDraftListPayload,
+  ProductionResourceDraftListResult,
+  ProductionResourceDraftSavePayload,
+  ProductionResourceDraftSaveResult,
+  ProductionSaveDirectorPlanPayload,
+  ProductionSaveFlowPositionsPayload,
+  ProductionSaveStoryboardTablePayload,
   ProductionSaveWorkspacePayload,
   ProductionSaveWorkspaceResult,
-  ProductionScriptPayload,
   ProductionSelectVideoPayload,
+  ProductionSkillBundle,
   ProductionSelectVideoResult,
+  ProductionRunWorkflowActionPayload,
+  ProductionRunWorkflowActionResult,
   ProductionStoryboardDeletePayload,
   ProductionStoryboardPollResult,
   ProductionStoryboardSavePayload,
   ProductionStoryboardSaveResult,
+  ProductionToolRunPayload,
+  ProductionToolRunResult,
   ProductionVideoDeletePayload,
   ProductionVideoPollResult,
   ProductionVideoPromptPollResult,
   ProductionVideoTrackDeletePayload,
   ProductionVideoTrackSavePayload,
   ProductionVideoTrackSaveResult,
+  ProductionWorkflowStateResult,
   ProductionWorkbenchResult,
   ProductionWorkspaceResult,
 } from '@shared/types/production';
@@ -413,8 +436,6 @@ export interface VtStudioApi {
     batchDelete: (payload: ScriptBatchDeletePayload) => Promise<VtResponse<ScriptDeleteResult>>;
     exportZip: (payload: ScriptExportZipPayload) => Promise<VtResponse<ScriptExportZipResult>>;
     generateParseRegex: (payload: ScriptGenerateParseRegexPayload) => Promise<VtResponse<ScriptGenerateParseRegexResult>>;
-    extractAssets: (payload: ScriptExtractAssetsPayload) => Promise<VtResponse<ScriptExtractAssetsResult>>;
-    pollExtractStatus: (payload: ScriptPollExtractStatusPayload) => Promise<VtResponse<ScriptPollExtractStatusResult>>;
   };
   assets: {
     list: (payload: AssetListPayload) => Promise<VtResponse<AssetListResult>>;
@@ -439,18 +460,83 @@ export interface VtStudioApi {
     pollAudioBindStatus: (payload: AssetPollPayload) => Promise<VtResponse<AssetPollResult>>;
   };
   production: {
-    getWorkspace: (payload: ProductionProjectPayload & { scriptId?: number | null }) => Promise<VtResponse<ProductionWorkspaceResult>>;
+    getResourceContext: (payload: ProductionResourceContextPayload) => Promise<VtResponse<ProductionResourceContext>>;
+    getSkillBundle: (payload: ProductionResourceContextPayload) => Promise<VtResponse<ProductionSkillBundle>>;
+    content: {
+      list: (payload: ProductionProjectPayload) => Promise<VtResponse<ProductionContentListResult>>;
+      get: (payload: ProductionContentPayload) => Promise<VtResponse<ProductionContentResult>>;
+      save: (payload: ProductionContentSavePayload) => Promise<VtResponse<ProductionContentSaveResult>>;
+      delete: (payload: ProductionContentDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
+    };
+    resources: {
+      extract: (payload: ProductionExtractResourcesPayload) => Promise<VtResponse<ProductionExtractResourcesResult>>;
+      pollExtractStatus: (payload: ProductionPollResourceExtractionPayload) => Promise<VtResponse<ProductionPollResourceExtractionResult>>;
+      listDrafts: (payload: ProductionResourceDraftListPayload) => Promise<VtResponse<ProductionResourceDraftListResult>>;
+      saveDraft: (payload: ProductionResourceDraftSavePayload) => Promise<VtResponse<ProductionResourceDraftSaveResult>>;
+      deleteDraft: (payload: ProductionResourceDraftDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
+      commitDrafts: (payload: ProductionResourceDraftCommitPayload) => Promise<VtResponse<ProductionResourceDraftCommitResult>>;
+    };
+    workspace: {
+      get: (payload: ProductionContentPayload) => Promise<VtResponse<ProductionFlowDataResult>>;
+      save: (payload: ProductionSaveWorkspacePayload) => Promise<VtResponse<ProductionSaveWorkspaceResult>>;
+      savePositions: (payload: ProductionSaveFlowPositionsPayload) => Promise<VtResponse<ProductionSaveWorkspaceResult>>;
+      saveDirectorPlan: (payload: ProductionSaveDirectorPlanPayload) => Promise<VtResponse<ProductionSaveWorkspaceResult>>;
+      saveStoryboardTable: (payload: ProductionSaveStoryboardTablePayload) => Promise<VtResponse<ProductionSaveWorkspaceResult>>;
+    };
+    workflow: {
+      getState: (payload: ProductionContentPayload) => Promise<VtResponse<ProductionWorkflowStateResult>>;
+      runAction: (payload: ProductionRunWorkflowActionPayload) => Promise<VtResponse<ProductionRunWorkflowActionResult>>;
+    };
+    tools: {
+      run: (payload: ProductionToolRunPayload) => Promise<VtResponse<ProductionToolRunResult>>;
+    };
+    getWorkspace: (payload: ProductionProjectPayload & { contentId?: number | null }) => Promise<VtResponse<ProductionWorkspaceResult>>;
     saveWorkspace: (payload: ProductionSaveWorkspacePayload) => Promise<VtResponse<ProductionSaveWorkspaceResult>>;
     extractResources: (payload: ProductionExtractResourcesPayload) => Promise<VtResponse<ProductionExtractResourcesResult>>;
     agent: {
       getTools: () => Promise<VtResponse<ProductionAgentToolsResult>>;
-      getContext: (payload: ProductionScriptPayload) => Promise<VtResponse<ProductionAgentContextResult>>;
+      getContext: (payload: ProductionContentScopedPayload) => Promise<VtResponse<ProductionAgentContextResult>>;
       applyWorkspacePatch: (payload: ProductionAgentWorkspacePatchPayload) => Promise<VtResponse<ProductionAgentWorkspacePatchResult>>;
       createStoryboard: (payload: ProductionAgentStoryboardPayload) => Promise<VtResponse<ProductionAgentStoryboardResult>>;
       createDerivedAsset: (payload: ProductionAgentDerivedAssetPayload) => Promise<VtResponse<ProductionAgentDerivedAssetResult>>;
       deleteDerivedAsset: (payload: ProductionDerivedAssetDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
       generateStoryboardImages: (payload: ProductionGenerateStoryboardsPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;
       generateDerivedAssetImages: (payload: ProductionGenerateDerivedAssetsPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;
+    };
+    storyboard: {
+      save: (payload: ProductionStoryboardSavePayload) => Promise<VtResponse<ProductionStoryboardSaveResult>>;
+      delete: (payload: ProductionStoryboardDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
+      batchDelete: (payload: ProductionBatchDeleteStoryboardsPayload) => Promise<VtResponse<ProductionDeleteResult>>;
+      generateImages: (payload: ProductionGenerateStoryboardsPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;
+      pollImages: (payload: ProductionPollPayload) => Promise<VtResponse<ProductionStoryboardPollResult>>;
+    };
+    derivedAsset: {
+      save: (payload: ProductionDerivedAssetSavePayload) => Promise<VtResponse<ProductionDerivedAssetPollResult>>;
+      delete: (payload: ProductionDerivedAssetDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
+      generateImages: (payload: ProductionGenerateDerivedAssetsPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;
+      pollImages: (payload: ProductionPollPayload) => Promise<VtResponse<ProductionDerivedAssetPollResult>>;
+    };
+    imageFlow: {
+      get: (payload: ProductionImageFlowGetPayload) => Promise<VtResponse<ProductionImageFlowGetResult>>;
+      save: (payload: ProductionImageFlowSavePayload) => Promise<VtResponse<ProductionImageFlowSaveResult>>;
+      applyResult: (payload: ProductionImageFlowApplyPayload) => Promise<VtResponse<ProductionImageFlowApplyResult>>;
+    };
+    workbench: {
+      get: (payload: ProductionContentScopedPayload) => Promise<VtResponse<ProductionWorkbenchResult>>;
+    };
+    videoTrack: {
+      save: (payload: ProductionVideoTrackSavePayload) => Promise<VtResponse<ProductionVideoTrackSaveResult>>;
+      delete: (payload: ProductionVideoTrackDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
+    };
+    videoPrompt: {
+      generate: (payload: ProductionGenerateVideoPromptPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;
+      poll: (payload: ProductionPollPayload) => Promise<VtResponse<ProductionVideoPromptPollResult>>;
+    };
+    video: {
+      generate: (payload: ProductionGenerateVideoPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;
+      poll: (payload: ProductionPollPayload) => Promise<VtResponse<ProductionVideoPollResult>>;
+      select: (payload: ProductionSelectVideoPayload) => Promise<VtResponse<ProductionSelectVideoResult>>;
+      delete: (payload: ProductionVideoDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
     };
     saveStoryboard: (payload: ProductionStoryboardSavePayload) => Promise<VtResponse<ProductionStoryboardSaveResult>>;
     deleteStoryboard: (payload: ProductionStoryboardDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
@@ -464,7 +550,7 @@ export interface VtStudioApi {
     getImageFlow: (payload: ProductionImageFlowGetPayload) => Promise<VtResponse<ProductionImageFlowGetResult>>;
     saveImageFlow: (payload: ProductionImageFlowSavePayload) => Promise<VtResponse<ProductionImageFlowSaveResult>>;
     applyImageFlowResult: (payload: ProductionImageFlowApplyPayload) => Promise<VtResponse<ProductionImageFlowApplyResult>>;
-    getWorkbench: (payload: ProductionScriptPayload) => Promise<VtResponse<ProductionWorkbenchResult>>;
+    getWorkbench: (payload: ProductionContentScopedPayload) => Promise<VtResponse<ProductionWorkbenchResult>>;
     saveVideoTrack: (payload: ProductionVideoTrackSavePayload) => Promise<VtResponse<ProductionVideoTrackSaveResult>>;
     deleteVideoTrack: (payload: ProductionVideoTrackDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
     generateVideoPrompts: (payload: ProductionGenerateVideoPromptPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;

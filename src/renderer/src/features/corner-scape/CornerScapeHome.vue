@@ -229,8 +229,8 @@ function goAssets(): void {
   void router.push({ name: 'assets' });
 }
 
-function goScript(): void {
-  void router.push({ name: 'script' });
+function goProduction(): void {
+  void router.push({ name: 'production' });
 }
 
 async function batchGeneratePrompts(): Promise<void> {
@@ -612,7 +612,7 @@ onUnmounted(() => {
                 </template>
                 <template v-else>
                   <VtButton theme="primary" variant="base" @click="goAssets">{{ t('cornerScape.emptyActionAssets') }}</VtButton>
-                  <VtButton variant="outline" @click="goScript">{{ t('cornerScape.emptyActionScript') }}</VtButton>
+                  <VtButton variant="outline" @click="goProduction">{{ t('cornerScape.emptyActionProduction') }}</VtButton>
                 </template>
               </div>
             </template>

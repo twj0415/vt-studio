@@ -11,7 +11,7 @@ import WorkflowNextStepHint from '@renderer/features/shared/WorkflowNextStepHint
 import { useVtRequest } from '@renderer/composables/useVtRequest';
 import { useAppStore } from '@renderer/stores/app';
 import type { ExportCreateJianyingDraftResult, ExportHistoryDetail, ExportHistoryItem, ExportTimeline, ExportValidateAssetsResult, ExportValidationFailure } from '@shared/types/export';
-import type { ScriptItem } from '@shared/types/script';
+import type { ProductionContentItem } from '@shared/types/production';
 
 type StepState = 'done' | 'active' | 'blocked' | 'pending';
 
@@ -24,15 +24,15 @@ const { t, locale } = useI18n();
 const router = useRouter();
 const appStore = useAppStore();
 
-const scriptLoading = ref(false);
+const contentLoading = ref(false);
 const timelineLoading = ref(false);
 const validationLoading = ref(false);
 const exportLoading = ref(false);
 const openDirectoryLoading = ref(false);
 const historyLoading = ref(false);
 const historyDetailLoading = ref(false);
-const scripts = ref<ScriptItem[]>([]);
-const selectedScriptId = ref<number | null>(null);
+const contents = ref<ProductionContentItem[]>([]);
+const selectedContentId = ref<number | null>(null);
 const timeline = ref<ExportTimeline | null>(null);
 const validation = ref<ExportValidateAssetsResult | null>(null);
 const exportResult = ref<ExportCreateJianyingDraftResult | null>(null);
@@ -43,7 +43,7 @@ const historyDetailVisible = ref(false);
 const draftName = ref('');
 const copyAssets = ref(true);
 
-const scriptRequest = useVtRequest({ loading: scriptLoading });
+const contentRequest = useVtRequest({ loading: contentLoading });
 const timelineRequest = useVtRequest({ loading: timelineLoading });
 const validationRequest = useVtRequest({ loading: validationLoading });
 const exportRequest = useVtRequest({ loading: exportLoading });
@@ -53,11 +53,11 @@ const historyDetailRequest = useVtRequest({ loading: historyDetailLoading });
 
 const currentProject = computed(() => appStore.currentProject);
 const currentProjectId = computed(() => Number(currentProject.value?.id ?? 0));
-const selectedScript = computed(() => scripts.value.find((script) => script.id === selectedScriptId.value) ?? null);
-const scriptOptions = computed(() => scripts.value.map((script) => ({
-  label: script.name,
-  value: script.id,
-  content: t('exportCenter.scriptOptionMeta', { id: script.id }),
+const selectedContent = computed(() => contents.value.find((content) => content.id === selectedContentId.value) ?? null);
+const contentOptions = computed(() => contents.value.map((content) => ({
+  label: content.title,
+  value: content.id,
+  content: t('exportCenter.scriptOptionMeta', { id: content.id }),
 })));
 const latestFailures = computed(() => {
   if (exportResult.value?.failures.length) {
@@ -70,10 +70,10 @@ const resultPath = computed(() => exportResult.value?.draftPath ?? null);
 const resultTaskId = computed(() => exportResult.value?.taskId ?? null);
 const hasTimeline = computed(() => Boolean(timeline.value));
 const hasValidValidation = computed(() => Boolean(validation.value?.valid));
-const canLoadExportData = computed(() => currentProjectId.value > 0 && Boolean(selectedScriptId.value));
+const canLoadExportData = computed(() => currentProjectId.value > 0 && Boolean(selectedContentId.value));
 const canExport = computed(() => canLoadExportData.value && hasValidValidation.value && !exportLoading.value);
 const validationState = computed<StepState>(() => {
-  if (!selectedScriptId.value) {
+  if (!selectedContentId.value) {
     return 'blocked';
   }
   if (!validation.value) {
@@ -83,8 +83,8 @@ const validationState = computed<StepState>(() => {
   return validation.value.valid ? 'done' : 'blocked';
 });
 const exportSteps = computed<ExportStep[]>(() => [
-  { key: 'select', state: selectedScriptId.value ? 'done' : 'active' },
-  { key: 'timeline', state: hasTimeline.value ? 'done' : selectedScriptId.value ? 'active' : 'blocked' },
+  { key: 'select', state: selectedContentId.value ? 'done' : 'active' },
+  { key: 'timeline', state: hasTimeline.value ? 'done' : selectedContentId.value ? 'active' : 'blocked' },
   { key: 'validate', state: validationState.value },
   { key: 'export', state: exportResult.value?.succeeded ? 'done' : hasValidValidation.value ? 'active' : 'blocked' },
   { key: 'result', state: exportResult.value ? (exportResult.value.succeeded ? 'done' : 'blocked') : 'pending' },
@@ -94,7 +94,7 @@ function resetExportData(): void {
   timeline.value = null;
   validation.value = null;
   exportResult.value = null;
-  draftName.value = selectedScript.value ? selectedScript.value.name : '';
+  draftName.value = selectedContent.value ? selectedContent.value.title : '';
   copyAssets.value = true;
 }
 
@@ -117,8 +117,28 @@ function formatDateTime(timestamp: number): string {
   }).format(new Date(timestamp));
 }
 
+function normalizeExportDetailValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeExportDetailValue);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    const normalizedKey = key.toLowerCase();
+    const nextKey = normalizedKey.includes('script') && normalizedKey.includes('id')
+      ? 'contentId'
+      : normalizedKey.includes('script') && normalizedKey.includes('name')
+        ? 'contentName'
+        : key;
+    return [nextKey, normalizeExportDetailValue(item)];
+  }));
+}
+
 function formatJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(normalizeExportDetailValue(value), null, 2);
 }
 
 function failureTrackLabel(failure: ExportValidationFailure): string {
@@ -159,30 +179,29 @@ function historyStatusLabel(status: ExportHistoryItem['status']): string {
   return t(`exportCenter.historyStatus.${status}`);
 }
 
-async function loadScripts(): Promise<void> {
+async function loadContents(): Promise<void> {
   if (!currentProjectId.value) {
-    scripts.value = [];
-    selectedScriptId.value = null;
+    contents.value = [];
+    selectedContentId.value = null;
     histories.value = [];
     historyTotal.value = 0;
     resetExportData();
     return;
   }
 
-  const data = await scriptRequest.run(() => window.vtStudio.script.list({
+  const data = await contentRequest.run(() => window.vtStudio.production.content.list({
     projectId: currentProjectId.value,
-    keyword: null,
   }));
   if (!data) {
-    scripts.value = [];
-    selectedScriptId.value = null;
+    contents.value = [];
+    selectedContentId.value = null;
     resetExportData();
     return;
   }
 
-  scripts.value = data.scripts;
-  if (!scripts.value.some((script) => script.id === selectedScriptId.value)) {
-    selectedScriptId.value = scripts.value[0]?.id ?? null;
+  contents.value = data.contents;
+  if (!contents.value.some((content) => content.id === selectedContentId.value)) {
+    selectedContentId.value = data.currentContentId ?? contents.value[0]?.id ?? null;
   }
   resetExportData();
   await loadHistory();
@@ -198,7 +217,7 @@ async function loadHistory(): Promise<void> {
 
   const data = await historyRequest.run(() => window.vtStudio.export.listHistory({
     projectId: currentProjectId.value,
-    scriptId: selectedScriptId.value,
+    contentId: selectedContentId.value,
     limit: 20,
   }));
   if (!data) {
@@ -212,14 +231,14 @@ async function loadHistory(): Promise<void> {
 }
 
 async function buildTimeline(): Promise<void> {
-  if (!canLoadExportData.value || !selectedScriptId.value) {
+  if (!canLoadExportData.value || !selectedContentId.value) {
     MessagePlugin.warning(t('exportCenter.noScriptSelected'));
     return;
   }
 
   const data = await timelineRequest.run(() => window.vtStudio.export.buildTimeline({
     projectId: currentProjectId.value,
-    scriptId: selectedScriptId.value!,
+    contentId: selectedContentId.value!,
   }));
   if (!data) {
     timeline.value = null;
@@ -234,14 +253,14 @@ async function buildTimeline(): Promise<void> {
 }
 
 async function validateAssets(): Promise<void> {
-  if (!canLoadExportData.value || !selectedScriptId.value) {
+  if (!canLoadExportData.value || !selectedContentId.value) {
     MessagePlugin.warning(t('exportCenter.noScriptSelected'));
     return;
   }
 
   const data = await validationRequest.run(() => window.vtStudio.export.validateAssets({
     projectId: currentProjectId.value,
-    scriptId: selectedScriptId.value!,
+    contentId: selectedContentId.value!,
   }));
   if (!data) {
     validation.value = null;
@@ -260,7 +279,7 @@ async function validateAssets(): Promise<void> {
 }
 
 async function createJianyingDraft(): Promise<void> {
-  if (!canLoadExportData.value || !selectedScriptId.value) {
+  if (!canLoadExportData.value || !selectedContentId.value) {
     MessagePlugin.warning(t('exportCenter.noScriptSelected'));
     return;
   }
@@ -276,7 +295,7 @@ async function createJianyingDraft(): Promise<void> {
 
   const data = await exportRequest.run(() => window.vtStudio.export.createJianyingDraft({
     projectId: currentProjectId.value,
-    scriptId: selectedScriptId.value!,
+    contentId: selectedContentId.value!,
     draftName: draftName.value || null,
     copyAssets: copyAssets.value,
   }));
@@ -371,12 +390,12 @@ async function copyHistoryTaskId(history: ExportHistoryItem): Promise<void> {
 }
 
 async function rerunHistory(history: ExportHistoryItem): Promise<void> {
-  if (!scripts.value.some((script) => script.id === history.scriptId)) {
+  if (!contents.value.some((content) => content.id === history.contentId)) {
     MessagePlugin.warning(t('exportCenter.historyScriptMissing'));
     return;
   }
 
-  selectedScriptId.value = history.scriptId;
+  selectedContentId.value = history.contentId;
   draftName.value = history.draftName;
   copyAssets.value = history.copyAssets;
   timeline.value = null;
@@ -393,17 +412,17 @@ function goTaskCenter(): void {
   void router.push({ name: 'tasks' });
 }
 
-watch(selectedScriptId, () => {
+watch(selectedContentId, () => {
   resetExportData();
   void loadHistory();
 });
 
 watch(currentProjectId, () => {
-  void loadScripts();
+  void loadContents();
 });
 
 onMounted(() => {
-  void loadScripts();
+  void loadContents();
 });
 </script>
 
@@ -423,7 +442,7 @@ onMounted(() => {
           <strong class="truncate text-base text-[var(--vt-text-primary)]">{{ currentProject?.name ?? t('common.noProject') }}</strong>
           <p class="m-0 text-sm text-[var(--vt-text-secondary)]">{{ t('exportCenter.projectHint') }}</p>
           <div class="flex flex-wrap gap-2">
-            <VtButton size="small" variant="outline" :loading="scriptLoading" @click="loadScripts">
+            <VtButton size="small" variant="outline" :loading="contentLoading" @click="loadContents">
               <template #icon><RefreshIcon /></template>
               {{ t('exportCenter.refresh') }}
             </VtButton>
@@ -445,17 +464,17 @@ onMounted(() => {
         <label class="grid gap-2">
           <span class="text-sm font-medium text-[var(--vt-text-secondary)]">{{ t('exportCenter.script') }}</span>
           <t-select
-            v-model="selectedScriptId"
-            :options="scriptOptions"
-            :loading="scriptLoading"
-            :placeholder="scripts.length ? t('exportCenter.scriptPlaceholder') : t('exportCenter.noScripts')"
+            v-model="selectedContentId"
+            :options="contentOptions"
+            :loading="contentLoading"
+            :placeholder="contents.length ? t('exportCenter.scriptPlaceholder') : t('exportCenter.noScripts')"
             clearable
           />
         </label>
 
         <label class="grid gap-2">
           <span class="text-sm font-medium text-[var(--vt-text-secondary)]">{{ t('exportCenter.draftName') }}</span>
-          <t-input v-model="draftName" :disabled="!selectedScriptId" :placeholder="selectedScript?.name || t('exportCenter.draftNamePlaceholder')" />
+          <t-input v-model="draftName" :disabled="!selectedContentId" :placeholder="selectedContent?.title || t('exportCenter.draftNamePlaceholder')" />
         </label>
 
         <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3">
@@ -469,11 +488,11 @@ onMounted(() => {
         </div>
 
         <div class="grid gap-2">
-          <VtButton theme="primary" variant="base" :disabled="!selectedScriptId" :loading="validationLoading" @click="validateAssets">
+          <VtButton theme="primary" variant="base" :disabled="!selectedContentId" :loading="validationLoading" @click="validateAssets">
             <template #icon><SearchIcon /></template>
             {{ t('exportCenter.checkAssets') }}
           </VtButton>
-          <VtButton variant="outline" :disabled="!selectedScriptId" :loading="timelineLoading" @click="buildTimeline">
+          <VtButton variant="outline" :disabled="!selectedContentId" :loading="timelineLoading" @click="buildTimeline">
             {{ t('exportCenter.buildTimeline') }}
           </VtButton>
           <VtButton theme="primary" variant="base" :disabled="!canExport" :loading="exportLoading" @click="createJianyingDraft">
@@ -487,7 +506,7 @@ onMounted(() => {
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-4">
             <p class="m-0 text-xs font-medium text-[var(--vt-text-tertiary)]">{{ t('exportCenter.statScripts') }}</p>
-            <strong class="mt-2 block text-2xl text-[var(--vt-text-primary)]">{{ scripts.length }}</strong>
+            <strong class="mt-2 block text-2xl text-[var(--vt-text-primary)]">{{ contents.length }}</strong>
           </div>
           <div class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-panel)] p-4">
             <p class="m-0 text-xs font-medium text-[var(--vt-text-tertiary)]">{{ t('exportCenter.statClips') }}</p>
@@ -543,7 +562,7 @@ onMounted(() => {
             <div v-if="latestFailures.length" class="grid gap-2">
               <article
                 v-for="failure in latestFailures"
-                :key="`${failure.clipId}-${failure.sourceType}-${failure.sourceId}-${failure.reason}`"
+                :key="`${failure.clipId}-${failure.sourceId}-${failure.reason}`"
                 class="grid gap-2 rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3"
               >
                 <div class="flex flex-wrap items-center justify-between gap-2">
@@ -644,7 +663,7 @@ onMounted(() => {
                     <t-tag size="small" :theme="historyStatusTheme(history.status)" variant="light">{{ historyStatusLabel(history.status) }}</t-tag>
                   </div>
                   <p class="m-0 mt-1 text-xs leading-5 text-[var(--vt-text-secondary)]">
-                    {{ t('exportCenter.historyScriptMeta', { script: history.scriptName, time: formatDateTime(history.createdAt) }) }}
+                    {{ t('exportCenter.historyScriptMeta', { script: history.contentName, time: formatDateTime(history.createdAt) }) }}
                   </p>
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -759,7 +778,7 @@ onMounted(() => {
           <div v-if="activeHistory.failures.length" class="grid gap-2">
             <article
               v-for="failure in activeHistory.failures"
-              :key="`${failure.clipId}-${failure.sourceType}-${failure.sourceId}-${failure.reason}`"
+              :key="`${failure.clipId}-${failure.sourceId}-${failure.reason}`"
               class="rounded-md border border-[var(--vt-border-subtle)] bg-[var(--vt-surface-app)] p-3"
             >
               <strong class="text-sm text-[var(--vt-danger)]">{{ failureReasonLabel(failure.reason) }}</strong>
