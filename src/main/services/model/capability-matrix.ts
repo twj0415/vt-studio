@@ -1,10 +1,5 @@
 import {
-  COMMON_VIDEO_DURATIONS,
-  COMMON_VIDEO_RESOLUTIONS,
-  DEFAULT_IMAGE_FLOW_RATIOS,
   MODEL_CAPABILITIES,
-  PROJECT_VIDEO_RATIO_VALUES,
-  VIDEO_SIMPLE_MODES,
   type ImageGenerationMode,
   type ModelCapability,
   type VideoGenerationMode,
@@ -12,12 +7,11 @@ import {
 import {
   getEmptyReferenceLimits,
   getImageModeReferenceLimits,
-  getVideoModeInputTypes,
   getVideoModeReferenceLimits,
   isKnownImageMode,
   isKnownVideoMode,
   MODEL_AUDIO_SUPPORTS,
-  MODEL_OUTPUT_TYPES,
+  MODEL_OUTPUT_TYPE_VALUES,
   MODEL_PROMPT_TEMPLATE_TYPES,
   MODEL_REFERENCE_FILE_TYPES,
   getTextReasoningCapability,
@@ -25,17 +19,21 @@ import {
   serializeImageMode,
   serializeVideoMode,
   type ModelAudioSupport,
+  type ModelReferenceLimits,
 } from '@shared/constants/model-capabilities';
 import { VT_STATUS } from '@shared/constants/status';
-import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
+import type {
+  ModelCapabilityMatrixItem,
+  ModelCapabilitySource,
+  ModelOperationCapability,
+  ModelParameterCombination,
+  ModelParameterDefinition,
+  ModelReferenceConstraint,
+} from '@shared/types/model-capability';
 import type { ApiConnection, RegisteredModel } from '@shared/types/model-config';
 import { createError } from '../result';
+import { getCatalogOperations } from './capability-catalog';
 import type { ImageModelConfig, TtsModelConfig, VendorModelConfig, VideoModelConfig } from './types';
-
-const DEFAULT_IMAGE_MODES: ImageGenerationMode[] = ['text'];
-const DEFAULT_VIDEO_MODES: VideoGenerationMode[] = [VIDEO_SIMPLE_MODES.TEXT];
-const DEFAULT_IMAGE_ASPECT_RATIOS = [...DEFAULT_IMAGE_FLOW_RATIOS];
-const DEFAULT_VIDEO_ASPECT_RATIOS = [...PROJECT_VIDEO_RATIO_VALUES];
 
 function uniqueStrings(values: Array<string | null | undefined>, fallback: readonly string[]): string[] {
   const normalized = values.map((value) => value?.trim() ?? '').filter(Boolean);
@@ -47,6 +45,134 @@ function uniqueNumbers(values: Array<number | null | undefined>, fallback: reado
   const normalized = values.map(Number).filter((value) => Number.isFinite(value) && value > 0);
   const unique = [...new Set(normalized)];
   return unique.length > 0 ? unique : [...fallback];
+}
+
+function normalizeDurationResolutionMap(
+  value: RegisteredModel['durationResolutionMap'],
+): NonNullable<RegisteredModel['durationResolutionMap']> {
+  const normalized = (value ?? []).map((item) => ({
+    duration: uniqueNumbers(item.duration ?? [], []),
+    resolution: uniqueStrings(item.resolution ?? [], []),
+  })).filter((item) => item.duration.length > 0 && item.resolution.length > 0);
+  return normalized;
+}
+
+function normalizeReferenceConstraints(value: unknown): ModelReferenceConstraint[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): ModelReferenceConstraint[] => {
+    if (!item || typeof item !== 'object') return [];
+    const input = item as Partial<ModelReferenceConstraint>;
+    if (!MODEL_REFERENCE_FILE_TYPES || !Object.values(MODEL_REFERENCE_FILE_TYPES).includes(input.type as never)) return [];
+    const min = Math.max(0, Math.floor(Number(input.min) || 0));
+    const max = Math.max(min, Math.floor(Number(input.max) || 0));
+    if (max === 0) return [];
+    return [{
+      type: input.type!,
+      min,
+      max,
+      ...(Array.isArray(input.roles) ? { roles: uniqueStrings(input.roles.map(String), []) } : {}),
+    }];
+  });
+}
+
+function normalizeParameterCombinations(value: unknown): ModelParameterCombination[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): ModelParameterCombination[] => {
+    if (!item || typeof item !== 'object') return [];
+    const input = item as ModelParameterCombination;
+    const combination: ModelParameterCombination = {
+      ...(input.durationOptions ? { durationOptions: uniqueNumbers(input.durationOptions, []) } : {}),
+      ...(input.resolutionOptions ? { resolutionOptions: uniqueStrings(input.resolutionOptions, []) } : {}),
+      ...(input.aspectRatioOptions ? { aspectRatioOptions: uniqueStrings(input.aspectRatioOptions, []) } : {}),
+      ...(input.sizeOptions ? { sizeOptions: uniqueStrings(input.sizeOptions, []) } : {}),
+      ...(input.qualityOptions ? { qualityOptions: uniqueStrings(input.qualityOptions, []) } : {}),
+    };
+    return Object.keys(combination).length > 0 ? [combination] : [];
+  });
+}
+
+function normalizeParameterDefinitions(value: unknown): ModelParameterDefinition[] {
+  if (!Array.isArray(value)) return [];
+  const controls = new Set<ModelParameterDefinition['control']>(['select', 'boolean', 'number', 'text']);
+  return value.flatMap((item): ModelParameterDefinition[] => {
+    if (!item || typeof item !== 'object') return [];
+    const input = item as Partial<ModelParameterDefinition>;
+    const key = input.key?.trim();
+    const label = input.label?.trim();
+    if (!key || !label || !controls.has(input.control as ModelParameterDefinition['control'])) return [];
+    return [{
+      key,
+      label,
+      control: input.control!,
+      required: input.required === true,
+      ...(Array.isArray(input.options) ? { options: input.options.filter((option) => option && typeof option.label === 'string') } : {}),
+      ...(Number.isFinite(input.minimum) ? { minimum: Number(input.minimum) } : {}),
+      ...(Number.isFinite(input.maximum) ? { maximum: Number(input.maximum) } : {}),
+      ...(Number.isFinite(input.step) ? { step: Number(input.step) } : {}),
+      ...(input.defaultValue !== undefined ? { defaultValue: input.defaultValue } : {}),
+      ...(input.description?.trim() ? { description: input.description.trim() } : {}),
+    }];
+  });
+}
+
+function normalizeOperations(value: unknown): ModelOperationCapability[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): ModelOperationCapability[] => {
+    if (!item || typeof item !== 'object') return [];
+    const input = item as Partial<ModelOperationCapability>;
+    const operationId = input.operationId?.trim();
+    const modeKey = input.modeKey?.trim() ?? '';
+    if (!operationId || !MODEL_OUTPUT_TYPE_VALUES.includes(input.outputType as never)) return [];
+    const referenceConstraints = normalizeReferenceConstraints(input.referenceConstraints);
+    const inputTypes = uniqueStrings((input.inputTypes ?? []).map(String), [MODEL_REFERENCE_FILE_TYPES.TEXT])
+      .filter((type): type is ModelReferenceConstraint['type'] => Object.values(MODEL_REFERENCE_FILE_TYPES).includes(type as never));
+    if (!input.source?.provider || !input.source.status || !input.source.adapterStatus) return [];
+    const source: ModelCapabilitySource = {
+      status: input.source.status,
+      provider: input.source.provider,
+      documentUrl: input.source.documentUrl,
+      verifiedAt: input.source.verifiedAt,
+      adapterStatus: input.source.adapterStatus,
+      note: input.source.note,
+    };
+    return [{
+      operationId,
+      modeKey,
+      inputTypes,
+      outputType: input.outputType!,
+      referenceConstraints,
+      minimumTotalReferences: Math.max(0, Math.floor(Number(input.minimumTotalReferences) || 0)),
+      maximumTotalReferences: input.maximumTotalReferences === undefined
+        ? undefined
+        : Math.max(0, Math.floor(Number(input.maximumTotalReferences) || 0)),
+      parameterCombinations: normalizeParameterCombinations(input.parameterCombinations),
+      parameters: normalizeParameterDefinitions(input.parameters),
+      audioSupport: normalizeAudioSupport(input.audioSupport),
+      features: uniqueStrings((input.features ?? []).map(String), []),
+      source,
+      enabled: input.enabled !== false,
+    }];
+  });
+}
+
+function referenceLimitsFromConstraints(
+  constraints: ModelReferenceConstraint[],
+  minimumTotal: number,
+  maximumTotal: number | null | undefined,
+  fallback: ModelReferenceLimits,
+): ModelReferenceLimits {
+  if (constraints.length === 0) return fallback;
+  const limits = getEmptyReferenceLimits();
+  for (const constraint of constraints) {
+    limits[constraint.type] = constraint.min;
+    limits.maximum[constraint.type] = constraint.max;
+  }
+  limits.minimumTotal = minimumTotal;
+  limits.maximumTotal = maximumTotal === undefined
+    ? constraints.reduce((total, item) => total + item.max, 0)
+    : maximumTotal;
+  limits.allowMore = constraints.some((item) => item.max > item.min);
+  return limits;
 }
 
 function assertModelBase(model: RegisteredModel): { id: string; displayName: string; modelName: string; type: ModelCapability } {
@@ -66,7 +192,7 @@ function assertModelBase(model: RegisteredModel): { id: string; displayName: str
 }
 
 function normalizeImageModes(modes: unknown): ImageGenerationMode[] {
-  const source = Array.isArray(modes) ? modes : DEFAULT_IMAGE_MODES;
+  const source = Array.isArray(modes) ? modes : [];
   const normalized = source.map((mode) => serializeImageMode(String(mode))).filter(Boolean);
 
   if (!normalized.every(isKnownImageMode)) {
@@ -77,7 +203,7 @@ function normalizeImageModes(modes: unknown): ImageGenerationMode[] {
 }
 
 function normalizeVideoModes(modes: unknown): VideoGenerationMode[] {
-  const source = Array.isArray(modes) ? modes : DEFAULT_VIDEO_MODES;
+  const source = Array.isArray(modes) ? modes : [];
   const normalized = source
     .map((mode) => {
       if (Array.isArray(mode)) {
@@ -142,6 +268,7 @@ export function normalizeRegisteredModel(model: RegisteredModel): RegisteredMode
         think,
         reasoning: model.reasoning,
       }),
+      operations: normalizeOperations(model.operations),
     };
   }
 
@@ -150,19 +277,29 @@ export function normalizeRegisteredModel(model: RegisteredModel): RegisteredMode
       ...base,
       type: MODEL_CAPABILITIES.IMAGE,
       imageModes: normalizeImageModes(model.imageModes),
-      aspectRatioOptions: uniqueStrings(model.aspectRatioOptions ?? [], DEFAULT_IMAGE_ASPECT_RATIOS),
+      aspectRatioOptions: uniqueStrings(model.aspectRatioOptions ?? [], []),
+      operations: normalizeOperations(model.operations),
     };
   }
 
   if (base.type === MODEL_CAPABILITIES.VIDEO) {
+    const durationResolutionMap = normalizeDurationResolutionMap(model.durationResolutionMap);
     return {
       ...base,
       type: MODEL_CAPABILITIES.VIDEO,
       videoModes: normalizeVideoModes(model.videoModes),
-      durationOptions: uniqueNumbers(model.durationOptions ?? [], COMMON_VIDEO_DURATIONS),
-      resolutionOptions: uniqueStrings(model.resolutionOptions ?? [], COMMON_VIDEO_RESOLUTIONS),
-      aspectRatioOptions: uniqueStrings(model.aspectRatioOptions ?? [], DEFAULT_VIDEO_ASPECT_RATIOS),
+      durationOptions: uniqueNumbers([
+        ...(model.durationOptions ?? []),
+        ...durationResolutionMap.flatMap((item) => item.duration),
+      ], []),
+      resolutionOptions: uniqueStrings([
+        ...(model.resolutionOptions ?? []),
+        ...durationResolutionMap.flatMap((item) => item.resolution),
+      ], []),
+      durationResolutionMap,
+      aspectRatioOptions: uniqueStrings(model.aspectRatioOptions ?? [], []),
       audioSupport: normalizeAudioSupport(model.audioSupport),
+      operations: normalizeOperations(model.operations),
     };
   }
 
@@ -170,6 +307,7 @@ export function normalizeRegisteredModel(model: RegisteredModel): RegisteredMode
     ...base,
     type: MODEL_CAPABILITIES.TTS,
     voices: model.voices?.length ? model.voices : [{ title: 'Default', voice: 'default' }],
+    operations: normalizeOperations(model.operations),
   };
 }
 
@@ -205,6 +343,7 @@ export function vendorModelToRegisteredModel(model: VendorModelConfig): Register
       audioSupport: normalizeAudioSupport(model.audio),
       durationOptions: model.durationResolutionMap.flatMap((item) => item.duration),
       resolutionOptions: model.durationResolutionMap.flatMap((item) => item.resolution),
+      durationResolutionMap: model.durationResolutionMap,
     });
   }
 
@@ -232,7 +371,7 @@ export function registeredModelToVendorModel(model: RegisteredModel): VendorMode
     return {
       ...base,
       type: 'image',
-      mode: normalized.imageModes ?? DEFAULT_IMAGE_MODES,
+      mode: normalized.imageModes ?? [],
     } satisfies ImageModelConfig;
   }
 
@@ -240,14 +379,9 @@ export function registeredModelToVendorModel(model: RegisteredModel): VendorMode
     return {
       ...base,
       type: 'video',
-      mode: normalized.videoModes ?? DEFAULT_VIDEO_MODES,
+      mode: normalized.videoModes ?? [],
       audio: audioSupportToVendorAudio(normalized.audioSupport ?? MODEL_AUDIO_SUPPORTS.OPTIONAL),
-      durationResolutionMap: [
-        {
-          duration: normalized.durationOptions ?? [...COMMON_VIDEO_DURATIONS],
-          resolution: normalized.resolutionOptions ?? [...COMMON_VIDEO_RESOLUTIONS],
-        },
-      ],
+      durationResolutionMap: normalized.durationResolutionMap ?? [],
     } satisfies VideoModelConfig;
   }
 
@@ -262,11 +396,11 @@ export function getRegisteredModelModeKeys(model: RegisteredModel): string[] {
   const normalized = normalizeRegisteredModel(model);
 
   if (normalized.type === MODEL_CAPABILITIES.IMAGE) {
-    return (normalized.imageModes ?? DEFAULT_IMAGE_MODES).map(serializeImageMode);
+    return (normalized.imageModes ?? []).map(serializeImageMode);
   }
 
   if (normalized.type === MODEL_CAPABILITIES.VIDEO) {
-    return (normalized.videoModes ?? DEFAULT_VIDEO_MODES).map(serializeVideoMode);
+    return (normalized.videoModes ?? []).map(serializeVideoMode);
   }
 
   return [''];
@@ -287,7 +421,12 @@ export function assertVendorVideoModeSupported(model: VideoModelConfig, mode: st
   return modeKey;
 }
 
-function matrixBase(connection: ApiConnection, model: RegisteredModel): Omit<ModelCapabilityMatrixItem, 'modeKey' | 'mode' | 'inputTypes' | 'outputType' | 'durationOptions' | 'resolutionOptions' | 'aspectRatioOptions' | 'audioSupport' | 'referenceLimits' | 'promptTemplateType'> {
+type MatrixBase = Pick<
+  ModelCapabilityMatrixItem,
+  'connectionId' | 'connectionName' | 'modelId' | 'modelName' | 'modelDisplayName' | 'modelType' | 'status' | 'statusText'
+>;
+
+function matrixBase(connection: ApiConnection, model: RegisteredModel): MatrixBase {
   return {
     connectionId: connection.id,
     connectionName: connection.name,
@@ -300,6 +439,54 @@ function matrixBase(connection: ApiConnection, model: RegisteredModel): Omit<Mod
   };
 }
 
+function createMatrixItem(input: {
+  base: MatrixBase;
+  modeKey: string;
+  mode: ModelCapabilityMatrixItem['mode'];
+  operation: ModelOperationCapability;
+  referenceLimits: ModelReferenceLimits;
+  promptTemplateType: ModelCapabilityMatrixItem['promptTemplateType'];
+}): ModelCapabilityMatrixItem {
+  const operation = input.operation;
+  const referenceConstraints = operation.referenceConstraints;
+  const minimumTotalReferences = operation.minimumTotalReferences ?? input.referenceLimits.minimumTotal;
+  const maximumTotalReferences = operation.maximumTotalReferences ?? input.referenceLimits.maximumTotal;
+  const parameterCombinations = operation.parameterCombinations;
+  const referenceLimits = referenceLimitsFromConstraints(
+    referenceConstraints,
+    minimumTotalReferences,
+    maximumTotalReferences,
+    input.referenceLimits,
+  );
+
+  return {
+    ...input.base,
+    modeKey: input.modeKey,
+    mode: input.mode,
+    operationId: operation.operationId,
+    inputTypes: operation.inputTypes,
+    outputType: operation.outputType,
+    durationOptions: uniqueNumbers(parameterCombinations.flatMap((item) => item.durationOptions ?? []), []),
+    resolutionOptions: uniqueStrings(parameterCombinations.flatMap((item) => item.resolutionOptions ?? []), []),
+    aspectRatioOptions: uniqueStrings(parameterCombinations.flatMap((item) => item.aspectRatioOptions ?? []), []),
+    parameterCombinations,
+    parameters: operation.parameters ?? [],
+    audioSupport: operation.audioSupport,
+    referenceLimits,
+    referenceConstraints,
+    minimumTotalReferences,
+    maximumTotalReferences,
+    features: operation.features ?? [],
+    source: operation.source,
+    promptTemplateType: input.promptTemplateType,
+  };
+}
+
+function operationsForModel(connection: ApiConnection, model: RegisteredModel): ModelOperationCapability[] {
+  const catalog = getCatalogOperations(connection, model);
+  return catalog.length > 0 ? catalog : model.operations ?? [];
+}
+
 export function buildCapabilityMatrixForConnections(connections: ApiConnection[]): ModelCapabilityMatrixItem[] {
   const matrix: ModelCapabilityMatrixItem[] = [];
 
@@ -307,74 +494,66 @@ export function buildCapabilityMatrixForConnections(connections: ApiConnection[]
     for (const rawModel of connection.models) {
       const model = normalizeRegisteredModel(rawModel);
       const base = matrixBase(connection, model);
+      const operations = operationsForModel(connection, model).filter((item) => item.enabled !== false);
 
       if (model.type === MODEL_CAPABILITIES.TEXT) {
-        matrix.push({
-          ...base,
+        const operation = operations.find((item) => item.modeKey === '');
+        if (!operation) continue;
+        matrix.push(createMatrixItem({
+          base,
           modeKey: '',
           mode: '',
-          inputTypes: [MODEL_REFERENCE_FILE_TYPES.TEXT],
-          outputType: MODEL_OUTPUT_TYPES.TEXT,
-          durationOptions: [],
-          resolutionOptions: [],
-          aspectRatioOptions: [],
-          audioSupport: MODEL_AUDIO_SUPPORTS.NONE,
+          operation,
           referenceLimits: getEmptyReferenceLimits(),
           promptTemplateType: MODEL_PROMPT_TEMPLATE_TYPES.NONE,
-        });
+        }));
       }
 
       if (model.type === MODEL_CAPABILITIES.IMAGE) {
-        for (const mode of model.imageModes ?? DEFAULT_IMAGE_MODES) {
+        const modes = operations.map((item) => item.modeKey as ImageGenerationMode);
+        for (const mode of modes) {
           const limits = getImageModeReferenceLimits(mode);
-          matrix.push({
-            ...base,
+          const operation = operations.find((item) => item.modeKey === serializeImageMode(mode));
+          if (!operation) continue;
+          matrix.push(createMatrixItem({
+            base,
             modeKey: serializeImageMode(mode),
             mode,
-            inputTypes: limits.image > 0 ? [MODEL_REFERENCE_FILE_TYPES.TEXT, MODEL_REFERENCE_FILE_TYPES.IMAGE] : [MODEL_REFERENCE_FILE_TYPES.TEXT],
-            outputType: MODEL_OUTPUT_TYPES.IMAGE,
-            durationOptions: [],
-            resolutionOptions: [],
-            aspectRatioOptions: model.aspectRatioOptions ?? DEFAULT_IMAGE_ASPECT_RATIOS,
-            audioSupport: MODEL_AUDIO_SUPPORTS.NONE,
+            operation,
             referenceLimits: limits,
             promptTemplateType: MODEL_PROMPT_TEMPLATE_TYPES.IMAGE,
-          });
+          }));
         }
       }
 
       if (model.type === MODEL_CAPABILITIES.VIDEO) {
-        for (const mode of model.videoModes ?? DEFAULT_VIDEO_MODES) {
-          matrix.push({
-            ...base,
-            modeKey: serializeVideoMode(mode),
+        const modes = operations.map((item) => parseVideoModeKey(item.modeKey) as VideoGenerationMode);
+        for (const mode of modes) {
+          const modeKey = serializeVideoMode(mode);
+          const operation = operations.find((item) => item.modeKey === modeKey);
+          if (!operation) continue;
+          matrix.push(createMatrixItem({
+            base,
+            modeKey,
             mode,
-            inputTypes: getVideoModeInputTypes(mode),
-            outputType: MODEL_OUTPUT_TYPES.VIDEO,
-            durationOptions: model.durationOptions ?? [...COMMON_VIDEO_DURATIONS],
-            resolutionOptions: model.resolutionOptions ?? [...COMMON_VIDEO_RESOLUTIONS],
-            aspectRatioOptions: model.aspectRatioOptions ?? DEFAULT_VIDEO_ASPECT_RATIOS,
-            audioSupport: model.audioSupport ?? MODEL_AUDIO_SUPPORTS.OPTIONAL,
+            operation,
             referenceLimits: getVideoModeReferenceLimits(mode),
             promptTemplateType: MODEL_PROMPT_TEMPLATE_TYPES.VIDEO,
-          });
+          }));
         }
       }
 
       if (model.type === MODEL_CAPABILITIES.TTS) {
-        matrix.push({
-          ...base,
+        const operation = operations.find((item) => item.modeKey === '');
+        if (!operation) continue;
+        matrix.push(createMatrixItem({
+          base,
           modeKey: '',
           mode: '',
-          inputTypes: [MODEL_REFERENCE_FILE_TYPES.TEXT],
-          outputType: MODEL_OUTPUT_TYPES.AUDIO,
-          durationOptions: [],
-          resolutionOptions: [],
-          aspectRatioOptions: [],
-          audioSupport: MODEL_AUDIO_SUPPORTS.NONE,
+          operation,
           referenceLimits: getEmptyReferenceLimits(),
           promptTemplateType: MODEL_PROMPT_TEMPLATE_TYPES.NONE,
-        });
+        }));
       }
     }
   }

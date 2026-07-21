@@ -1,4 +1,5 @@
 import { VT_STATUS } from '@shared/constants/status';
+import { PRODUCTION_TASK_STATUS } from '@shared/types/production';
 import type {
   ProductionFlowData,
   ProductionRunWorkflowActionPayload,
@@ -14,13 +15,13 @@ import { createError } from '../result';
 
 export interface ProductionWorkflowServices {
   getFlowData(payload: { projectId: number; contentId: number }): { flowData: ProductionFlowData };
+  getPendingResourceDraftCount(payload: { projectId: number; contentId: number }): number;
   runTool(payload: ProductionToolRunPayload): Promise<unknown> | unknown;
 }
 
 const WORKFLOW_STEPS: ProductionWorkflowStep[] = [
   'content',
   'resources',
-  'directorPlan',
   'storyboardTable',
   'storyboardImages',
   'videoWorkbench',
@@ -38,62 +39,60 @@ function hasContent(flowData: ProductionFlowData): boolean {
   return Boolean(flowData.contentBody.trim());
 }
 
-function buildStepState(step: ProductionWorkflowStep, flowData: ProductionFlowData): ProductionWorkflowStepState {
-  if (step === 'content') {
-    return hasContent(flowData)
-      ? { step, canRun: true, status: 'done', reason: null }
-      : { step, canRun: true, status: 'ready', reason: null };
-  }
+function buildWorkflowSteps(flowData: ProductionFlowData, pendingResourceDraftCount: number): ProductionWorkflowStepState[] {
+  const contentDone = hasContent(flowData);
+  const content: ProductionWorkflowStepState = contentDone
+    ? { step: 'content', canRun: true, status: 'done', reason: null }
+    : { step: 'content', canRun: true, status: 'ready', reason: null };
 
-  if (!hasContent(flowData)) {
-    return { step, canRun: false, status: 'blocked', reason: '缺少内容' };
-  }
+  const hasVisualResources = flowData.assets.some((asset) => asset.type === 'role' || asset.type === 'scene' || asset.type === 'tool');
+  const extractionFinished = flowData.content?.resourceStatus === PRODUCTION_TASK_STATUS.SUCCEEDED;
+  const resources: ProductionWorkflowStepState = !contentDone
+    ? { step: 'resources', canRun: false, status: 'blocked', reason: '缺少已保存内容' }
+    : pendingResourceDraftCount > 0
+      ? { step: 'resources', canRun: true, status: 'needsUpdate', reason: `还有 ${pendingResourceDraftCount} 条资源草稿未确认` }
+      : hasVisualResources || extractionFinished
+        ? { step: 'resources', canRun: true, status: 'done', reason: null }
+        : { step: 'resources', canRun: true, status: 'ready', reason: null };
 
-  if (step === 'resources') {
-    return flowData.assets.length > 0
-      ? { step, canRun: true, status: 'done', reason: null }
-      : { step, canRun: true, status: 'ready', reason: null };
-  }
+  const storyboardRowsComplete = flowData.storyboards.length > 0
+    && flowData.storyboards.every((storyboard) => Boolean(storyboard.videoDesc.trim()) && storyboard.duration > 0);
+  const storyboardTable: ProductionWorkflowStepState = resources.status !== 'done'
+    ? { step: 'storyboardTable', canRun: false, status: 'blocked', reason: '资源步骤尚未完成' }
+    : flowData.storyboards.length === 0
+      ? { step: 'storyboardTable', canRun: true, status: 'ready', reason: '请选择智能拆分、整篇作为一个分镜或手动新增分镜' }
+      : storyboardRowsComplete
+        ? { step: 'storyboardTable', canRun: true, status: 'done', reason: null }
+        : { step: 'storyboardTable', canRun: true, status: 'needsUpdate', reason: '存在不完整的分镜' };
 
-  if (step === 'directorPlan') {
-    return flowData.directorPlan?.trim()
-      ? { step, canRun: true, status: 'done', reason: null }
-      : { step, canRun: true, status: 'ready', reason: null };
-  }
+  const requiredStoryboards = flowData.storyboards.filter((storyboard) => storyboard.shouldGenerateImage);
+  const failedStoryboardImageCount = requiredStoryboards.filter((storyboard) => storyboard.imageStatus === PRODUCTION_TASK_STATUS.FAILED).length;
+  const missingStoryboardImageCount = requiredStoryboards.filter((storyboard) => !storyboard.imageUrl).length;
+  const storyboardImages: ProductionWorkflowStepState = storyboardTable.status !== 'done'
+    ? { step: 'storyboardImages', canRun: false, status: 'blocked', reason: '分镜步骤尚未完成' }
+    : requiredStoryboards.length === 0
+      ? { step: 'storyboardImages', canRun: true, status: 'done', reason: null }
+    : failedStoryboardImageCount > 0
+      ? { step: 'storyboardImages', canRun: true, status: 'needsUpdate', reason: `还有 ${failedStoryboardImageCount} 个分镜画面生成失败` }
+      : missingStoryboardImageCount > 0
+        ? { step: 'storyboardImages', canRun: true, status: 'ready', reason: `还有 ${missingStoryboardImageCount} 个分镜缺少正式画面` }
+        : { step: 'storyboardImages', canRun: true, status: 'done', reason: null };
 
-  if (step === 'storyboardTable') {
-    if (!flowData.directorPlan?.trim()) {
-      return { step, canRun: false, status: 'blocked', reason: '缺少导演计划' };
-    }
-    return flowData.storyboardTable.trim()
-      ? { step, canRun: true, status: 'done', reason: null }
-      : { step, canRun: true, status: 'ready', reason: null };
-  }
+  const allTracksSelected = flowData.videoTracks.length > 0 && flowData.videoTracks.every((track) => {
+    const selected = track.videos.find((video) => video.id === track.selectedVideoId);
+    return Boolean(selected?.videoUrl);
+  });
+  const videoWorkbench: ProductionWorkflowStepState = storyboardImages.status !== 'done'
+    ? { step: 'videoWorkbench', canRun: false, status: 'blocked', reason: '分镜画面尚未完成' }
+    : allTracksSelected
+      ? { step: 'videoWorkbench', canRun: true, status: 'done', reason: null }
+      : { step: 'videoWorkbench', canRun: true, status: 'ready', reason: '仍有视频片段未选择正式视频' };
 
-  if (step === 'storyboardImages') {
-    if (!flowData.storyboardTable.trim() && flowData.storyboards.length === 0) {
-      return { step, canRun: false, status: 'blocked', reason: '缺少分镜表' };
-    }
-    const missingImages = flowData.storyboards.some((storyboard) => storyboard.shouldGenerateImage && !storyboard.imageUrl);
-    return missingImages || flowData.storyboards.length === 0
-      ? { step, canRun: true, status: 'ready', reason: null }
-      : { step, canRun: true, status: 'done', reason: null };
-  }
+  const exportStep: ProductionWorkflowStepState = videoWorkbench.status !== 'done'
+    ? { step: 'export', canRun: false, status: 'blocked', reason: '视频步骤尚未完成' }
+    : { step: 'export', canRun: true, status: 'ready', reason: null };
 
-  if (step === 'videoWorkbench') {
-    if (flowData.storyboards.length === 0) {
-      return { step, canRun: false, status: 'blocked', reason: '缺少分镜图' };
-    }
-    const hasSelectedVideo = flowData.videoTracks.some((track) => track.selectedVideoId);
-    return hasSelectedVideo
-      ? { step, canRun: true, status: 'done', reason: null }
-      : { step, canRun: true, status: 'ready', reason: null };
-  }
-
-  const exportReady = flowData.videoTracks.length > 0 && flowData.videoTracks.every((track) => track.selectedVideoId);
-  return exportReady
-    ? { step, canRun: true, status: 'ready', reason: null }
-    : { step, canRun: false, status: 'blocked', reason: '缺少已选择的视频候选' };
+  return [content, resources, storyboardTable, storyboardImages, videoWorkbench, exportStep];
 }
 
 export class ProductionWorkflowOrchestrator {
@@ -101,8 +100,9 @@ export class ProductionWorkflowOrchestrator {
 
   getState(input: ProductionWorkflowStateInput): ProductionWorkflowStateResult {
     const flowData = this.services.getFlowData(input).flowData;
-    const steps = WORKFLOW_STEPS.map((step) => buildStepState(step, flowData));
-    const next = steps.find((step) => step.status === 'ready' && step.canRun) ?? steps[steps.length - 1]!;
+    const pendingResourceDraftCount = this.services.getPendingResourceDraftCount(input);
+    const steps = buildWorkflowSteps(flowData, pendingResourceDraftCount);
+    const next = steps.find((step) => step.status !== 'done' && step.canRun) ?? steps[steps.length - 1]!;
     return {
       state: {
         projectId: input.projectId,

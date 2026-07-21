@@ -10,7 +10,7 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
-import { CloseIcon, FolderOpenIcon, FullscreenIcon, GitBranchIcon, PlayCircleIcon, RefreshIcon, SaveIcon, UserTalkIcon } from 'tdesign-icons-vue-next';
+import { ArrowLeftIcon, CloseIcon, FolderOpenIcon, FullscreenIcon, GitBranchIcon, PlayCircleIcon, RefreshIcon, SaveIcon, UserTalkIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import VtButton from '@renderer/components/VtButton.vue';
 import VtDialog from '@renderer/components/VtDialog.vue';
@@ -904,6 +904,10 @@ function openExportCenter(): void {
   void router.push({ name: 'export' });
 }
 
+function backToProjects(): void {
+  void router.push({ name: 'projects' });
+}
+
 function openAgentPanel(): void {
   if (!currentProjectId.value || !currentContentId.value) {
     MessagePlugin.warning(t('production.noScript'));
@@ -917,7 +921,7 @@ function openAssetExtractDialog(): void {
     MessagePlugin.warning(t('production.noScript'));
     return;
   }
-  void router.push({ name: 'production-resources', query: { contentId: String(currentContentId.value) } });
+  void router.push({ name: 'production', query: { step: 'resources', contentId: String(currentContentId.value) } });
 }
 
 function openAssetsCenter(): void {
@@ -1422,13 +1426,17 @@ onUnmounted(() => {
   <div class="production-page !grid-rows-[minmax(0,1fr)] !gap-0">
     <section class="production-canvas-shell min-h-0">
       <div
-        v-if="hasFlowData"
-        class="absolute left-3 top-3 z-[8] flex min-w-[min(560px,calc(100%_-_24px))] max-w-[calc(100%_-_24px)] items-center gap-2 rounded-lg border border-line-soft p-2.5 shadow-[0_10px_26px_rgba(16,24,20,0.08)] backdrop-blur-xl [background:color-mix(in_srgb,var(--vt-surface-panel)_92%,transparent)] max-[960px]:right-3 max-[960px]:min-w-0 max-[960px]:flex-wrap">
-        <label class="grid w-[min(320px,34vw)] min-w-[180px] gap-1 max-[960px]:w-[min(300px,100%)]">
+        class="absolute left-3 top-3 z-[8] flex max-w-[calc(100%_-_24px)] items-center gap-2 rounded-lg border border-line-soft p-1.5 shadow-[0_10px_26px_rgba(16,24,20,0.08)] backdrop-blur-xl [background:color-mix(in_srgb,var(--vt-surface-panel)_92%,transparent)] max-[960px]:right-3 max-[960px]:min-w-0 max-[960px]:flex-wrap">
+        <t-tooltip :content="t('layout.backToProjects')">
+          <VtButton variant="outline" size="small" shape="square" icon-only :min-width="0" :aria-label="t('layout.backToProjects')" @click="backToProjects">
+            <template #icon><ArrowLeftIcon /></template>
+          </VtButton>
+        </t-tooltip>
+        <label v-if="hasFlowData" class="grid w-[min(320px,34vw)] min-w-[180px] gap-1 max-[960px]:w-[min(300px,100%)]">
           <span class="text-xs leading-[1.35] text-text-muted">{{ t('production.scriptSelect') }}</span>
           <t-select :model-value="currentContentId" :options="contentOptions" :placeholder="t('production.scriptPlaceholder')" :loading="loading" size="small" filterable @change="handleContentChange" />
         </label>
-        <span class="min-w-[180px] truncate text-xs leading-[1.35] text-text-muted max-[960px]:basis-full max-[960px]:min-w-0">{{ t('production.canvasStatsValue', canvasStats) }}</span>
+        <span v-if="hasFlowData" class="min-w-[180px] truncate text-xs leading-[1.35] text-text-muted max-[960px]:basis-full max-[960px]:min-w-0">{{ t('production.canvasStatsValue', canvasStats) }}</span>
       </div>
 
       <div class="absolute right-3 top-3 z-[8] flex max-w-[calc(100%_-_24px)] items-center gap-2 rounded-lg border border-line-soft p-1.5 shadow-[0_10px_26px_rgba(16,24,20,0.08)] backdrop-blur-xl [background:color-mix(in_srgb,var(--vt-surface-panel)_92%,transparent)] max-[960px]:bottom-3 max-[960px]:top-auto">

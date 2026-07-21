@@ -1,6 +1,7 @@
 import type { ImageGenerationMode, ProjectImageQuality, ProjectVideoRatio, VideoGenerationMode } from '../constants/dictionaries';
 import type { ModelAudioSupport, ReasoningEffort, TextReasoningCapability } from '../constants/model-capabilities';
 import type { ModelCapabilityMatrixItem } from './model-capability';
+import type { ModelOperationCapability } from './model-capability';
 import type { VendorModelType } from './vendor';
 
 export type ModelCapability = VendorModelType;
@@ -38,8 +39,13 @@ export interface RegisteredModel {
   videoModes?: VideoGenerationMode[];
   durationOptions?: number[];
   resolutionOptions?: string[];
+  durationResolutionMap?: Array<{
+    duration: number[];
+    resolution: string[];
+  }>;
   aspectRatioOptions?: string[];
   audioSupport?: ModelAudioSupport;
+  operations?: ModelOperationCapability[];
   voices?: Array<{
     title: string;
     voice: string;

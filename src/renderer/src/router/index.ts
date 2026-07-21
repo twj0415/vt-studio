@@ -11,7 +11,7 @@ import SettingsHome from '@renderer/features/settings/SettingsHome.vue';
 import NovelHome from '@renderer/features/novel/index.vue';
 import CornerScapeHome from '@renderer/features/corner-scape/CornerScapeHome.vue';
 import ProductionHome from '@renderer/features/production/ProductionHome.vue';
-import ProductionResourceWorkbench from '@renderer/features/production/ProductionResourceWorkbench.vue';
+import ProductionStepFlowHome from '@renderer/features/production/ProductionStepFlowHome.vue';
 import AssetsHome from '@renderer/features/assets/AssetsHome.vue';
 import ExportHome from '@renderer/features/export/ExportHome.vue';
 import { useAppStore } from '@renderer/stores/app';
@@ -89,12 +89,6 @@ const routes: RouteRecordRaw[] = [
         meta: { titleKey: 'route.corner-scape', requiresProject: true, navMode: 'project' },
       },
       {
-        path: 'production/resources',
-        name: 'production-resources',
-        component: ProductionResourceWorkbench,
-        meta: { titleKey: 'route.productionResources', requiresProject: true, navMode: 'project' },
-      },
-      {
         path: 'assets',
         name: 'assets',
         component: AssetsHome,
@@ -111,13 +105,34 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/production',
     component: ProductionCanvasLayout,
+    redirect: { name: 'production' },
     meta: { requiresAuth: true },
     children: [
       {
         path: '',
+        redirect: { name: 'production' },
+      },
+      {
+        path: 'workbench',
         name: 'production',
-        component: ProductionHome,
+        component: ProductionStepFlowHome,
         meta: { titleKey: 'route.production', requiresProject: true },
+      },
+      {
+        path: 'resources',
+        redirect: (to) => ({ name: 'production', query: { ...to.query, step: 'resources' } }),
+      },
+      {
+        path: 'workbench/resources',
+        name: 'production-resources',
+        redirect: (to) => ({ name: 'production', query: { ...to.query, step: 'resources' } }),
+        meta: { titleKey: 'route.productionResources', requiresProject: true },
+      },
+      {
+        path: 'canvas',
+        name: 'production-canvas',
+        component: ProductionHome,
+        meta: { titleKey: 'route.productionCanvas', requiresProject: true },
       },
     ],
   },

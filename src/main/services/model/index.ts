@@ -14,6 +14,7 @@ export {
 export { getAgentModelDetail, getEnabledModelList, getModelDetail, resolveModelKey, splitModelId } from './resolver';
 export { createModelRequestId } from './gateway';
 export { invokeText, streamModelText } from './text';
+export { collectJsonCandidates, invokeStructuredResult, type StructuredResultDiagnostics } from './structured';
 export { generateAudioByModel, generateImageByModel, generateVideoByModel } from './media';
 export { testImageModel, testTextModel, testVideoModel } from './test';
 export type {
@@ -33,4 +34,5 @@ export type {
   VendorModelConfig,
   VendorRecord,
   VideoGenerateInput,
+  VideoModelConfig,
 } from './types';

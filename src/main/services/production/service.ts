@@ -3,16 +3,18 @@ import { extname } from 'node:path';
 import type Database from 'better-sqlite3';
 import {
   ASSET_TYPE_VALUES,
-  COMMON_VIDEO_RESOLUTIONS,
   DEPENDENCY_STATUSES,
   PROJECT_IMAGE_QUALITY_VALUES,
   PROJECT_TEMPLATE_TYPES,
   PROJECT_VIDEO_RATIOS,
   SCRIPT_EXTRACT_STATUSES,
+  type ProjectImageQuality,
 } from '@shared/constants/dictionaries';
-import { parseVideoModeKey, serializeVideoMode } from '@shared/constants/model-capabilities';
+import { MODEL_AUDIO_SUPPORTS, parseVideoModeKey, serializeVideoMode } from '@shared/constants/model-capabilities';
+import { validateModelOperationReferences, validateModelOperationSelection } from '@shared/model-capability-options';
 import { VT_STATUS } from '@shared/constants/status';
 import { normalizeUnknownError } from '@shared/errors';
+import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
 import { ASSET_IMAGE_USAGES, ASSET_IMAGE_VIEW_MODES, type AssetTaskStatus, type AssetType } from '@shared/types/assets';
 import {
   PRODUCTION_IMAGE_FLOW_OWNER_TYPES,
@@ -92,12 +94,16 @@ import {
   type ProductionSaveStoryboardTablePayload,
   type ProductionSelectVideoPayload,
   type ProductionSelectVideoResult,
+  type ProductionSmartSplitStoryboardsPayload,
+  type ProductionSmartSplitStoryboardsResult,
   type ProductionContentOption,
   type ProductionStoryboardDeletePayload,
   type ProductionStoryboardItem,
   type ProductionStoryboardPollResult,
   type ProductionStoryboardSavePayload,
   type ProductionStoryboardSaveResult,
+  type ProductionStepRuleReference,
+  type ProductionStepRuleReferences,
   type ProductionTaskStatus,
   type ProductionVideoDeletePayload,
   type ProductionVideoItem,
@@ -119,17 +125,19 @@ import { getDatabase, withTransaction } from '../database';
 import { getRuntimeDirectories, readManagedFile, writeManagedFile } from '../file-system';
 import { logger } from '../logger';
 import { createMediaUrl, createThumbnailMediaUrl, resolveMediaUrlToPath } from '../media';
-import { createModelRequestId, generateImageByModel, generateVideoByModel, invokeText, type ReferenceItem, type VideoGenerateInput } from '../model';
+import { createModelRequestId, generateImageByModel, generateVideoByModel, invokeStructuredResult, invokeText, type ReferenceItem, type StructuredResultDiagnostics, type VideoGenerateInput } from '../model';
+import { resolveImageGenerationRequestOptions } from '../model-runtime';
 import { createError } from '../result';
 import { createGenerationSnapshot, createPromptTemplateSnapshot } from '../generation/snapshot';
 import { formatManualPromptSection, readManualPromptBundle, toManualPromptSnapshot, type ManualPromptBundle, type ManualPromptSnapshot } from '../project/manual-prompt';
 import { getBusinessSettings } from '../settings/business-settings';
+import { getReadyModelOperationCapability } from '../settings/model-config';
 import { resolveModelPromptTemplate } from '../settings/model-prompt';
 import { getEffectivePromptByType } from '../settings/prompt';
 import { extractContentResources } from '../script';
 import { stripThink } from '../socket/stripThink';
 import { failTask, isTaskCancelled, succeedTask } from '../task';
-import { createProductionTask } from '../task/production';
+import { createProductionTask, recordProductionModelDiagnostics } from '../task/production';
 import { createJianyingDraft, validateExportAssets } from '../export';
 import {
   DEPENDENCY_REASON,
@@ -147,13 +155,12 @@ import { createProductionToolRegistry, listProductionToolDescriptors, type Produ
 import { ProductionWorkflowOrchestrator } from './workflow-orchestrator';
 
 const STORYBOARD_IMAGE_CATEGORY = '生成分镜图';
+const STORYBOARD_SPLIT_CATEGORY = '智能拆分分镜';
 const DERIVED_ASSET_IMAGE_CATEGORY = '生成资源图';
 const VIDEO_PROMPT_CATEGORY = '生成视频提示词';
 const VIDEO_CATEGORY = '生成视频';
 const CONTENT_RESOURCE_EXTRACT_STATUS = SCRIPT_EXTRACT_STATUSES;
 const SECRET_REPLACEMENT = '[hidden]';
-const DEFAULT_VIDEO_RESOLUTION = COMMON_VIDEO_RESOLUTIONS[0];
-
 const GENERATED_MEDIA_EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
@@ -196,10 +203,14 @@ interface ProjectRow {
   video_mode: string;
   video_ratio: string;
   image_model_id: string;
-  image_quality: string;
+  image_quality: ProjectImageQuality;
   visual_manual_id: number;
   director_manual_id: number;
 }
+
+type ProjectDatabaseRow = Omit<ProjectRow, 'image_quality'> & {
+  image_quality: string;
+};
 
 interface ScriptRow {
   id: number;
@@ -372,6 +383,18 @@ interface ProductionManualSnapshots {
   director: ManualPromptSnapshot;
 }
 
+interface SmartSplitStoryboardDraft {
+  videoDesc: string;
+  prompt: string;
+  duration: number;
+  associatedAssetIds: number[];
+  shouldGenerateImage: boolean;
+}
+
+interface SmartSplitStoryboardOutput {
+  storyboards: SmartSplitStoryboardDraft[];
+}
+
 function tableExists(tableName: string): boolean {
   const row = getDatabase()
     .prepare<[string], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
@@ -468,10 +491,18 @@ function normalizeDuration(value: number | null | undefined): number {
   return duration;
 }
 
+function assertProjectImageQuality(value: string): ProjectImageQuality {
+  if (PROJECT_IMAGE_QUALITY_VALUES.includes(value as ProjectImageQuality)) {
+    return value as ProjectImageQuality;
+  }
+
+  throw createError(VT_STATUS.INVALID_PARAMS, `项目图片规格无效：${value}`);
+}
+
 function assertProject(projectId: number): ProjectRow {
   const id = normalizeProjectId(projectId);
   const row = getDatabase()
-    .prepare<[number], ProjectRow>(
+    .prepare<[number], ProjectDatabaseRow>(
       `
       SELECT id, name, genre, description, video_model_id, video_mode, video_ratio, image_model_id, image_quality, visual_manual_id, director_manual_id
       FROM projects
@@ -484,7 +515,10 @@ function assertProject(projectId: number): ProjectRow {
     throw createError(VT_STATUS.NOT_FOUND, '项目不存在');
   }
 
-  return row;
+  return {
+    ...row,
+    image_quality: assertProjectImageQuality(row.image_quality),
+  };
 }
 
 function assertScript(projectId: number, scriptId: number): ScriptRow {
@@ -750,6 +784,7 @@ export function getProductionAgentAiTools(payload: ProductionContentScopedPayloa
 function createWorkflowOrchestrator(): ProductionWorkflowOrchestrator {
   return new ProductionWorkflowOrchestrator({
     getFlowData: getProductionFlowData,
+    getPendingResourceDraftCount: ({ projectId, contentId }) => listProductionResourceDraftRows(projectId, contentId).length,
     runTool: (payload) => runProductionTool(payload),
   });
 }
@@ -985,12 +1020,11 @@ function formatAssetType(type: string): string {
 function buildVideoPromptInput(project: ProjectRow, script: ScriptRow, track: VideoTrackRow, modelName: string, modeKey: string): string {
   const storyboardIds = listStoryboardIdsByTrack(track.id);
   const storyboards = storyboardIds.map((storyboardId) => getStoryboardRow(project.id, script.id, storyboardId));
-  if (storyboards.length === 0 && !normalizeOptionalText(track.prompt)) {
-    throw createError(VT_STATUS.INVALID_PARAMS, '视频轨道没有关联分镜，无法生成提示词');
-  }
-
   const assetIdsByStoryboard = getStoryboardAssetIds(storyboardIds);
-  const allAssetIds = Array.from(new Set([...assetIdsByStoryboard.values()].flat()));
+  const directContentAssetIds = storyboards.length === 0
+    ? listProductionAssets(project.id, script.id).flatMap((asset) => [asset.id, ...asset.children.map((child) => child.id)])
+    : [];
+  const allAssetIds = Array.from(new Set([...assetIdsByStoryboard.values()].flat().concat(directContentAssetIds)));
   const assetRows = getAssetRowsByIds(project.id, allAssetIds);
   const assetMap = new Map(assetRows.map((asset) => [asset.id, asset]));
   const assetText = assetRows
@@ -1021,6 +1055,7 @@ function buildVideoPromptInput(project: ProjectRow, script: ScriptRow, track: Vi
     `视频模式：${modeKey || 'text'}`,
     `轨道 ID：${track.id}`,
     `轨道时长：${track.duration} 秒`,
+    `生成范围：${storyboards.length > 0 ? '按关联分镜生成视频片段' : '兼容旧数据：根据整篇作品内容生成单条视频'}`,
     `当前轨道提示词：${track.prompt || '无'}`,
     '',
     '关联资产信息：',
@@ -1033,8 +1068,12 @@ function buildVideoPromptInput(project: ProjectRow, script: ScriptRow, track: Vi
   ].join('\n');
 }
 
-function resolveVideoPromptSystem(project: ProjectRow, modeKey: string): { system: string; promptTemplate: ReturnType<typeof createPromptTemplateSnapshot> } {
-  const modelId = normalizeRequiredText(project.video_model_id, '视频模型');
+function resolveVideoPromptSystem(
+  project: ProjectRow,
+  modeKey: string,
+  targetModelId: string = project.video_model_id,
+): { system: string; promptTemplate: ReturnType<typeof createPromptTemplateSnapshot> } {
+  const modelId = normalizeRequiredText(targetModelId, '视频模型');
   const resolved = resolveModelPromptTemplate({
     modelId,
     modelType: 'video',
@@ -1091,15 +1130,66 @@ function defaultExtensionForKind(kind: 'image' | 'video' | 'audio'): string {
   return GENERATED_MEDIA_EXTENSIONS[defaultMimeForKind(kind)] ?? 'bin';
 }
 
-function imageQualityForModel(value: string): '1K' | '2K' | '4K' {
-  if (PROJECT_IMAGE_QUALITY_VALUES.includes(value as '1K' | '2K' | '4K')) {
-    return value as '1K' | '2K' | '4K';
-  }
-  return '1K';
+function aspectRatioForModel(value: string): VideoGenerateInput['aspectRatio'] {
+  if (value === PROJECT_VIDEO_RATIOS.PORTRAIT || value === PROJECT_VIDEO_RATIOS.LANDSCAPE) return value;
+  throw createError(VT_STATUS.INVALID_PARAMS, `视频比例无效：${value}`);
 }
 
-function aspectRatioForModel(value: string): VideoGenerateInput['aspectRatio'] {
-  return value === PROJECT_VIDEO_RATIOS.PORTRAIT ? PROJECT_VIDEO_RATIOS.PORTRAIT : PROJECT_VIDEO_RATIOS.LANDSCAPE;
+function getProductionVideoOperation(model: string, mode: ProductionVideoModeValue | null): ModelCapabilityMatrixItem {
+  const modeKey = serializeVideoMode(mode ?? '');
+  if (!modeKey) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '请选择视频生成模式');
+  }
+
+  try {
+    return getReadyModelOperationCapability(model, modeKey, 'video');
+  } catch (error) {
+    throw createError(VT_STATUS.MODEL_NOT_FOUND, error instanceof Error ? error.message : '视频模型操作不可用');
+  }
+}
+
+function getVideoOperationAspectRatio(capability: ModelCapabilityMatrixItem, projectRatio: string): VideoGenerateInput['aspectRatio'] | undefined {
+  return capability.aspectRatioOptions.length > 0 ? aspectRatioForModel(projectRatio) : undefined;
+}
+
+function resolveVideoOperationAudio(capability: ModelCapabilityMatrixItem, requested: boolean | undefined): boolean {
+  if (capability.audioSupport === MODEL_AUDIO_SUPPORTS.REQUIRED) return true;
+  if (capability.audioSupport === MODEL_AUDIO_SUPPORTS.NONE) return false;
+  return Boolean(requested);
+}
+
+function countProductionReferenceTypes(references: ProductionReferenceInput[]): Partial<Record<'text' | 'image' | 'video' | 'audio', number>> {
+  return references.reduce<Partial<Record<'text' | 'image' | 'video' | 'audio', number>>>((counts, reference) => {
+    if (reference.id || reference.url || reference.prompt) {
+      counts[reference.fileType] = (counts[reference.fileType] ?? 0) + 1;
+    }
+    return counts;
+  }, {});
+}
+
+function operationSupportsReferenceType(capability: ModelCapabilityMatrixItem, type: 'image' | 'video' | 'audio'): boolean {
+  return capability.referenceConstraints.some((constraint) => constraint.type === type && constraint.max > 0);
+}
+
+function assertProductionVideoOperation(input: {
+  capability: ModelCapabilityMatrixItem;
+  duration: number;
+  resolution: string;
+  projectRatio: string;
+  audioEnabled: boolean;
+  references: ProductionReferenceInput[];
+}): void {
+  try {
+    validateModelOperationSelection(input.capability, {
+      duration: input.duration,
+      resolution: input.resolution,
+      aspectRatio: input.capability.aspectRatioOptions.length > 0 ? input.projectRatio : undefined,
+      audio: input.audioEnabled,
+    });
+    validateModelOperationReferences(input.capability, countProductionReferenceTypes(input.references));
+  } catch (error) {
+    throw createError(VT_STATUS.INVALID_PARAMS, error instanceof Error ? error.message : '视频模型参数无效');
+  }
 }
 
 function decodeGeneratedMedia(content: string, kind: 'image' | 'video' | 'audio'): { buffer: Buffer; extension: string } {
@@ -2505,15 +2595,17 @@ function listVideosForTracks(trackIds: number[]): Map<number, ProductionVideoIte
 
   const placeholders = trackIds.map(() => '?').join(', ');
   const rows = getDatabase()
-    .prepare<Array<number>, VideoRow>(
+    .prepare<Array<number | string>, VideoRow>(
       `
       SELECT *
       FROM production_videos
       WHERE track_id IN (${placeholders})
+        AND status = ?
+        AND relative_path IS NOT NULL
       ORDER BY created_at DESC, id DESC
       `,
     )
-    .all(...trackIds);
+    .all(...trackIds, PRODUCTION_TASK_STATUS.SUCCEEDED);
 
   for (const row of rows) {
     const list = result.get(row.track_id) ?? [];
@@ -2723,6 +2815,96 @@ export function getProductionAgentTools(): ProductionAgentToolsResult {
   };
 }
 
+function createManualRuleReference(key: string, bundle: ManualPromptBundle): ProductionStepRuleReference {
+  return {
+    key,
+    source: 'manual',
+    name: bundle.manualName,
+    content: bundle.content,
+    manualKind: bundle.kind,
+    manualKeys: bundle.keys,
+  };
+}
+
+function createPromptRuleReference(
+  key: string,
+  prompt: { name: string; content: string; type: string },
+  modelId?: string,
+): ProductionStepRuleReference {
+  return {
+    key,
+    source: 'prompt',
+    name: prompt.name,
+    content: prompt.content,
+    promptType: prompt.type,
+    ...(modelId ? { modelId } : {}),
+  };
+}
+
+function buildProductionStepRules(
+  project: ProjectRow,
+  script: ScriptRow,
+  resourceContext: ReturnType<typeof getProductionResourceContext>,
+  skillBundle: ReturnType<typeof getProductionSkillBundle>,
+): ProductionStepRuleReferences {
+  const extractionPrompts = resourceContext.promptTemplates
+    .filter((prompt) => prompt.type === 'scriptAssetExtraction')
+    .map((prompt) => createPromptRuleReference(`prompt-${prompt.id}`, prompt));
+  const resourceManuals: ProductionStepRuleReference[] = [];
+  const assetManualUsages = new Map<string, { type: 'role' | 'scene' | 'tool'; isDerivative: boolean }>();
+  listProductionAssets(script.project_id, script.id)
+    .flatMap((asset) => [asset, ...asset.children])
+    .forEach((asset) => {
+      if (asset.type !== 'role' && asset.type !== 'scene' && asset.type !== 'tool') return;
+      const isDerivative = asset.parentId !== null;
+      assetManualUsages.set(`${asset.type}:${isDerivative}`, { type: asset.type, isDerivative });
+    });
+  const assetManualKeys = {
+    role: { parent: 'character', derivative: 'characterDerivative' },
+    scene: { parent: 'scene', derivative: 'sceneDerivative' },
+    tool: { parent: 'prop', derivative: 'propDerivative' },
+  } as const;
+  assetManualUsages.forEach(({ type, isDerivative }, usageKey) => {
+    const targetKey = isDerivative ? assetManualKeys[type].derivative : assetManualKeys[type].parent;
+    const bundle = readManualPromptBundle('visual', project.visual_manual_id, ['prefix', targetKey]);
+    resourceManuals.push(createManualRuleReference(`manual-resource-${usageKey}`, bundle));
+  });
+
+  const storyboardManuals = readProductionStoryboardManuals(project);
+  const videoManuals = readProductionVideoManuals(project);
+  const splitSkill = skillBundle.skills.find((skill) => skill.name === 'production_execution_storyboard_split'
+    || skill.content.includes('# 通用分镜拆分'));
+  const splitRules: ProductionStepRuleReference[] = splitSkill ? [{
+    key: `skill-${splitSkill.name}`,
+    source: 'skill',
+    name: splitSkill.name,
+    description: splitSkill.description,
+    content: splitSkill.content,
+  }] : [];
+
+  const videoPromptRules: ProductionStepRuleReference[] = [];
+
+  return {
+    content: [],
+    resources: [...extractionPrompts, ...resourceManuals],
+    storyboardTable: [
+      ...splitRules,
+      createManualRuleReference('manual-storyboard-table-visual', storyboardManuals.visual),
+      createManualRuleReference('manual-storyboard-table-director', storyboardManuals.director),
+    ],
+    storyboardImages: [
+      createManualRuleReference('manual-storyboard-image-visual', storyboardManuals.visual),
+      createManualRuleReference('manual-storyboard-image-director', storyboardManuals.director),
+    ],
+    videoWorkbench: [
+      ...videoPromptRules,
+      createManualRuleReference('manual-video-visual', videoManuals.visual),
+      createManualRuleReference('manual-video-director', videoManuals.director),
+    ],
+    export: [],
+  };
+}
+
 export function getProductionAgentContext(payload: ProductionContentScopedPayload): ProductionAgentContextResult {
   const { script, project } = assertProductionContext(payload);
   const workspace = getProductionWorkspace({ projectId: script.project_id, contentId: script.id });
@@ -2735,13 +2917,15 @@ export function getProductionAgentContext(payload: ProductionContentScopedPayloa
     projectId: script.project_id,
     templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA,
   };
+  const resourceContext = getProductionResourceContext(resourceContextPayload);
+  const skillBundle = getProductionSkillBundle(resourceContextPayload);
   return {
     projectId: script.project_id,
     contentId: script.id,
     contentTitle: workspace.flowData.content?.title ?? script.name,
     flowData: workspace.flowData,
-    resourceContext: getProductionResourceContext(resourceContextPayload),
-    skillBundle: getProductionSkillBundle(resourceContextPayload),
+    resourceContext,
+    skillBundle,
     manuals: {
       visual: {
         ...toManualPromptSnapshot(manuals.visual),
@@ -2752,6 +2936,7 @@ export function getProductionAgentContext(payload: ProductionContentScopedPayloa
         content: manuals.director.content,
       },
     },
+    stepRules: buildProductionStepRules(project, script, resourceContext, skillBundle),
     ...tools,
   };
 }
@@ -2859,6 +3044,321 @@ export function applyProductionAgentWorkspacePatch(payload: ProductionAgentWorks
     patches: patches.map((patch) => ({ field: patch.field })),
     flowData: loadFlowData(script.project_id, script.id),
   };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readSmartSplitItems(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (!isPlainRecord(value)) {
+    return [];
+  }
+
+  const candidate = value.storyboards ?? value.items ?? value.shots ?? value.segments;
+  return Array.isArray(candidate) ? candidate : [];
+}
+
+function readSmartSplitText(item: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = item[key];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const text = normalizeOptionalText(String(value));
+    if (text) {
+      return text;
+    }
+  }
+
+  return '';
+}
+
+function readSmartSplitAssetIds(value: unknown): number[] {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[,\s，、]+/).filter(Boolean)
+      : [];
+
+  return Array.from(new Set(rawItems
+    .map((item) => (isPlainRecord(item) ? Number(item.id ?? item.assetId) : Number(item)))
+    .filter((assetId) => Number.isInteger(assetId) && assetId > 0)));
+}
+
+function readSmartSplitBoolean(item: Record<string, unknown>, keys: string[], fallback: boolean): boolean {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+      if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+    }
+  }
+
+  return fallback;
+}
+
+function coerceSmartSplitOutput(value: unknown, validAssetIds: Set<number>): SmartSplitStoryboardOutput | null {
+  const rawItems = readSmartSplitItems(value);
+  if (rawItems.length === 0 || rawItems.length > 100) {
+    return null;
+  }
+
+  const storyboards: SmartSplitStoryboardDraft[] = [];
+  for (const item of rawItems) {
+    if (!isPlainRecord(item)) {
+      return null;
+    }
+    const videoDesc = readSmartSplitText(item, ['videoDesc', 'visualDesc', 'description', 'desc', 'shotDesc', 'content']);
+    if (!videoDesc) {
+      return null;
+    }
+    const prompt = readSmartSplitText(item, ['prompt', 'imagePrompt', 'visualPrompt']) || videoDesc;
+    let duration = 4;
+    try {
+      duration = normalizeDuration(Number(item.duration ?? item.durationSeconds ?? item.seconds ?? 4));
+    } catch {
+      return null;
+    }
+    const associatedAssetIds = readSmartSplitAssetIds(
+      item.associatedAssetIds ?? item.associateAssetIds ?? item.associateAssetsIds ?? item.assetIds ?? item.resourceIds,
+    );
+    if (associatedAssetIds.some((assetId) => !validAssetIds.has(assetId))) {
+      return null;
+    }
+    storyboards.push({
+      videoDesc,
+      prompt,
+      duration,
+      associatedAssetIds,
+      shouldGenerateImage: readSmartSplitBoolean(item, ['shouldGenerateImage', 'generateImage', 'needImage'], true),
+    });
+  }
+
+  return { storyboards };
+}
+
+function summarizeSmartSplitOutput(output: SmartSplitStoryboardOutput | null): Record<string, unknown> {
+  return {
+    hasOutput: Boolean(output),
+    storyboardCount: output?.storyboards.length ?? 0,
+    linkedAssetCount: output?.storyboards.reduce((count, item) => count + item.associatedAssetIds.length, 0) ?? 0,
+  };
+}
+
+function toJsonSafeDiagnosticValue(value: unknown): unknown {
+  if (value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value)) as unknown;
+  } catch {
+    return String(value);
+  }
+}
+
+function toStructuredDiagnosticsSnapshot(diagnostics: StructuredResultDiagnostics): Record<string, unknown> {
+  return {
+    requestId: diagnostics.requestId,
+    fallbackRequestId: diagnostics.fallbackRequestId ?? null,
+    modelKey: diagnostics.modelKey,
+    status: diagnostics.status,
+    source: diagnostics.source,
+    usedJsonFallback: diagnostics.usedJsonFallback,
+    parsed: diagnostics.parsed ?? null,
+    recordedAt: diagnostics.recordedAt,
+    attempts: diagnostics.attempts.map((attempt) => ({
+      stage: attempt.stage,
+      requestId: attempt.requestId,
+      source: attempt.source,
+      hasToolResult: attempt.hasToolResult,
+      hasText: attempt.hasText,
+      rawText: clampText(attempt.rawText ?? '', 4000),
+      finishReason: toJsonSafeDiagnosticValue(attempt.finishReason),
+      usage: toJsonSafeDiagnosticValue(attempt.usage),
+      warnings: toJsonSafeDiagnosticValue(attempt.warnings),
+    })),
+  };
+}
+
+function clearProductionSegments(database: Database.Database, projectId: number, scriptId: number): void {
+  const storyboardRows = database
+    .prepare<[number, number], { id: number }>('SELECT id FROM production_storyboards WHERE project_id = ? AND script_id = ?')
+    .all(projectId, scriptId);
+  if (storyboardRows.length > 0) {
+    const storyboardIds = storyboardRows.map((row) => row.id);
+    const placeholders = storyboardIds.map(() => '?').join(', ');
+    database.prepare<Array<number>>(`DELETE FROM production_storyboard_asset_links WHERE storyboard_id IN (${placeholders})`).run(...storyboardIds);
+    database.prepare<Array<number>>(`DELETE FROM production_image_flows WHERE owner_type = 'storyboard' AND owner_id IN (${placeholders})`).run(...storyboardIds);
+  }
+  database.prepare<[number, number]>('DELETE FROM production_videos WHERE project_id = ? AND script_id = ?').run(projectId, scriptId);
+  database.prepare<[number, number]>('UPDATE production_storyboards SET track_id = NULL WHERE project_id = ? AND script_id = ?').run(projectId, scriptId);
+  database.prepare<[number, number]>('DELETE FROM production_video_tracks WHERE project_id = ? AND script_id = ?').run(projectId, scriptId);
+  database.prepare<[number, number]>('DELETE FROM production_storyboards WHERE project_id = ? AND script_id = ?').run(projectId, scriptId);
+}
+
+export async function smartSplitProductionStoryboards(payload: ProductionSmartSplitStoryboardsPayload): Promise<ProductionSmartSplitStoryboardsResult> {
+  const { script, project } = assertProductionContext(payload);
+  const existingStoryboards = listStoryboards(script.project_id, script.id);
+  const existingTracks = listVideoTracks(script.project_id, script.id);
+  if ((existingStoryboards.length > 0 || existingTracks.length > 0) && !payload.replaceExisting) {
+    throw createError(VT_STATUS.CONFLICT, '当前作品已有分镜或视频片段，重新拆分前需要确认替换');
+  }
+
+  const assets = listProductionAssets(script.project_id, script.id).flatMap((asset) => [asset, ...asset.children]);
+  const validAssetIds = new Set(assets.map((asset) => asset.id));
+  const skillBundle = getProductionSkillBundle({ projectId: script.project_id, templateType: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA });
+  const splitSkill = skillBundle.skills.find((skill) => skill.name === 'production_execution_storyboard_split'
+    || skill.content.includes('# 通用分镜拆分'));
+  if (!splitSkill) {
+    throw createError(VT_STATUS.FILE_NOT_FOUND, '通用分镜拆分规则不存在');
+  }
+
+  const manuals = readProductionStoryboardManuals(project);
+  const userPrompt = [
+    `项目名称：${project.name}`,
+    `内容类型：${project.genre || '通用视频'}`,
+    `作品名称：${script.name}`,
+    '',
+    '可引用资产：',
+    JSON.stringify(assets.map((asset) => ({ id: asset.id, type: asset.type, name: asset.name, description: asset.description }))),
+    '',
+    '作品内容：',
+    script.content,
+  ].join('\n');
+  const system = [
+    splitSkill.content,
+    '',
+    formatProductionManuals('当前项目手册规范', manuals),
+  ].join('\n');
+  const task = createProductionTask({
+    projectId: script.project_id,
+    category: STORYBOARD_SPLIT_CATEGORY,
+    relatedObjects: {
+      contentId: script.id,
+      rule: splitSkill.name,
+      manuals: toProductionManualSnapshots(manuals),
+    },
+    modelName: 'productionAgent:storyboardTableAgent',
+    description: `智能拆分作品《${script.name}》`,
+  });
+
+  try {
+    const requestId = createModelRequestId();
+    const structured = await invokeStructuredResult<SmartSplitStoryboardOutput>({
+      requestId,
+      modelKey: 'productionAgent:storyboardTableAgent',
+      system,
+      messages: [{ role: 'user', content: userPrompt }],
+      toolDescription: '返回按顺序生成的视频分镜列表。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          storyboards: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 100,
+            items: {
+              type: 'object',
+              properties: {
+                videoDesc: { type: 'string' },
+                prompt: { type: 'string' },
+                duration: { type: 'number', minimum: 1, maximum: 600 },
+                associatedAssetIds: { type: 'array', items: { type: 'number' } },
+                shouldGenerateImage: { type: 'boolean' },
+              },
+              required: ['videoDesc', 'prompt', 'duration', 'associatedAssetIds', 'shouldGenerateImage'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['storyboards'],
+        additionalProperties: false,
+      },
+      jsonFallbackExample: '{"storyboards":[{"videoDesc":"","prompt":"","duration":6,"associatedAssetIds":[],"shouldGenerateImage":true}]}',
+      coerce: (value) => coerceSmartSplitOutput(value, validAssetIds),
+      diagnosticSummary: summarizeSmartSplitOutput,
+    });
+    const modelDiagnostics = toStructuredDiagnosticsSnapshot(structured.diagnostics);
+    recordProductionModelDiagnostics({
+      taskId: task.taskId,
+      relatedObjects: {
+        contentId: script.id,
+        rule: splitSkill.name,
+        manuals: toProductionManualSnapshots(manuals),
+      },
+      modelDiagnostics,
+    });
+
+    const output = structured.output;
+    if (!output) {
+      throw createError(VT_STATUS.MODEL_ERROR, '模型没有返回可用的结构化分镜，已尝试工具结果和 JSON 兜底。');
+    }
+
+    const now = Date.now();
+    const generationMetadata = serializeJson(createGenerationSnapshot({
+      source: 'production.smartSplitStoryboards',
+      model: 'productionAgent:storyboardTableAgent',
+      taskId: task.taskId,
+      requestId,
+      userPrompt,
+      finalPrompt: JSON.stringify(output),
+      manuals,
+      references: { assetIds: [...validAssetIds] },
+      extra: { rule: splitSkill.name, contentId: script.id, modelDiagnostics },
+    }), '{}');
+
+    withTransaction((database) => {
+      if (existingStoryboards.length > 0 || existingTracks.length > 0) {
+        clearProductionSegments(database, script.project_id, script.id);
+      }
+      const insert = database.prepare<[number, number, number, string, string, number, number, ProductionTaskStatus, string, number, number]>(
+        `
+        INSERT INTO production_storyboards (
+          project_id, script_id, sort_index, prompt, video_desc, duration,
+          should_generate_image, image_status, generation_metadata, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      );
+      output.storyboards.forEach((storyboard, index) => {
+        const result = insert.run(
+          script.project_id,
+          script.id,
+          index,
+          storyboard.prompt,
+          storyboard.videoDesc,
+          storyboard.duration,
+          storyboard.shouldGenerateImage ? 1 : 0,
+          PRODUCTION_TASK_STATUS.IDLE,
+          generationMetadata,
+          now,
+          now,
+        );
+        syncStoryboardAssetLinks(database, Number(result.lastInsertRowid), storyboard.associatedAssetIds, now);
+      });
+      ensureWorkspace(script.project_id, script.id);
+      database
+        .prepare<[string, number, number, number]>(
+          'UPDATE production_workspaces SET storyboard_table = ?, updated_at = ? WHERE project_id = ? AND script_id = ?',
+        )
+        .run(JSON.stringify(output), now, script.project_id, script.id);
+    });
+    safeSucceedTask(task.taskId);
+    return {
+      generatedCount: output.storyboards.length,
+      storyboards: listStoryboards(script.project_id, script.id),
+    };
+  } catch (error) {
+    safeFailTask(task.taskId, error);
+    throw error;
+  }
 }
 
 export function saveProductionStoryboard(payload: ProductionStoryboardSavePayload): ProductionStoryboardSaveResult {
@@ -3015,6 +3515,13 @@ async function generateProductionStoryboardImage(project: ProjectRow, script: Sc
     const manuals = readProductionStoryboardManuals(project);
     const prompt = buildStoryboardImagePrompt(project, script, storyboard, basePrompt, manuals);
     const requestId = createModelRequestId();
+    const referenceList = buildStoryboardImageReferences(script.project_id, storyboard.id);
+    const imageOptions = resolveImageGenerationRequestOptions({
+      model,
+      referenceImageCount: referenceList.length,
+      size: project.image_quality,
+      aspectRatio: project.video_ratio,
+    });
     const generationMetadata = createGenerationSnapshot({
       source: 'production.storyboardImage',
       model,
@@ -3029,7 +3536,7 @@ async function generateProductionStoryboardImage(project: ProjectRow, script: Sc
       extra: {
         storyboardId: storyboard.id,
         scriptId: script.id,
-        imageQuality: project.image_quality,
+        imageQuality: imageOptions.size ?? null,
         aspectRatio: project.video_ratio,
       },
     });
@@ -3041,9 +3548,9 @@ async function generateProductionStoryboardImage(project: ProjectRow, script: Sc
     const result = await generateImageByModel(model, {
       requestId,
       prompt,
-      size: imageQualityForModel(project.image_quality),
-      aspectRatio: aspectRatioForModel(project.video_ratio),
-      referenceList: buildStoryboardImageReferences(script.project_id, storyboard.id),
+      size: imageOptions.size,
+      aspectRatio: imageOptions.aspectRatio,
+      referenceList,
       task: {
         taskId,
         projectId: script.project_id,
@@ -3311,8 +3818,16 @@ async function generateProductionDerivedAssetImage(project: ProjectRow, script: 
       formatProductionManuals('衍生资产图片生成手册规范', manuals),
     ].join('\n');
     const requestId = createModelRequestId();
+    const parentReference = getSucceededAssetMedia(script.project_id, asset.parent_id, 'image')?.relative_path ?? null;
+    const referenceList = parentReference ? [imageReferenceItemFromRelativePath(parentReference)] : [];
+    const imageOptions = resolveImageGenerationRequestOptions({
+      model,
+      referenceImageCount: referenceList.length,
+      size: project.image_quality,
+      aspectRatio: project.video_ratio,
+    });
     mediaId = withTransaction((database) => {
-      const resolution = imageQualityForModel(project.image_quality);
+      const resolution = imageOptions.size ?? null;
       const insertedMediaId = insertAssetMedia(script.project_id, asset.id, null, PRODUCTION_TASK_STATUS.RUNNING, model, resolution, null, {
         prompt,
         taskId,
@@ -3362,13 +3877,12 @@ async function generateProductionDerivedAssetImage(project: ProjectRow, script: 
       .prepare<[number, number, number, number]>('UPDATE asset_media SET task_id = ?, updated_at = ? WHERE project_id = ? AND id = ?')
       .run(taskId, Date.now(), script.project_id, mediaId);
 
-    const parentReference = getSucceededAssetMedia(script.project_id, asset.parent_id, 'image')?.relative_path ?? null;
     const result = await generateImageByModel(model, {
       requestId,
       prompt,
-      size: imageQualityForModel(project.image_quality),
-      aspectRatio: aspectRatioForModel(project.video_ratio),
-      referenceList: parentReference ? [imageReferenceItemFromRelativePath(parentReference)] : [],
+      size: imageOptions.size,
+      aspectRatio: imageOptions.aspectRatio,
+      referenceList,
       task: {
         taskId,
         projectId: script.project_id,
@@ -3629,6 +4143,9 @@ export function applyProductionImageFlowResult(payload: ProductionImageFlowApply
 export function saveProductionVideoTrack(payload: ProductionVideoTrackSavePayload): ProductionVideoTrackSaveResult {
   const { script } = assertProductionContext(payload);
   const storyboardIds = normalizeOptionalIds(payload.storyboardIds);
+  if (storyboardIds.length === 0) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '视频片段必须关联至少一个分镜；不拆分时请先把整篇内容创建为一个分镜');
+  }
   storyboardIds.forEach((id) => getStoryboardRow(script.project_id, script.id, id));
   const now = Date.now();
   const duration = payload.duration === undefined || payload.duration === null ? 4 : normalizeDuration(payload.duration);
@@ -3725,18 +4242,22 @@ export function deleteProductionVideoTrack(payload: ProductionVideoTrackDeletePa
   return { deletedCount };
 }
 
-async function generateVideoPromptForTrack(project: ProjectRow, script: ScriptRow, trackId: number, taskId: number): Promise<boolean> {
+async function generateVideoPromptForTrack(
+  project: ProjectRow,
+  script: ScriptRow,
+  trackId: number,
+  taskId: number,
+  targetModel: string,
+  requestedMode: ProductionVideoModeValue | null,
+): Promise<boolean> {
   try {
     const track = getTrackRow(script.project_id, script.id, trackId);
-    const modeValue =
-      normalizeMode(track.mode_json ? parseJson<ProductionVideoModeValue | null>(track.mode_json, null) : null) ??
-      normalizeMode(project.video_mode) ??
-      'text';
-    const modeKey = serializeVideoMode(modeValue);
-    const { system, promptTemplate } = resolveVideoPromptSystem(project, modeKey);
+    const capability = getProductionVideoOperation(targetModel, requestedMode);
+    const modeKey = capability.modeKey;
+    const { system, promptTemplate } = resolveVideoPromptSystem(project, modeKey, targetModel);
     const manuals = readProductionVideoManuals(project);
     const manualPrompt = formatProductionManuals('视频提示词生成手册规范', manuals);
-    const modelName = getModelNameFromModelId(project.video_model_id);
+    const modelName = getModelNameFromModelId(targetModel);
     const userPrompt = buildVideoPromptInput(project, script, track, modelName, modeKey);
     const requestId = createModelRequestId();
     const messages = [
@@ -3808,12 +4329,31 @@ async function generateVideoPromptForTrack(project: ProjectRow, script: ScriptRo
   }
 }
 
-async function runProductionVideoPromptGeneration(project: ProjectRow, script: ScriptRow, trackIds: number[], taskId: number): Promise<void> {
+async function runProductionVideoPromptGeneration(
+  project: ProjectRow,
+  script: ScriptRow,
+  trackIds: number[],
+  taskId: number,
+  targetModel: string,
+  requestedMode: ProductionVideoModeValue | null,
+): Promise<void> {
   try {
-    const results = await runWithConcurrency(trackIds, normalizeGenerationConcurrency(), (trackId) => generateVideoPromptForTrack(project, script, trackId, taskId));
+    const results = await runWithConcurrency(trackIds, normalizeGenerationConcurrency(), (trackId) => (
+      generateVideoPromptForTrack(project, script, trackId, taskId, targetModel, requestedMode)
+    ));
     const failedCount = results.filter((result) => !result).length;
     if (failedCount > 0) {
-      safeFailTask(taskId, new Error(`${failedCount} video prompt generations failed`));
+      const placeholders = trackIds.map(() => '?').join(', ');
+      const failureReasons = getDatabase()
+        .prepare<Array<number | string>, Pick<VideoTrackRow, 'error_reason'>>(
+          `SELECT error_reason FROM production_video_tracks WHERE project_id = ? AND id IN (${placeholders}) AND status = ?`,
+        )
+        .all(script.project_id, ...trackIds, PRODUCTION_TASK_STATUS.FAILED)
+        .map((row) => normalizeOptionalText(row.error_reason))
+        .filter(Boolean);
+      const uniqueReasons = Array.from(new Set(failureReasons));
+      const detail = uniqueReasons.length > 0 ? uniqueReasons.join('；') : '未记录具体失败原因，请查看应用日志';
+      safeFailTask(taskId, new Error(`${failedCount} 条视频提示词生成失败：${detail}`));
       return;
     }
 
@@ -3835,11 +4375,14 @@ export function generateProductionVideoPrompts(payload: ProductionGenerateVideoP
   const { script, project } = assertProductionContext(payload);
   const trackIds = normalizeIds(payload.trackIds, '轨道 ID');
   trackIds.forEach((id) => getTrackRow(script.project_id, script.id, id));
+  const targetModel = normalizeRequiredText(normalizeOptionalText(payload.model) || project.video_model_id, '视频模型');
+  const requestedMode = normalizeMode(payload.mode);
+  getProductionVideoOperation(targetModel, requestedMode);
   const manuals = toProductionManualSnapshots(readProductionVideoManuals(project));
   const task = createProductionTask({
     projectId: script.project_id,
     category: VIDEO_PROMPT_CATEGORY,
-    relatedObjects: { contentId: script.id, trackIds, manuals },
+    relatedObjects: { contentId: script.id, trackIds, targetModel, requestedMode, manuals },
     modelName: 'universalAi',
     description: `生成 ${trackIds.length} 条视频提示词`,
   });
@@ -3849,7 +4392,7 @@ export function generateProductionVideoPrompts(payload: ProductionGenerateVideoP
       `UPDATE production_video_tracks SET status = ?, error_reason = ?, task_id = ?, updated_at = ? WHERE project_id = ? AND id IN (${placeholders})`,
     )
     .run(PRODUCTION_TASK_STATUS.RUNNING, null, task.taskId, Date.now(), script.project_id, ...trackIds);
-  void runProductionVideoPromptGeneration(project, script, trackIds, task.taskId);
+  void runProductionVideoPromptGeneration(project, script, trackIds, task.taskId, targetModel, requestedMode);
 
   return {
     accepted: true,
@@ -3869,9 +4412,22 @@ async function generateProductionVideoCandidate(project: ProjectRow, script: Scr
   try {
     const video = getVideoRow(script.project_id, script.id, videoId);
     const prompt = normalizeRequiredText(video.prompt, 'Video prompt');
+    const duration = normalizeDuration(video.duration);
+    const resolution = normalizeRequiredText(video.resolution, 'Video resolution');
     const references = normalizeReferences(parseJson<ProductionReferenceInput[]>(video.reference_json, []));
     const modelReferences = buildModelReferences(script.project_id, script.id, references, references.length > 0);
     const mode = modelModeFromValue(parseJson<ProductionVideoModeValue | null>(video.mode_json, null));
+    const capability = getProductionVideoOperation(model, mode as ProductionVideoModeValue);
+    const audioEnabled = video.audio_enabled === 1;
+    assertProductionVideoOperation({
+      capability,
+      duration,
+      resolution,
+      projectRatio: project.video_ratio,
+      audioEnabled,
+      references,
+    });
+    const aspectRatio = getVideoOperationAspectRatio(capability, project.video_ratio);
     const requestId = createModelRequestId();
     const generationMetadata = createGenerationSnapshot({
       source: 'production.video',
@@ -3890,10 +4446,15 @@ async function generateProductionVideoCandidate(project: ProjectRow, script: Scr
         videoId: video.id,
         trackId: video.track_id,
         scriptId: script.id,
-        duration: normalizeDuration(video.duration),
-        resolution: normalizeOptionalText(video.resolution) || DEFAULT_VIDEO_RESOLUTION,
-        aspectRatio: project.video_ratio,
-        audioEnabled: video.audio_enabled === 1,
+        duration,
+        resolution,
+        aspectRatio,
+        audioEnabled,
+        capability: {
+          operationId: capability.operationId,
+          modeKey: capability.modeKey,
+          source: capability.source,
+        },
       },
     });
     getDatabase()
@@ -3903,12 +4464,12 @@ async function generateProductionVideoCandidate(project: ProjectRow, script: Scr
       .run(serializeJson(generationMetadata, '{}'), Date.now(), script.project_id, video.id);
     const result = await generateVideoByModel(model, {
       requestId,
-      duration: normalizeDuration(video.duration),
-      resolution: normalizeOptionalText(video.resolution) || DEFAULT_VIDEO_RESOLUTION,
-      aspectRatio: aspectRatioForModel(project.video_ratio),
+      duration,
+      resolution,
+      aspectRatio,
       prompt,
       referenceList: modelReferences,
-      audio: video.audio_enabled === 1,
+      audio: audioEnabled,
       mode,
       task: {
         taskId,
@@ -3963,7 +4524,17 @@ async function runProductionVideoGeneration(project: ProjectRow, script: ScriptR
     const results = await runWithConcurrency(videoIds, normalizeGenerationConcurrency(), (videoId) => generateProductionVideoCandidate(project, script, videoId, modelKey, taskId));
     const failedCount = results.filter((result) => !result).length;
     if (failedCount > 0) {
-      safeFailTask(taskId, new Error(`${failedCount} video generations failed`));
+      const placeholders = videoIds.map(() => '?').join(', ');
+      const failureReasons = getDatabase()
+        .prepare<Array<number | string>, Pick<VideoRow, 'error_reason'>>(
+          `SELECT error_reason FROM production_videos WHERE project_id = ? AND id IN (${placeholders}) AND status = ?`,
+        )
+        .all(script.project_id, ...videoIds, PRODUCTION_TASK_STATUS.FAILED)
+        .map((row) => normalizeOptionalText(row.error_reason))
+        .filter(Boolean);
+      const uniqueReasons = Array.from(new Set(failureReasons));
+      const detail = uniqueReasons.length > 0 ? uniqueReasons.join('；') : '未记录具体失败原因，请查看应用日志';
+      safeFailTask(taskId, new Error(`${failedCount} 条视频生成失败：${detail}`));
       return;
     }
 
@@ -4000,14 +4571,31 @@ export function generateProductionVideos(payload: ProductionGenerateVideoPayload
   const trackIds = normalizeIds(payload.trackIds, '轨道 ID');
   const tracks = trackIds.map((id) => getTrackRow(script.project_id, script.id, id));
   const now = Date.now();
-  const model = normalizeOptionalText(payload.model) || project.video_model_id;
-  const resolution = normalizeOptionalText(payload.resolution) || null;
-  const durationOverride = payload.duration === undefined || payload.duration === null ? null : normalizeDuration(payload.duration);
-  const audioEnabled = Boolean(payload.audioEnabled);
+  const model = normalizeRequiredText(normalizeOptionalText(payload.model) || project.video_model_id, '视频模型');
+  const resolution = normalizeRequiredText(payload.resolution, '视频分辨率');
+  if (payload.duration === undefined || payload.duration === null) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '请选择视频时长');
+  }
+  const duration = normalizeDuration(payload.duration);
+  const requestedMode = normalizeMode(payload.mode);
+  const capability = getProductionVideoOperation(model, requestedMode);
+  const mode = parseVideoModeKey(capability.modeKey) as ProductionVideoModeValue;
+  const audioEnabled = resolveVideoOperationAudio(capability, Boolean(payload.audioEnabled));
   const videoIds = withTransaction((database) => tracks.map((track) => {
     const explicitReferences = normalizeReferences(payload.referencesByTrackId?.[track.id]);
-    const references = explicitReferences.length ? explicitReferences : createAutoTrackReferences(script.project_id, script.id, track.id);
-    const mode = normalizeMode(payload.mode) ?? normalizeMode(track.mode_json ? parseJson<ProductionVideoModeValue | null>(track.mode_json, null) : null) ?? normalizeMode(project.video_mode);
+    const references = explicitReferences.length
+      ? explicitReferences
+      : operationSupportsReferenceType(capability, 'image')
+        ? createAutoTrackReferences(script.project_id, script.id, track.id)
+        : [];
+    assertProductionVideoOperation({
+      capability,
+      duration,
+      resolution,
+      projectRatio: project.video_ratio,
+      audioEnabled,
+      references,
+    });
     const insert = database
       .prepare<[number, number, number, string | null, string, number, ProductionTaskStatus, string | null, string, string | null, number, number, number]>(
         `
@@ -4024,7 +4612,7 @@ export function generateProductionVideos(payload: ProductionGenerateVideoPayload
         track.id,
         null,
         track.prompt,
-        durationOverride ?? Number(track.duration),
+        duration,
         PRODUCTION_TASK_STATUS.RUNNING,
         mode ? serializeJson(mode, 'null') : null,
         serializeJson(references, '[]'),

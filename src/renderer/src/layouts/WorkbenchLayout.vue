@@ -5,22 +5,10 @@ import { useI18n } from 'vue-i18n';
 import AppSideNav from '@renderer/features/shell/AppSideNav.vue';
 import AppTopBar from '@renderer/features/shell/AppTopBar.vue';
 
-type WorkbenchNavMode = 'global' | 'project';
-type SideNavMode = 'global' | 'project';
-
 const route = useRoute();
 const { t } = useI18n();
 
 const activeRoute = computed(() => String(route.name ?? 'projects'));
-const navMode = computed<WorkbenchNavMode>(() => {
-  const mode = route.meta.navMode;
-  if (mode === 'global' || mode === 'project') {
-    return mode;
-  }
-
-  return route.meta.requiresProject ? 'project' : 'global';
-});
-const sideNavMode = computed<SideNavMode>(() => (navMode.value === 'project' ? 'project' : 'global'));
 </script>
 
 <template>
@@ -33,7 +21,7 @@ const sideNavMode = computed<SideNavMode>(() => (navMode.value === 'project' ? '
     </a>
     <AppTopBar />
     <div class="app-shell has-side-nav">
-      <AppSideNav :mode="sideNavMode" />
+      <AppSideNav mode="global" />
       <main class="workspace" :class="{ 'is-settings-workspace': activeRoute === 'settings' }">
         <section id="vt-main-content" class="content-frame" tabindex="-1">
           <RouterView />

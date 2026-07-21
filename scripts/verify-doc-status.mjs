@@ -1,7 +1,27 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join, normalize } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const workspaceRoot = process.cwd();
+
+const requiredDocs = [
+  'README.md',
+  '项目功能清单.md',
+  '技术栈.md',
+  '开发规则.md',
+  '通用视频生产流程设计.md',
+  '模型能力审计与设计.md',
+  '后续目标与待办.md',
+];
+
+const forbiddenDocs = [
+  '当前项目对比参考项目还不够的地方.md',
+  'ai-short-drama-production-refactor-requirements.md',
+  'AI短剧制作流程框架设计.md',
+  'reference-toonflow-project-to-video-export-implementation.md',
+  'vt-studio-ai-short-drama-desktop-redesign.html',
+  'TODO-优化与缺口.md',
+  '03-执行进度.md',
+];
 
 function read(relativePath) {
   return readFileSync(join(workspaceRoot, relativePath), 'utf-8');
@@ -15,108 +35,68 @@ function assert(condition, message) {
   if (!condition) fail(message);
 }
 
-function extractTodoSections(content) {
-  const matches = [...content.matchAll(/^### 【(?<mark>√| )】(?<id>OPT-\d{3}) (?<title>.+)$/gm)];
-  return matches.map((match, index) => {
-    const next = matches[index + 1];
-    return {
-      id: match.groups.id,
-      mark: match.groups.mark,
-      title: match.groups.title.trim(),
-      body: content.slice(match.index, next?.index ?? content.length),
-    };
-  });
+function assertIncludes(relativePath, expected) {
+  const content = read(relativePath);
+  assert(content.includes(expected), `${relativePath} 缺少内容：${expected}`);
 }
 
-function getField(body, label) {
-  const match = body.match(new RegExp(`^- ${label}：(.+)$`, 'm'));
-  return match?.[1]?.trim() ?? '';
+function verifyDocFiles() {
+  const docsDir = join(workspaceRoot, 'docs');
+  const names = readdirSync(docsDir, { withFileTypes: true }).map((entry) => entry.name);
+
+  for (const name of requiredDocs) {
+    assert(existsSync(join(docsDir, name)), `缺少文档：docs/${name}`);
+  }
+
+  for (const name of forbiddenDocs) {
+    assert(!existsSync(join(docsDir, name)), `旧文档不应继续保留：docs/${name}`);
+  }
+
+  const unexpected = names.filter((name) => !requiredDocs.includes(name));
+  assert(unexpected.length === 0, `docs 目录存在未登记文件：${unexpected.join(', ')}`);
 }
 
-function resolveDocPath(relativePath) {
-  const normalizedPath = normalize(relativePath);
+function verifyEntryLinks() {
+  assertIncludes('AGENTS.md', 'docs/README.md');
+  assertIncludes('AGENTS.md', 'docs/项目功能清单.md');
+  assertIncludes('AGENTS.md', 'docs/技术栈.md');
+  assertIncludes('AGENTS.md', 'docs/开发规则.md');
+  assertIncludes('AGENTS.md', 'docs/通用视频生产流程设计.md');
+  assertIncludes('AGENTS.md', 'docs/模型能力审计与设计.md');
+  assertIncludes('AGENTS.md', 'docs/后续目标与待办.md');
 
-  if (normalizedPath.startsWith(`docs\\`) || normalizedPath.startsWith('docs/')) {
-    return join(workspaceRoot, normalizedPath);
-  }
-
-  if (normalizedPath.startsWith(`tasks\\`) || normalizedPath.startsWith('tasks/')) {
-    return join(workspaceRoot, 'docs', normalizedPath);
-  }
-
-  if (normalizedPath.startsWith(`features\\`) || normalizedPath.startsWith('features/')) {
-    return join(workspaceRoot, 'docs', normalizedPath);
-  }
-
-  const taskPath = join(workspaceRoot, 'docs', 'tasks', normalizedPath);
-  if (existsSync(taskPath)) return taskPath;
-
-  const featurePath = join(workspaceRoot, 'docs', 'features', normalizedPath);
-  if (existsSync(featurePath)) return featurePath;
-
-  return join(workspaceRoot, normalizedPath);
-}
-
-function verifyTodoStatus() {
-  const content = read('docs/TODO-优化与缺口.md');
-  const sections = extractTodoSections(content);
-  const sectionById = new Map(sections.map((section) => [section.id, section]));
-  const orderRows = [...content.matchAll(/^\| \d+ \| `(OPT-\d{3})` .+? \| (.+?) \| .+? \|$/gm)];
-  const completedOrderIds = new Set();
-
-  for (const row of orderRows) {
-    const [, id, status] = row;
-    if (status.includes('已完成')) {
-      completedOrderIds.add(id);
-      const section = sectionById.get(id);
-      assert(section, `TODO 推荐顺序里 ${id} 标为已完成，但正文没有对应章节`);
-      assert(section.mark === '√', `TODO 推荐顺序里 ${id} 标为已完成，但正文没有标记为【√】`);
-    }
-  }
-
-  for (const section of sections.filter((item) => item.mark === '√')) {
-    assert(section.body.includes('处理状态：已完成'), `${section.id} 已标记【√】，但处理状态不是已完成`);
-    assert(getField(section.body, '完成时间'), `${section.id} 缺少完成时间`);
-    assert(getField(section.body, '涉及文件'), `${section.id} 缺少涉及文件`);
-    assert(getField(section.body, '验证结果'), `${section.id} 缺少验证结果`);
-
-    const taskLine = section.body.match(/^关联任务：(.+)$/m)?.[1]?.trim() ?? '';
-    const ruleLine = section.body.match(/^关联规则：(.+)$/m)?.[1]?.trim() ?? '';
-    assert(taskLine || ruleLine, `${section.id} 缺少关联任务或关联规则`);
-
-    if (taskLine) {
-      const paths = [...taskLine.matchAll(/`([^`]+\.md)`/g)].map((match) => match[1]);
-      assert(paths.length > 0, `${section.id} 的关联任务必须写成可检查的 md 路径`);
-      for (const relativePath of paths) {
-        assert(existsSync(resolveDocPath(relativePath)), `${section.id} 关联任务不存在：${relativePath}`);
-      }
-    }
-
-    if (completedOrderIds.has(section.id)) continue;
-    assert(
-      !section.body.includes('推荐处理顺序') || completedOrderIds.has(section.id),
-      `${section.id} 已完成但未在推荐顺序里标记已完成`,
-    );
+  for (const name of requiredDocs.filter((name) => name !== 'README.md')) {
+    assertIncludes('docs/README.md', name);
   }
 }
 
-function verifyProgressLinks() {
-  const content = read('docs/03-执行进度.md');
-  const links = [...content.matchAll(/`([^`]+\.md)`/g)].map((match) => match[1]);
+function verifyWorkflowRules() {
+  assertIncludes('docs/通用视频生产流程设计.md', '内容 -> 资源 -> 分镜 -> 分镜画面 -> 视频 -> 导出');
+  assertIncludes('docs/通用视频生产流程设计.md', '“导演计划”不得作为用户顶部独立步骤');
+  assertIncludes('docs/开发规则.md', 'D:\\software\\nodejs\\pnpm.cmd');
+  assertIncludes('docs/技术栈.md', 'pnpm@10.24.0');
 
-  for (const relativePath of links) {
-    if (relativePath.includes('*')) continue;
-    if (!relativePath.startsWith('tasks/') && !relativePath.startsWith('features/')) continue;
+  const workflow = read('docs/通用视频生产流程设计.md');
+  assert(!workflow.includes('内容 -> 资源 -> 导演计划 -> 分镜'), '流程文档不应把导演计划写成顶部主步骤');
+}
 
-    const fullPath = resolveDocPath(relativePath);
-    assert(existsSync(fullPath), `03-执行进度.md 引用的文档不存在：${relativePath}`);
-  }
+function verifyTodoDocument() {
+  const todo = read('docs/后续目标与待办.md');
+  const ids = [...todo.matchAll(/^## (TODO-\d{3}) /gm)].map((match) => match[1]);
+
+  assert(ids.length > 0, '后续目标与待办.md 必须至少包含一个 TODO');
+  assert(new Set(ids).size === ids.length, '后续目标与待办.md 存在重复 TODO ID');
+  assert(todo.includes('状态：'), '后续目标与待办.md 的 TODO 必须写状态');
+  assert(todo.includes('优先级：'), '后续目标与待办.md 的 TODO 必须写优先级');
+  assert(todo.includes('验收：'), '后续目标与待办.md 的 TODO 必须写验收标准');
 }
 
 function main() {
-  verifyTodoStatus();
-  verifyProgressLinks();
-  console.log('Document status verification passed');
+  verifyDocFiles();
+  verifyEntryLinks();
+  verifyWorkflowRules();
+  verifyTodoDocument();
+  console.log('Document verification passed');
 }
 
 main();

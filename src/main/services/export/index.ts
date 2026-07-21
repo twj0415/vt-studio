@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, constants, copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { closeSync, openSync, readSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { shell } from 'electron';
 import { APP_VERSION } from '@shared/constants/app';
-import { DEPENDENCY_STATUSES, DEPENDENCY_STATUS_VALUES, type DependencyStatus } from '@shared/constants/dictionaries';
+import { DEPENDENCY_STATUSES, DEPENDENCY_STATUS_VALUES, PROJECT_VIDEO_RATIOS, type DependencyStatus } from '@shared/constants/dictionaries';
 import { VT_STATUS } from '@shared/constants/status';
 import { PRODUCTION_TASK_STATUS } from '@shared/types/production';
 import { EXPORT_DRAFT_STATUS, EXPORT_DRAFT_STATUSES } from '@shared/types/export';
@@ -281,7 +281,7 @@ function readSelectedVideo(projectId: number, scriptId: number, trackId: number,
     )
     .get(projectId, scriptId, trackId, videoId);
   if (!row) {
-    throw createError(VT_STATUS.EXPORT_MATERIAL_MISSING, `轨道 ${trackId} 选择的视频候选不存在`);
+    throw createError(VT_STATUS.EXPORT_MATERIAL_MISSING, `视频片段 ${trackId} 选择的候选不存在`);
   }
   return row;
 }
@@ -379,13 +379,13 @@ function buildTimelineFromDatabase(payload: ExportBuildTimelinePayload): ExportT
   const { project, script } = assertExportContext(payload);
   const tracks = readVideoTracks(project.id, script.id);
   if (tracks.length === 0) {
-    throw createError(VT_STATUS.EXPORT_MATERIAL_MISSING, '当前剧本没有视频轨道');
+    throw createError(VT_STATUS.EXPORT_MATERIAL_MISSING, '当前作品没有视频片段');
   }
 
   let cursorMs = 0;
   const clips: ExportTimelineClip[] = tracks.map((track) => {
     if (!track.selected_video_id) {
-      throw createError(VT_STATUS.EXPORT_MATERIAL_MISSING, `轨道 ${track.sort_index + 1} 没有已选择的视频候选`);
+      throw createError(VT_STATUS.EXPORT_MATERIAL_MISSING, `视频片段 ${track.sort_index + 1} 没有已选择的候选`);
     }
     const video = readSelectedVideo(project.id, script.id, track.id, track.selected_video_id);
     if (video.status !== PRODUCTION_TASK_STATUS.SUCCEEDED) {
@@ -635,47 +635,541 @@ function assertPathInsideExports(targetPath: string): string {
   return assertInsideRoot(resolve(targetPath), getRuntimeDirectories().exports);
 }
 
-function buildDraftContent(input: { timeline: ExportTimeline; assetPaths: Map<string, string>; draftName: string; project: ProjectRow }): Record<string, unknown> {
+interface JianyingCanvasConfig {
+  width: number;
+  height: number;
+  ratio: string;
+}
+
+interface JianyingClipBundle {
+  clip: ExportTimelineClip;
+  sourcePath: string;
+  materialId: string;
+  speedId: string;
+  canvasId: string;
+  soundChannelMappingId: string;
+  vocalSeparationId: string;
+  startUs: number;
+  durationUs: number;
+}
+
+function createJianyingId(): string {
+  return randomUUID().toUpperCase();
+}
+
+function msToUs(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '剪映草稿时间无效');
+  }
+  return Math.round(value * 1000);
+}
+
+function nowUs(): number {
+  return Date.now() * 1000;
+}
+
+function normalizeJianyingPath(value: string): string {
+  return toPosixPath(resolve(value));
+}
+
+function resolveJianyingCanvasConfig(ratio: string): JianyingCanvasConfig {
+  if (ratio === PROJECT_VIDEO_RATIOS.LANDSCAPE) {
+    return { width: 1920, height: 1080, ratio: PROJECT_VIDEO_RATIOS.LANDSCAPE };
+  }
+  if (ratio === PROJECT_VIDEO_RATIOS.PORTRAIT) {
+    return { width: 1080, height: 1920, ratio: PROJECT_VIDEO_RATIOS.PORTRAIT };
+  }
+  throw createError(VT_STATUS.INVALID_PARAMS, `项目视频比例 ${ratio || '空'} 不能导出剪映草稿`);
+}
+
+function createJianyingPlatform(): Record<string, unknown> {
   return {
-    type: 'vt_studio_jianying_draft_package',
-    schemaVersion: 1,
-    compatibility: {
-      jianyingNativeSchemaVerified: false,
-      note: '当前文件是 VT Studio 导出底座结构；接入真实 Jianying Draft Exporter 后会替换为剪映原生草稿结构。',
+    app_id: 3704,
+    app_source: 'lv',
+    app_version: '5.5.0',
+    device_id: '',
+    hard_disk_id: '',
+    mac_address: '',
+    os: 'windows',
+    os_version: '',
+  };
+}
+
+function createEmptyJianyingMaterials(): Record<string, unknown> {
+  return {
+    ai_translates: [] as unknown[],
+    audio_balances: [] as unknown[],
+    audio_effects: [] as unknown[],
+    audio_fades: [] as unknown[],
+    audio_track_indexes: [] as unknown[],
+    audios: [] as unknown[],
+    beats: [] as unknown[],
+    canvases: [] as Record<string, unknown>[],
+    chromas: [] as unknown[],
+    color_curves: [] as unknown[],
+    digital_humans: [] as unknown[],
+    drafts: [] as unknown[],
+    effects: [] as unknown[],
+    flowers: [] as unknown[],
+    green_screens: [] as unknown[],
+    handwrites: [] as unknown[],
+    hsl: [] as unknown[],
+    images: [] as unknown[],
+    log_color_wheels: [] as unknown[],
+    loudnesses: [] as unknown[],
+    manual_deformations: [] as unknown[],
+    masks: [] as unknown[],
+    material_animations: [] as unknown[],
+    material_colors: [] as unknown[],
+    placeholders: [] as unknown[],
+    plugin_effects: [] as unknown[],
+    primary_color_wheels: [] as unknown[],
+    realtime_denoises: [] as unknown[],
+    shapes: [] as unknown[],
+    smart_crops: [] as unknown[],
+    smart_relights: [] as unknown[],
+    sound_channel_mappings: [] as Record<string, unknown>[],
+    speeds: [] as Record<string, unknown>[],
+    stickers: [] as unknown[],
+    tail_leaders: [] as unknown[],
+    text_templates: [] as unknown[],
+    texts: [] as unknown[],
+    time_marks: [] as unknown[],
+    transitions: [] as unknown[],
+    video_effects: [] as unknown[],
+    video_trackings: [] as unknown[],
+    videos: [] as Record<string, unknown>[],
+    vocal_beautifys: [] as unknown[],
+    vocal_separations: [] as Record<string, unknown>[],
+  };
+}
+
+function resolveClipDraftSourcePath(input: {
+  clip: ExportTimelineClip;
+  absolutePath: string | null;
+  assetPaths: Map<string, string>;
+  draftPath: string;
+}): string {
+  const copiedPath = input.assetPaths.get(input.clip.id);
+  if (copiedPath) {
+    return normalizeJianyingPath(join(input.draftPath, copiedPath));
+  }
+  if (input.absolutePath) {
+    return normalizeJianyingPath(input.absolutePath);
+  }
+  throw createError(VT_STATUS.EXPORT_MATERIAL_MISSING, `视频片段 ${input.clip.trackSortIndex + 1} 素材路径为空`);
+}
+
+function buildJianyingClipBundles(input: {
+  timeline: ExportTimeline;
+  resolvedClips: ResolvedClip[];
+  assetPaths: Map<string, string>;
+  draftPath: string;
+}): JianyingClipBundle[] {
+  const absolutePathByClipId = new Map(input.resolvedClips.map((item) => [item.clip.id, item.absolutePath]));
+  return input.timeline.clips.map((clip) => ({
+    clip,
+    sourcePath: resolveClipDraftSourcePath({
+      clip,
+      absolutePath: absolutePathByClipId.get(clip.id) ?? null,
+      assetPaths: input.assetPaths,
+      draftPath: input.draftPath,
+    }),
+    materialId: createJianyingId(),
+    speedId: createJianyingId(),
+    canvasId: createJianyingId(),
+    soundChannelMappingId: createJianyingId(),
+    vocalSeparationId: createJianyingId(),
+    startUs: msToUs(clip.startMs),
+    durationUs: msToUs(clip.durationMs),
+  }));
+}
+
+function buildJianyingVideoMaterial(bundle: JianyingClipBundle, canvas: JianyingCanvasConfig): Record<string, unknown> {
+  return {
+    aigc_type: 'none',
+    audio_fade: null,
+    cartoon_path: '',
+    category_id: '',
+    category_name: 'local',
+    check_flag: 63487,
+    crop: {
+      lower_left_x: 0.0,
+      lower_left_y: 1.0,
+      lower_right_x: 1.0,
+      lower_right_y: 1.0,
+      upper_left_x: 0.0,
+      upper_left_y: 0.0,
+      upper_right_x: 1.0,
+      upper_right_y: 0.0,
     },
-    draftName: input.draftName,
-    canvas: {
-      ratio: input.project.video_ratio || '9:16',
+    crop_ratio: 'free',
+    crop_scale: 1.0,
+    duration: bundle.durationUs,
+    extra_type_option: 0,
+    formula_id: '',
+    freeze: null,
+    gameplay: null,
+    has_audio: false,
+    height: canvas.height,
+    id: bundle.materialId,
+    intensifies_audio_path: '',
+    intensifies_path: '',
+    is_ai_generate_content: false,
+    is_copyright: false,
+    is_unified_beauty_mode: false,
+    local_id: '',
+    local_material_id: '',
+    material_id: '',
+    material_name: basename(bundle.sourcePath),
+    material_url: '',
+    matting: {
+      flag: 0,
+      has_use_quick_brush: false,
+      has_use_quick_eraser: false,
+      interactiveTime: [],
+      path: '',
+      strokes: [],
     },
-    timebase: input.timeline.timebase,
-    durationMs: input.timeline.durationMs,
-    materials: input.timeline.clips.map((clip) => ({
-      id: clip.id,
-      type: clip.mediaType,
-      path: input.assetPaths.get(clip.id) ?? clip.relativePath,
-      sourceKind: clip.sourceKind,
-      sourceId: clip.sourceId,
-    })),
+    media_path: '',
+    object_locked: null,
+    origin_material_id: '',
+    path: bundle.sourcePath,
+    picture_from: 'none',
+    picture_set_category_id: '',
+    picture_set_category_name: '',
+    request_id: '',
+    reverse_intensifies_path: '',
+    reverse_path: '',
+    smart_motion: null,
+    source: 0,
+    source_platform: 0,
+    stable: {
+      matrix_path: '',
+      stable_level: 0,
+      time_range: {
+        duration: 0,
+        start: 0,
+      },
+    },
+    team_id: '',
+    type: 'video',
+    video_algorithm: {
+      algorithms: [],
+      deflicker: null,
+      motion_blur_config: null,
+      noise_reduction: null,
+      path: '',
+      quality_enhance: null,
+      time_range: null,
+    },
+    width: canvas.width,
+  };
+}
+
+function buildJianyingVideoSegment(bundle: JianyingClipBundle, index: number): Record<string, unknown> {
+  return {
+    cartoon: false,
+    clip: {
+      alpha: 1.0,
+      flip: {
+        horizontal: false,
+        vertical: false,
+      },
+      rotation: 0.0,
+      scale: {
+        x: 1.0,
+        y: 1.0,
+      },
+      transform: {
+        x: 0.0,
+        y: 0.0,
+      },
+    },
+    common_keyframes: [],
+    enable_adjust: true,
+    enable_color_curves: true,
+    enable_color_match_adjust: false,
+    enable_color_wheels: true,
+    enable_lut: true,
+    enable_smart_color_adjust: false,
+    extra_material_refs: [
+      bundle.speedId,
+      bundle.canvasId,
+      bundle.soundChannelMappingId,
+      bundle.vocalSeparationId,
+    ],
+    group_id: '',
+    hdr_settings: {
+      intensity: 1.0,
+      mode: 1,
+      nits: 1000,
+    },
+    id: createJianyingId(),
+    intensifies_audio: false,
+    is_placeholder: false,
+    is_tone_modify: false,
+    keyframe_refs: [],
+    last_nonzero_volume: 1.0,
+    material_id: bundle.materialId,
+    render_index: index,
+    responsive_layout: {
+      enable: false,
+      horizontal_pos_layout: 0,
+      size_layout: 0,
+      target_follow: '',
+      vertical_pos_layout: 0,
+    },
+    reverse: false,
+    source_timerange: {
+      duration: bundle.durationUs,
+      start: 0,
+    },
+    speed: 1.0,
+    target_timerange: {
+      duration: bundle.durationUs,
+      start: bundle.startUs,
+    },
+    template_id: '',
+    template_scene: 'default',
+    track_attribute: 0,
+    track_render_index: 0,
+    uniform_scale: {
+      on: true,
+      value: 1.0,
+    },
+    visible: true,
+    volume: 1.0,
+  };
+}
+
+function addJianyingMaterialRefs(materials: Record<string, unknown>, bundles: JianyingClipBundle[]): void {
+  const speeds = materials.speeds as Record<string, unknown>[];
+  const canvases = materials.canvases as Record<string, unknown>[];
+  const soundChannelMappings = materials.sound_channel_mappings as Record<string, unknown>[];
+  const vocalSeparations = materials.vocal_separations as Record<string, unknown>[];
+
+  for (const bundle of bundles) {
+    speeds.push({
+      curve_speed: null,
+      id: bundle.speedId,
+      mode: 0,
+      speed: 1.0,
+      type: 'speed',
+    });
+    canvases.push({
+      album_image: '',
+      blur: 0.0,
+      color: '',
+      id: bundle.canvasId,
+      image: '',
+      image_id: '',
+      image_name: '',
+      source_platform: 0,
+      team_id: '',
+      type: 'canvas_color',
+    });
+    soundChannelMappings.push({
+      audio_channel_mapping: 0,
+      id: bundle.soundChannelMappingId,
+      is_config_open: false,
+      type: 'none',
+    });
+    vocalSeparations.push({
+      choice: 0,
+      id: bundle.vocalSeparationId,
+      production_path: '',
+      time_range: null,
+      type: 'vocal_separation',
+    });
+  }
+}
+
+function buildDraftContent(input: {
+  timeline: ExportTimeline;
+  assetPaths: Map<string, string>;
+  draftName: string;
+  project: ProjectRow;
+  draftPath: string;
+  resolvedClips: ResolvedClip[];
+}): Record<string, unknown> {
+  const canvas = resolveJianyingCanvasConfig(input.project.video_ratio);
+  const bundles = buildJianyingClipBundles({
+    timeline: input.timeline,
+    resolvedClips: input.resolvedClips,
+    assetPaths: input.assetPaths,
+    draftPath: input.draftPath,
+  });
+  const materials = createEmptyJianyingMaterials();
+  const videos = materials.videos as Record<string, unknown>[];
+  const segments = bundles.map(buildJianyingVideoSegment);
+  for (const bundle of bundles) {
+    videos.push(buildJianyingVideoMaterial(bundle, canvas));
+  }
+  addJianyingMaterialRefs(materials, bundles);
+
+  const platform = createJianyingPlatform();
+  return {
+    canvas_config: canvas,
+    color_space: 0,
+    config: {
+      adjust_max_index: 1,
+      attachment_info: [],
+      combination_max_index: 1,
+      export_range: null,
+      extract_audio_last_index: 1,
+      lyrics_recognition_id: '',
+      lyrics_sync: true,
+      lyrics_taskinfo: [],
+      maintrack_adsorb: true,
+      material_save_mode: 0,
+      original_sound_last_index: 1,
+      record_audio_last_index: 1,
+      sticker_max_index: 1,
+      subtitle_recognition_id: '',
+      subtitle_sync: true,
+      subtitle_taskinfo: [],
+      system_font_list: [],
+      video_mute: false,
+      zoom_info_params: null,
+    },
+    cover: null,
+    create_time: 0,
+    duration: msToUs(input.timeline.durationMs),
+    extra_info: null,
+    fps: 30.0,
+    free_render_index_mode_on: false,
+    group_container: null,
+    id: createJianyingId(),
+    keyframe_graph_list: [],
+    keyframes: {
+      adjusts: [],
+      audios: [],
+      effects: [],
+      filters: [],
+      handwrites: [],
+      stickers: [],
+      texts: [],
+      videos: [],
+    },
+    last_modified_platform: platform,
+    materials,
+    mutable_config: null,
+    name: input.draftName,
+    new_version: '103.0.0',
+    platform,
+    relationships: [],
+    render_index_track_mode_on: true,
+    retouch_cover: null,
+    source: 'default',
+    static_cover_image_path: '',
+    time_marks: null,
     tracks: [
       {
-        id: 'main-video',
+        attribute: 0,
+        flag: 0,
+        id: createJianyingId(),
+        is_default_name: true,
+        name: '',
+        segments,
         type: 'video',
-        segments: input.timeline.clips.map((clip) => ({
-          id: clip.id,
-          materialId: clip.id,
-          targetTimerange: {
-            startMs: clip.startMs,
-            durationMs: clip.durationMs,
-          },
-          sourceTimerange: {
-            startMs: 0,
-            durationMs: clip.durationMs,
-          },
-          storyboardIds: clip.storyboardIds,
-          prompt: clip.prompt,
-        })),
       },
     ],
+    update_time: 0,
+    version: 360000,
+  };
+}
+
+function listDraftMaterialPaths(input: {
+  timeline: ExportTimeline;
+  resolvedClips: ResolvedClip[];
+  assetPaths: Map<string, string>;
+  draftPath: string;
+}): string[] {
+  const absolutePathByClipId = new Map(input.resolvedClips.map((item) => [item.clip.id, item.absolutePath]));
+  return input.timeline.clips.map((clip) => resolveClipDraftSourcePath({
+    clip,
+    absolutePath: absolutePathByClipId.get(clip.id) ?? null,
+    assetPaths: input.assetPaths,
+    draftPath: input.draftPath,
+  }));
+}
+
+function sumFileSizes(filePaths: string[]): number {
+  let total = 0;
+  for (const filePath of filePaths) {
+    try {
+      total += statSync(filePath).size;
+    } catch {
+      // validation already checked the files; size is only draft metadata.
+    }
+  }
+  return total;
+}
+
+function buildJianyingDraftMetaInfo(input: {
+  draftName: string;
+  draftPath: string;
+  timeline: ExportTimeline;
+  assetPaths: Map<string, string>;
+  resolvedClips: ResolvedClip[];
+}): Record<string, unknown> {
+  const timestamp = nowUs();
+  const materialPaths = listDraftMaterialPaths({
+    timeline: input.timeline,
+    resolvedClips: input.resolvedClips,
+    assetPaths: input.assetPaths,
+    draftPath: input.draftPath,
+  });
+
+  return {
+    cloud_package_completed_time: '',
+    draft_cloud_capcut_purchase_info: '',
+    draft_cloud_last_action_download: false,
+    draft_cloud_materials: [],
+    draft_cloud_purchase_info: '',
+    draft_cloud_template_id: '',
+    draft_cloud_tutorial_info: '',
+    draft_cloud_videocut_purchase_info: '',
+    draft_cover: '',
+    draft_deeplink_url: '',
+    draft_enterprise_info: {
+      draft_enterprise_extra: '',
+      draft_enterprise_id: '',
+      draft_enterprise_name: '',
+      enterprise_material: [],
+    },
+    draft_fold_path: normalizeJianyingPath(input.draftPath),
+    draft_id: createJianyingId(),
+    draft_is_ai_packaging_used: false,
+    draft_is_ai_shorts: false,
+    draft_is_ai_translate: false,
+    draft_is_article_video_draft: false,
+    draft_is_from_deeplink: 'false',
+    draft_is_invisible: false,
+    draft_materials: [
+      { type: 0, value: [] },
+      { type: 1, value: [] },
+      { type: 2, value: [] },
+      { type: 3, value: [] },
+      { type: 6, value: [] },
+      { type: 7, value: [] },
+      { type: 8, value: [] },
+    ],
+    draft_materials_copied_info: [],
+    draft_name: input.draftName,
+    draft_new_version: '',
+    draft_removable_storage_device: '',
+    draft_root_path: normalizeJianyingPath(dirname(input.draftPath)),
+    draft_segment_extra_info: [],
+    draft_timeline_materials_size_: sumFileSizes(materialPaths),
+    draft_type: '',
+    tm_draft_cloud_completed: '',
+    tm_draft_cloud_modified: 0,
+    tm_draft_create: timestamp,
+    tm_draft_modified: timestamp,
+    tm_draft_removed: 0,
+    tm_duration: msToUs(input.timeline.durationMs),
   };
 }
 
@@ -1136,15 +1630,21 @@ export function createJianyingDraft(payload: ExportCreateJianyingDraftPayload): 
     const assetPaths = copyAssets ? copyDraftAssets(draftRelativePath, validation.resolvedClips) : new Map<string, string>();
     copiedAssetCount = assetPaths.size;
     writeExportJson(toPosixPath(join(draftRelativePath, 'vt_timeline.json')), timeline);
-    writeExportJson(toPosixPath(join(draftRelativePath, 'draft_meta_info.json')), {
-      draft_name: draftName,
-      draft_fold_path: draftPath,
-      tm_draft_create: Date.now(),
-      tm_draft_modified: Date.now(),
-      source: 'VT Studio',
-      native_jianying_schema_verified: false,
-    });
-    writeExportJson(toPosixPath(join(draftRelativePath, 'draft_content.json')), buildDraftContent({ timeline, assetPaths, draftName, project }));
+    writeExportJson(toPosixPath(join(draftRelativePath, 'draft_meta_info.json')), buildJianyingDraftMetaInfo({
+      draftName,
+      draftPath,
+      timeline,
+      assetPaths,
+      resolvedClips: validation.resolvedClips,
+    }));
+    writeExportJson(toPosixPath(join(draftRelativePath, 'draft_content.json')), buildDraftContent({
+      timeline,
+      assetPaths,
+      draftName,
+      project,
+      draftPath,
+      resolvedClips: validation.resolvedClips,
+    }));
     writeExportJson(toPosixPath(join(draftRelativePath, 'export_summary.json')), buildSummary({ status: EXPORT_DRAFT_STATUS.SUCCEEDED, timeline, failures: [], copiedAssetCount: assetPaths.size, draftName, taskId: task.taskId }));
     updateExportHistory(historyId, {
       status: EXPORT_DRAFT_STATUS.SUCCEEDED,

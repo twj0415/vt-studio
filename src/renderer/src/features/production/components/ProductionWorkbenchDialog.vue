@@ -28,8 +28,6 @@ import {
   type ProductionVideoTrackItem,
 } from '@shared/types/production';
 import {
-  COMMON_VIDEO_DURATIONS,
-  COMMON_VIDEO_RESOLUTIONS,
   DEPENDENCY_STATUSES,
   type DependencyStatus,
 } from '@shared/constants/dictionaries';
@@ -37,13 +35,20 @@ import {
   getVideoModeReferenceLimits,
   parseVideoModeKey,
   serializeVideoMode,
-  VIDEO_MODE_PRESETS,
 } from '@shared/constants/model-capabilities';
 import VtButton from '@renderer/components/VtButton.vue';
 import VtDialog from '@renderer/components/VtDialog.vue';
 import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import type { ExportCreateJianyingDraftResult, ExportStoryboardImagesResult, ExportValidationFailure } from '@shared/types/export';
 import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
+import {
+  filterVideoCapabilitiesByModel,
+  findVideoModeCapability,
+  listReadyVideoCapabilities,
+  listVideoCapabilityModeKeys,
+  listVideoDurationOptions,
+  listVideoResolutionOptions,
+} from '../video-model-capabilities';
 
 type WorkbenchTab = 'preview' | 'generate' | 'editor';
 
@@ -67,9 +72,9 @@ interface WorkbenchExportBlocker {
 
 const POLL_INTERVAL = 3000;
 const DEFAULT_MODEL = '';
-const DEFAULT_RESOLUTION = COMMON_VIDEO_RESOLUTIONS[1] ?? COMMON_VIDEO_RESOLUTIONS[0];
-const DEFAULT_DURATION = Number(COMMON_VIDEO_DURATIONS[1] ?? COMMON_VIDEO_DURATIONS[0]);
-const DEFAULT_VIDEO_MODE = VIDEO_MODE_PRESETS[0]?.value ?? 'singleImage';
+const DEFAULT_RESOLUTION = '';
+const DEFAULT_DURATION = 0;
+const DEFAULT_VIDEO_MODE = '';
 const VIDEO_MODE_LABEL_KEYS: Record<string, string> = {
   singleImage: 'singleImage',
   startEndRequired: 'startEndRequired',
@@ -128,7 +133,6 @@ const exportResultSummary = ref<ExportCreateJianyingDraftResult['summary'] | nul
 const videoCapabilities = ref<ModelCapabilityMatrixItem[]>([]);
 const projectVideoModelId = ref('');
 const projectVideoModelLabel = ref('');
-const projectVideoMode = ref('');
 
 const trackForm = reactive<{
   prompt: string;
@@ -328,13 +332,9 @@ const selectedStoryboardTotalDuration = computed(() => selectedPreviewStoryboard
 }, 0));
 const effectiveVideoModelId = computed(() => trackForm.model || projectVideoModelId.value);
 const effectiveVideoCapabilities = computed(() => {
-  if (!effectiveVideoModelId.value) {
-    return videoCapabilities.value;
-  }
-
-  return videoCapabilities.value.filter((item) => item.modelId === effectiveVideoModelId.value);
+  return filterVideoCapabilitiesByModel(listReadyVideoCapabilities(videoCapabilities.value), effectiveVideoModelId.value);
 });
-const selectedModeCapability = computed(() => effectiveVideoCapabilities.value.find((item) => item.modeKey === trackForm.mode) ?? null);
+const selectedModeCapability = computed(() => findVideoModeCapability(effectiveVideoCapabilities.value, trackForm.mode));
 const modelOptions = computed<Array<{ label: string; value: string; content?: string }>>(() => {
   const options = new Map<string, { label: string; value: string; content?: string }>();
 
@@ -342,7 +342,6 @@ const modelOptions = computed<Array<{ label: string; value: string; content?: st
     options.set('', {
       label: projectVideoModelLabel.value ? t('production.workbench.projectDefaultModelWithName', { model: projectVideoModelLabel.value }) : t('production.workbench.projectDefaultModel'),
       value: '',
-      content: projectVideoMode.value ? t('production.workbench.projectDefaultMode', { mode: getModeLabel(projectVideoMode.value) }) : undefined,
     });
   } else {
     options.set('', {
@@ -365,9 +364,8 @@ const modelOptions = computed<Array<{ label: string; value: string; content?: st
   return [...options.values()];
 });
 const availableModeKeys = computed(() => {
-  const capabilityKeys = effectiveVideoCapabilities.value.map((item) => item.modeKey).filter(Boolean);
-  const keys = capabilityKeys.length ? capabilityKeys : projectVideoMode.value ? [projectVideoMode.value] : VIDEO_MODE_PRESETS.map((item) => item.value);
-  return [...new Set(keys)];
+  const capabilityKeys = listVideoCapabilityModeKeys(effectiveVideoCapabilities.value);
+  return [...new Set(capabilityKeys)];
 });
 const modeOptions = computed<Array<{ label: string; value: string; content: string }>>(() => availableModeKeys.value.map((value) => ({
   label: getModeLabel(value),
@@ -376,17 +374,20 @@ const modeOptions = computed<Array<{ label: string; value: string; content: stri
 })));
 const currentModeOption = computed(() => modeOptions.value.find((item) => item.value === trackForm.mode) ?? null);
 const resolutionValues = computed(() => {
-  const values = selectedModeCapability.value?.resolutionOptions.filter(Boolean) ?? [];
-  return values.length ? values : [...COMMON_VIDEO_RESOLUTIONS];
+  return listVideoResolutionOptions(selectedModeCapability.value, trackForm.duration);
 });
 const durationValues = computed(() => {
-  const values = selectedModeCapability.value?.durationOptions.filter((value) => Number.isFinite(value) && value > 0) ?? [];
-  return values.length ? values : [...COMMON_VIDEO_DURATIONS];
+  return listVideoDurationOptions(selectedModeCapability.value);
 });
 const resolutionOptions = computed(() => resolutionValues.value.map((value) => ({ label: value, value })));
 const durationOptions = computed(() => durationValues.value.map((value) => ({ label: t('production.workbench.seconds', { count: value }), value })));
 const audioRequired = computed(() => selectedModeCapability.value?.audioSupport === 'required' || getModeRequirement(trackForm.mode).audio > 0);
 const audioDisabled = computed(() => selectedModeCapability.value?.audioSupport === 'none');
+const generationCapabilityReady = computed(() => Boolean(
+  selectedModeCapability.value
+  && durationValues.value.includes(trackForm.duration)
+  && resolutionValues.value.includes(trackForm.resolution),
+));
 
 function isOk(response: { code: number; msg: string }): boolean {
   return response.code === 200;
@@ -494,19 +495,21 @@ function normalizeModeValue(value: string): ProductionVideoModeValue {
 }
 
 function modeToPreset(value: ProductionVideoModeValue | null): string {
-  return serializeVideoMode(value) || DEFAULT_VIDEO_MODE;
+  return serializeVideoMode(value);
 }
 
 function getModeRequirement(mode: string) {
   return getVideoModeReferenceLimits(mode);
 }
 
-function getFallbackMode(): string {
-  if (projectVideoMode.value && availableModeKeys.value.includes(projectVideoMode.value)) {
-    return projectVideoMode.value;
-  }
+function trackHasStoryboardImage(track: ProductionVideoTrackItem | null): boolean {
+  return Boolean(track?.storyboardIds.some((id) => storyboards.value.find((item) => item.id === id)?.imageUrl));
+}
 
-  return modeOptions.value[0]?.value ?? DEFAULT_VIDEO_MODE;
+function getFallbackMode(track: ProductionVideoTrackItem | null = currentTrack.value): string {
+  if (trackHasStoryboardImage(track) && availableModeKeys.value.includes('singleImage')) return 'singleImage';
+  if (availableModeKeys.value.includes('text')) return 'text';
+  return modeOptions.value[0]?.value ?? '';
 }
 
 function ensureTrackFormSelections(): void {
@@ -515,12 +518,12 @@ function ensureTrackFormSelections(): void {
     trackForm.mode = getFallbackMode();
   }
 
-  if (!resolutionValues.value.includes(trackForm.resolution)) {
-    trackForm.resolution = resolutionValues.value[0] ?? DEFAULT_RESOLUTION;
+  if (!durationValues.value.includes(trackForm.duration)) {
+    trackForm.duration = durationValues.value[0] ?? 0;
   }
 
-  if (!durationValues.value.includes(trackForm.duration)) {
-    trackForm.duration = Number(durationValues.value[0] ?? DEFAULT_DURATION);
+  if (!resolutionValues.value.includes(trackForm.resolution)) {
+    trackForm.resolution = resolutionValues.value[0] ?? '';
   }
 
   if (audioDisabled.value) {
@@ -588,11 +591,14 @@ function syncTrackForm(track: ProductionVideoTrackItem | null): void {
   }
   trackForm.prompt = track.prompt;
   trackForm.duration = track.duration || DEFAULT_DURATION;
-  trackForm.mode = modeToPreset(track.mode);
   trackForm.storyboardIds = [...track.storyboardIds];
+  const storedMode = modeToPreset(track.mode);
+  trackForm.mode = storedMode === 'text' && track.videos.length === 0
+    ? getFallbackMode(track)
+    : storedMode;
   ensureTrackFormSelections();
   if (!referenceDrafts.value[track.id]) {
-    const seeded = buildDefaultReferences(track);
+    const seeded = buildDefaultReferences(track, trackForm.mode);
     referenceDrafts.value = {
       ...referenceDrafts.value,
       [track.id]: seeded,
@@ -600,19 +606,18 @@ function syncTrackForm(track: ProductionVideoTrackItem | null): void {
   }
 }
 
-function buildDefaultReferences(track: ProductionVideoTrackItem): ProductionReferenceInput[] {
+function buildDefaultReferences(track: ProductionVideoTrackItem, mode: string): ProductionReferenceInput[] {
   const firstVideoReferences = track.videos[0]?.references ?? [];
   if (firstVideoReferences.length) {
     return firstVideoReferences;
   }
-  const mode = modeToPreset(track.mode);
   if (mode === 'text') {
     return [];
   }
   return track.storyboardIds
     .map<ProductionReferenceInput | null>((storyboardId, index) => {
       const storyboard = storyboards.value.find((item) => item.id === storyboardId);
-      if (!storyboard) {
+      if (!storyboard?.imageUrl) {
         return null;
       }
       return {
@@ -645,7 +650,7 @@ async function loadVideoCapabilities(): Promise<void> {
     return;
   }
 
-  videoCapabilities.value = response.data.capabilityMatrix.filter((item) => item.modelType === 'video' && item.status === 'ready');
+  videoCapabilities.value = listReadyVideoCapabilities(response.data.capabilityMatrix);
   ensureTrackFormSelections();
 }
 
@@ -655,14 +660,12 @@ async function loadProjectVideoDefaults(): Promise<void> {
     MessagePlugin.error(response.msg);
     projectVideoModelId.value = '';
     projectVideoModelLabel.value = '';
-    projectVideoMode.value = '';
     return;
   }
 
   const project = response.data.projects.find((item) => item.id === props.projectId);
   projectVideoModelId.value = project?.videoModelId ?? '';
   projectVideoModelLabel.value = project?.videoModelLabel ?? '';
-  projectVideoMode.value = project?.videoMode ?? '';
   ensureTrackFormSelections();
 }
 
@@ -783,7 +786,11 @@ async function saveCurrentTrack(showMessage = true): Promise<boolean> {
   if (!props.projectId || !props.contentId || !currentTrack.value) {
     return false;
   }
-  const nextDuration = Math.min(10, Math.max(1, Number(trackForm.duration) || DEFAULT_DURATION));
+  const nextDuration = Number(trackForm.duration);
+  if (!durationValues.value.includes(nextDuration)) {
+    MessagePlugin.warning(t('production.workbench.capabilityUnavailable'));
+    return false;
+  }
   saving.value = true;
   try {
     const response = await window.vtStudio.production.videoTrack.save({
@@ -850,6 +857,8 @@ async function generatePromptsForSelected(): Promise<void> {
       projectId: props.projectId,
       contentId: props.contentId,
       trackIds: [...selectedTrackIds.value],
+      model: effectiveVideoModelId.value || null,
+      mode: normalizeModeValue(trackForm.mode),
     });
     if (!isOk(response)) {
       MessagePlugin.error(response.msg);
@@ -866,6 +875,10 @@ async function generatePromptsForSelected(): Promise<void> {
 async function generateVideoForTracks(trackIds: number[]): Promise<void> {
   if (!props.projectId || !props.contentId || trackIds.length === 0) {
     MessagePlugin.warning(t('production.node.workbench.noTrackSelection'));
+    return;
+  }
+  if (!generationCapabilityReady.value) {
+    MessagePlugin.warning(t('production.workbench.capabilityUnavailable'));
     return;
   }
   if (currentTrack.value && trackIds.includes(currentTrack.value.id)) {
@@ -886,7 +899,7 @@ async function generateVideoForTracks(trackIds: number[]): Promise<void> {
       model: trackForm.model || null,
       mode: normalizeModeValue(trackForm.mode),
       resolution: trackForm.resolution,
-      duration: Math.min(10, Math.max(1, Number(trackForm.duration) || DEFAULT_DURATION)),
+      duration: trackForm.duration,
       audioEnabled: trackForm.audioEnabled,
       referencesByTrackId: Object.fromEntries(trackIds.map((trackId) => [trackId, referenceDrafts.value[trackId] ?? []])),
     });
@@ -1402,7 +1415,7 @@ watch(currentTrack, (track) => {
 });
 
 watch(
-  () => [trackForm.model, trackForm.mode, projectVideoModelId.value, projectVideoMode.value, availableModeKeys.value.join('|'), resolutionValues.value.join('|'), durationValues.value.join('|')] as const,
+  () => [trackForm.model, trackForm.mode, trackForm.duration, projectVideoModelId.value, availableModeKeys.value.join('|'), resolutionValues.value.join('|'), durationValues.value.join('|')] as const,
   () => {
     ensureTrackFormSelections();
   }
@@ -1637,11 +1650,11 @@ onUnmounted(() => {
                     <template #icon><SaveIcon /></template>
                     {{ t('production.node.workbench.promptSelected') }}
                   </VtButton>
-                  <VtButton theme="primary" variant="base" :loading="videoGenerating" @click="generateVideoForTracks([currentTrack.id])">
+                  <VtButton theme="primary" variant="base" :loading="videoGenerating" :disabled="!generationCapabilityReady" @click="generateVideoForTracks([currentTrack.id])">
                     <template #icon><PlayCircleIcon /></template>
                     {{ t('production.workbench.generateCurrentVideo') }}
                   </VtButton>
-                  <VtButton variant="outline" :loading="videoGenerating" :disabled="selectedTrackCount === 0" @click="generateVideoForTracks([...selectedTrackIds])">
+                  <VtButton variant="outline" :loading="videoGenerating" :disabled="selectedTrackCount === 0 || !generationCapabilityReady" @click="generateVideoForTracks([...selectedTrackIds])">
                     <template #icon><VideoIcon /></template>
                     {{ t('production.node.workbench.videoSelected') }}
                   </VtButton>

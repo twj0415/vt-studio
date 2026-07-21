@@ -65,11 +65,22 @@ export interface TextReasoningCapability {
   efforts: ReasoningEffort[];
 }
 
-export interface ModelReferenceLimits {
+export interface ModelReferenceCounts {
   text: number;
   image: number;
   video: number;
   audio: number;
+}
+
+export interface ModelReferenceLimits {
+  /** Legacy-compatible minimum counts. */
+  text: number;
+  image: number;
+  video: number;
+  audio: number;
+  maximum: ModelReferenceCounts;
+  minimumTotal: number;
+  maximumTotal: number | null;
   allowMore: boolean;
   startEnd: boolean;
   optionalEnd: boolean;
@@ -92,11 +103,42 @@ const EMPTY_REFERENCE_LIMITS: ModelReferenceLimits = {
   image: 0,
   video: 0,
   audio: 0,
+  maximum: { text: 0, image: 0, video: 0, audio: 0 },
+  minimumTotal: 0,
+  maximumTotal: 0,
   allowMore: false,
   startEnd: false,
   optionalEnd: false,
   optionalStart: false,
 };
+
+function createReferenceLimits(input: {
+  minimum?: Partial<ModelReferenceCounts>;
+  maximum?: Partial<ModelReferenceCounts>;
+  minimumTotal?: number;
+  maximumTotal?: number | null;
+  allowMore?: boolean;
+  startEnd?: boolean;
+  optionalEnd?: boolean;
+  optionalStart?: boolean;
+} = {}): ModelReferenceLimits {
+  const minimum = { text: 0, image: 0, video: 0, audio: 0, ...input.minimum };
+  const maximum = { text: 0, image: 0, video: 0, audio: 0, ...input.maximum };
+  return {
+    ...minimum,
+    maximum,
+    minimumTotal: input.minimumTotal ?? Object.values(minimum).reduce((total, value) => total + value, 0),
+    maximumTotal: input.maximumTotal ?? Object.values(maximum).reduce((total, value) => total + value, 0),
+    allowMore: input.allowMore ?? false,
+    startEnd: input.startEnd ?? false,
+    optionalEnd: input.optionalEnd ?? false,
+    optionalStart: input.optionalStart ?? false,
+  };
+}
+
+function cloneReferenceLimits(limits: ModelReferenceLimits): ModelReferenceLimits {
+  return { ...limits, maximum: { ...limits.maximum } };
+}
 
 const NO_REASONING_CAPABILITY: TextReasoningCapability = {
   supported: false,
@@ -128,15 +170,15 @@ const HIGH_ONLY_REASONING_EFFORTS: ReasoningEffort[] = [
 export const IMAGE_MODE_PRESETS: readonly ImageModePreset[] = [
   {
     value: IMAGE_GENERATION_MODES.TEXT,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS },
+    referenceLimits: createReferenceLimits(),
   },
   {
     value: IMAGE_GENERATION_MODES.SINGLE_IMAGE,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, image: 1 },
+    referenceLimits: createReferenceLimits({ minimum: { image: 1 }, maximum: { image: 1 } }),
   },
   {
     value: IMAGE_GENERATION_MODES.MULTI_REFERENCE,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, image: 9, allowMore: true },
+    referenceLimits: createReferenceLimits({ minimum: { image: 1 }, maximum: { image: 9 }, allowMore: true }),
   },
 ] as const;
 
@@ -144,47 +186,47 @@ export const VIDEO_MODE_PRESETS: readonly VideoModePreset[] = [
   {
     value: VIDEO_SIMPLE_MODES.SINGLE_IMAGE,
     mode: VIDEO_SIMPLE_MODES.SINGLE_IMAGE,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, image: 1 },
+    referenceLimits: createReferenceLimits({ minimum: { image: 1 }, maximum: { image: 1 } }),
   },
   {
     value: VIDEO_SIMPLE_MODES.START_END_REQUIRED,
     mode: VIDEO_SIMPLE_MODES.START_END_REQUIRED,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, image: 2, startEnd: true },
+    referenceLimits: createReferenceLimits({ minimum: { image: 2 }, maximum: { image: 2 }, startEnd: true }),
   },
   {
     value: VIDEO_SIMPLE_MODES.END_FRAME_OPTIONAL,
     mode: VIDEO_SIMPLE_MODES.END_FRAME_OPTIONAL,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, image: 1, startEnd: true, optionalEnd: true },
+    referenceLimits: createReferenceLimits({ minimum: { image: 1 }, maximum: { image: 2 }, startEnd: true, optionalEnd: true }),
   },
   {
     value: VIDEO_SIMPLE_MODES.START_FRAME_OPTIONAL,
     mode: VIDEO_SIMPLE_MODES.START_FRAME_OPTIONAL,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, image: 1, startEnd: true, optionalStart: true },
+    referenceLimits: createReferenceLimits({ minimum: { image: 1 }, maximum: { image: 2 }, startEnd: true, optionalStart: true }),
   },
   {
     value: VIDEO_SIMPLE_MODES.TEXT,
     mode: VIDEO_SIMPLE_MODES.TEXT,
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS },
+    referenceLimits: createReferenceLimits(),
   },
   {
     value: 'imageReference:3',
     mode: ['imageReference:3'],
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, image: 3, allowMore: true },
+    referenceLimits: createReferenceLimits({ maximum: { image: 3 }, minimumTotal: 1, maximumTotal: 3, allowMore: true }),
   },
   {
     value: 'videoReference:1,imageReference:2',
     mode: ['videoReference:1', 'imageReference:2'],
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, video: 1, image: 2, allowMore: true },
+    referenceLimits: createReferenceLimits({ maximum: { video: 1, image: 2 }, minimumTotal: 1, maximumTotal: 3, allowMore: true }),
   },
   {
     value: 'audioReference:1,imageReference:1',
     mode: ['audioReference:1', 'imageReference:1'],
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, audio: 1, image: 1, allowMore: true },
+    referenceLimits: createReferenceLimits({ maximum: { audio: 1, image: 1 }, minimumTotal: 1, maximumTotal: 2, allowMore: true }),
   },
   {
     value: 'textReference:1,imageReference:1',
     mode: ['textReference:1', 'imageReference:1'],
-    referenceLimits: { ...EMPTY_REFERENCE_LIMITS, text: 1, image: 1, allowMore: true },
+    referenceLimits: createReferenceLimits({ maximum: { text: 1, image: 1 }, minimumTotal: 1, maximumTotal: 2, allowMore: true }),
   },
 ] as const;
 
@@ -192,7 +234,7 @@ export const VIDEO_MODE_PRESET_VALUES = VIDEO_MODE_PRESETS.map((item) => item.va
 export type VideoModePresetValue = (typeof VIDEO_MODE_PRESET_VALUES)[number];
 
 export function getEmptyReferenceLimits(): ModelReferenceLimits {
-  return { ...EMPTY_REFERENCE_LIMITS };
+  return cloneReferenceLimits(EMPTY_REFERENCE_LIMITS);
 }
 
 export function normalizeReasoningEffort(value: unknown, fallback: ReasoningEffort = REASONING_EFFORTS.NONE): ReasoningEffort {
@@ -326,7 +368,7 @@ export function parseVideoModeKey(modeKey: string): VideoSimpleMode | VideoRefer
 
 export function getImageModeReferenceLimits(mode: string | null | undefined): ModelReferenceLimits {
   const key = serializeImageMode(mode);
-  return { ...(IMAGE_MODE_PRESETS.find((item) => item.value === key)?.referenceLimits ?? EMPTY_REFERENCE_LIMITS) };
+  return cloneReferenceLimits(IMAGE_MODE_PRESETS.find((item) => item.value === key)?.referenceLimits ?? EMPTY_REFERENCE_LIMITS);
 }
 
 function parseReferenceToken(token: string): { type: ModelReferenceFileType; count: number } | null {
@@ -361,12 +403,11 @@ export function getVideoModeReferenceLimits(mode: string | readonly string[] | n
   const key = serializeVideoMode(mode);
   const preset = VIDEO_MODE_PRESETS.find((item) => item.value === key);
   if (preset) {
-    return { ...preset.referenceLimits };
+    return cloneReferenceLimits(preset.referenceLimits);
   }
 
   const parsed = Array.isArray(mode) ? mode : key ? key.split(',') : [];
-  const limits = getEmptyReferenceLimits();
-  limits.allowMore = parsed.length > 0;
+  const maximum: ModelReferenceCounts = { text: 0, image: 0, video: 0, audio: 0 };
 
   for (const token of parsed) {
     const reference = parseReferenceToken(token);
@@ -374,21 +415,35 @@ export function getVideoModeReferenceLimits(mode: string | readonly string[] | n
       continue;
     }
 
-    limits[reference.type] += reference.count;
+    maximum[reference.type] += reference.count;
   }
 
-  return limits;
+  const maximumTotal = Object.values(maximum).reduce((total, value) => total + value, 0);
+  return createReferenceLimits({
+    maximum,
+    minimumTotal: maximumTotal > 0 ? 1 : 0,
+    maximumTotal,
+    allowMore: maximumTotal > 0,
+  });
 }
 
 export function getVideoModeInputTypes(mode: string | readonly string[] | null | undefined): ModelReferenceFileType[] {
   const limits = getVideoModeReferenceLimits(mode);
   const inputTypes = new Set<ModelReferenceFileType>([MODEL_REFERENCE_FILE_TYPES.TEXT]);
 
-  if (limits.image > 0) inputTypes.add(MODEL_REFERENCE_FILE_TYPES.IMAGE);
-  if (limits.video > 0) inputTypes.add(MODEL_REFERENCE_FILE_TYPES.VIDEO);
-  if (limits.audio > 0) inputTypes.add(MODEL_REFERENCE_FILE_TYPES.AUDIO);
+  if (limits.maximum.image > 0) inputTypes.add(MODEL_REFERENCE_FILE_TYPES.IMAGE);
+  if (limits.maximum.video > 0) inputTypes.add(MODEL_REFERENCE_FILE_TYPES.VIDEO);
+  if (limits.maximum.audio > 0) inputTypes.add(MODEL_REFERENCE_FILE_TYPES.AUDIO);
 
   return [...inputTypes];
+}
+
+export function getReferenceMinimum(limits: ModelReferenceLimits, type: ModelReferenceFileType): number {
+  return limits[type];
+}
+
+export function getReferenceMaximum(limits: ModelReferenceLimits, type: ModelReferenceFileType): number {
+  return limits.maximum[type];
 }
 
 export function isKnownImageMode(mode: string): mode is ImageGenerationMode {

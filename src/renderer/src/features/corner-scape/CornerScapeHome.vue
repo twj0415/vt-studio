@@ -9,6 +9,7 @@ import VtDialog from '@renderer/components/VtDialog.vue';
 import VtEmptyState from '@renderer/components/VtEmptyState.vue';
 import WorkflowNextStepHint from '@renderer/features/shared/WorkflowNextStepHint.vue';
 import { useAppStore } from '@renderer/stores/app';
+import { PROJECT_IMAGE_QUALITY_VALUES, type ProjectImageQuality } from '@shared/constants/dictionaries';
 import { ASSET_TASK_STATUS, GENERATABLE_ASSET_TYPES, type AssetAudioSummary, type AssetItem, type GeneratableAssetType } from '@shared/types/assets';
 
 const POLL_INTERVAL = 3000;
@@ -26,11 +27,11 @@ const selectedIds = ref<number[]>([]);
 const selectedTypes = ref<GeneratableAssetType[]>([...GENERATABLE_ASSET_TYPES]);
 const keyword = ref('');
 const defaultImageModel = ref<string | null>(null);
-const defaultResolution = ref<'1K' | '2K' | '4K'>('1K');
+const defaultResolution = ref<ProjectImageQuality>('1K');
 const batchSize = ref(5);
 const batchForm = reactive({
   model: '',
-  resolution: '1K' as '1K' | '2K' | '4K',
+  resolution: '1K' as ProjectImageQuality,
   extraInstruction: '',
 });
 
@@ -39,7 +40,7 @@ const currentAsset = ref<AssetItem | null>(null);
 const editForm = reactive({
   prompt: '',
   model: '',
-  resolution: '1K' as '1K' | '2K' | '4K',
+  resolution: '1K' as ProjectImageQuality,
   audioAssetId: null as number | null,
 });
 const detailVisible = ref(false);
@@ -61,6 +62,7 @@ const runningImageIds = computed(() => assets.value.filter((asset) => asset.imag
 const runningAudioIds = computed(() => assets.value.filter((asset) => asset.audioBindStatus === ASSET_TASK_STATUS.RUNNING).map((asset) => asset.id));
 const audioOptions = computed(() => audioAssets.value.map((audio) => ({ label: `${audio.name}${audio.voiceGender ? ` / ${audio.voiceGender}` : ''}`, value: audio.id })));
 const typeOptions = computed(() => GENERATABLE_ASSET_TYPES.map((type) => ({ label: t(`assets.type.${type}`), value: type })));
+const imageQualityOptions = computed(() => PROJECT_IMAGE_QUALITY_VALUES.map((value) => ({ label: value, value })));
 const hasActiveFilters = computed(() => keyword.value.trim().length > 0 || selectedTypes.value.length !== GENERATABLE_ASSET_TYPES.length);
 const cornerStatusSummary = computed(() => ({
   total: filteredAssets.value.length,
@@ -539,7 +541,7 @@ onUnmounted(() => {
         </label>
         <label>
           <span>{{ t('cornerScape.batch.resolution') }}</span>
-          <t-select v-model="batchForm.resolution" :options="['1K', '2K', '4K'].map((value) => ({ label: value, value }))" />
+          <t-select v-model="batchForm.resolution" :options="imageQualityOptions" />
         </label>
         <label>
           <span>{{ t('cornerScape.batch.extra') }}</span>
@@ -642,7 +644,7 @@ onUnmounted(() => {
           </label>
           <label>
             <span>{{ t('cornerScape.drawer.resolution') }}</span>
-            <t-select v-model="editForm.resolution" :options="['1K', '2K', '4K'].map((value) => ({ label: value, value }))" />
+            <t-select v-model="editForm.resolution" :options="imageQualityOptions" />
           </label>
         </div>
         <div class="corner-drawer-actions">

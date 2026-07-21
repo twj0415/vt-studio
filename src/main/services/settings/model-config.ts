@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { getTextReasoningCapability } from '@shared/constants/model-capabilities';
+import {
+  findModelOperation,
+  isReadyModelOperation,
+  validateModelOperationReferences,
+  validateModelOperationSelection,
+} from '@shared/model-capability-options';
 import { VT_STATUS } from '@shared/constants/status';
 import { toPublicSecretState } from '@shared/security/secrets';
 import type {
@@ -24,6 +30,7 @@ import type {
   ResourceTestPayload,
   ResourceTestResult,
 } from '@shared/types/model-config';
+import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
 import { getDatabase } from '../database';
 import { createError } from '../result';
 import { getVendorRows, parseJsonObject, parseModelList, upsertVendorRecord, type VendorRow } from '../model/storage';
@@ -37,8 +44,6 @@ import {
 } from '../model/connection-projection';
 import {
   buildCapabilityMatrixForConnections,
-  getDefaultRegisteredModelModeKey,
-  getRegisteredModelModeKeys,
   normalizeRegisteredModel,
   registeredModelToVendorModel,
   vendorModelToRegisteredModel,
@@ -135,6 +140,10 @@ const SERVICE_META: Record<
         videoModes: ['text', 'singleImage'],
         durationOptions: [6, 10],
         resolutionOptions: ['768P', '1080P'],
+        durationResolutionMap: [
+          { duration: [6], resolution: ['768P', '1080P'] },
+          { duration: [10], resolution: ['768P'] },
+        ],
         aspectRatioOptions: ['16:9', '9:16'],
         audioSupport: 'none',
       },
@@ -143,9 +152,13 @@ const SERVICE_META: Record<
         displayName: '海螺 2.3 极速版',
         modelName: 'MiniMax-Hailuo-2.3-Fast',
         type: 'video',
-        videoModes: ['text', 'singleImage'],
+        videoModes: ['singleImage'],
         durationOptions: [6, 10],
         resolutionOptions: ['768P', '1080P'],
+        durationResolutionMap: [
+          { duration: [6], resolution: ['768P', '1080P'] },
+          { duration: [10], resolution: ['768P'] },
+        ],
         aspectRatioOptions: ['16:9', '9:16'],
         audioSupport: 'none',
       },
@@ -516,6 +529,10 @@ function getBindings(): CapabilityBindingMap {
   return bindings && typeof bindings === 'object' ? bindings : {};
 }
 
+export function getCapabilityBindings(): CapabilityBindingMap {
+  return getBindings();
+}
+
 function saveBindings(bindings: CapabilityBindingMap): void {
   saveSettingJson(BINDINGS_KEY, bindings);
 }
@@ -530,24 +547,6 @@ function isBindingValid(connections: ApiConnection[], capability: ModelCapabilit
   return Boolean(connection && connection.status === 'ready' && model?.type === capability);
 }
 
-function findDefaultBinding(connections: ApiConnection[], capability: ModelCapability): CapabilityBindingMap[ModelCapability] {
-  for (const connection of connections) {
-    if (connection.status !== 'ready') {
-      continue;
-    }
-
-    const model = connection.models.find((item) => item.type === capability);
-    if (model) {
-      return {
-        connectionId: connection.id,
-        modelName: model.modelName,
-      };
-    }
-  }
-
-  return undefined;
-}
-
 function ensureDefaultBindings(connections: ApiConnection[]): void {
   const bindings = getBindings();
   let changed = false;
@@ -557,11 +556,7 @@ function ensureDefaultBindings(connections: ApiConnection[]): void {
       continue;
     }
 
-    const fallback = findDefaultBinding(connections, capability);
-    if (fallback) {
-      bindings[capability] = fallback;
-      changed = true;
-    } else if (bindings[capability]) {
+    if (bindings[capability]) {
       delete bindings[capability];
       changed = true;
     }
@@ -668,6 +663,37 @@ function findModel(connection: ApiConnection, modelName: string): RegisteredMode
   }
 
   return model;
+}
+
+function splitRuntimeModelId(modelId: string): { connectionId: string; modelName: string } {
+  const [connectionId, modelName] = modelId.split(/:(.+)/);
+  if (!connectionId || !modelName) {
+    throw createError(VT_STATUS.INVALID_PARAMS, '模型 ID 格式必须是 connectionId:modelName');
+  }
+  return { connectionId, modelName };
+}
+
+export function getReadyModelOperationCapability(
+  modelId: string,
+  operationIdOrModeKey: string,
+  expectedType?: ModelCapability,
+): ModelCapabilityMatrixItem {
+  const { connectionId, modelName } = splitRuntimeModelId(modelId);
+  const connection = findConnection(connectionId);
+  assertConnectionReady(connection);
+  const model = findModel(connection, modelName);
+  if (expectedType && model.type !== expectedType) {
+    throw createError(VT_STATUS.INVALID_PARAMS, `模型 ${modelName} 不是${CAPABILITY_LABELS[expectedType]}`);
+  }
+  const capability = findModelOperation(
+    buildCapabilityMatrixForConnections([connection]),
+    modelId,
+    operationIdOrModeKey,
+  );
+  if (!capability || !isReadyModelOperation(capability)) {
+    throw createError(VT_STATUS.MODEL_NOT_CONFIGURED, `模型 ${modelName} 的操作 ${operationIdOrModeKey || 'default'} 不可用`);
+  }
+  return capability;
 }
 
 function buildCapabilitySummaries(connections: ApiConnection[], bindings: CapabilityBindingMap): CapabilitySummary[] {
@@ -1070,11 +1096,13 @@ export function deleteApiConnection(payload: ApiConnectionDeletePayload): ApiCon
 export async function testApiConnection(payload: ApiConnectionTestPayload): Promise<ApiConnectionTestResult> {
   const connection = findConnection(payload.connectionId);
   const model = findModel(connection, payload.modelName);
+  const modelId = `${connection.id}:${model.modelName}`;
 
   assertConnectionReady(connection);
   syncConnectionToVendor(connection);
 
   if (model.type === 'text') {
+    getReadyModelOperationCapability(modelId, '', 'text');
     return runVendorTextTest({
       vendorId: connection.id,
       modelName: model.modelName,
@@ -1085,6 +1113,17 @@ export async function testApiConnection(payload: ApiConnectionTestPayload): Prom
   }
 
   if (model.type === 'image') {
+    if (!payload.imageMode) throw createError(VT_STATUS.INVALID_PARAMS, '请选择图片生成操作');
+    const capability = getReadyModelOperationCapability(modelId, payload.imageMode, 'image');
+    try {
+      validateModelOperationSelection(capability, {
+        size: payload.imageSize,
+        aspectRatio: payload.aspectRatio,
+      });
+      validateModelOperationReferences(capability, { image: payload.referenceImages?.length ?? 0 });
+    } catch (error) {
+      throw createError(VT_STATUS.INVALID_PARAMS, error instanceof Error ? error.message : '图片模型参数无效');
+    }
     return runVendorImageTest({
       vendorId: connection.id,
       modelName: model.modelName,
@@ -1097,11 +1136,23 @@ export async function testApiConnection(payload: ApiConnectionTestPayload): Prom
   }
 
   if (model.type === 'video') {
-    const modeKeys = getRegisteredModelModeKeys(model);
+    if (!payload.videoMode) throw createError(VT_STATUS.INVALID_PARAMS, '请选择视频生成操作');
+    const capability = getReadyModelOperationCapability(modelId, payload.videoMode, 'video');
+    try {
+      validateModelOperationSelection(capability, {
+        duration: payload.duration,
+        resolution: payload.resolution,
+        aspectRatio: payload.videoAspectRatio,
+        audio: payload.audio,
+      });
+      validateModelOperationReferences(capability, { image: payload.referenceImages?.length ?? 0 });
+    } catch (error) {
+      throw createError(VT_STATUS.INVALID_PARAMS, error instanceof Error ? error.message : '视频模型参数无效');
+    }
     return runVendorVideoTest({
       vendorId: connection.id,
       modelName: model.modelName,
-      mode: payload.videoMode || (modeKeys.includes('text') ? 'text' : getDefaultRegisteredModelModeKey(model)),
+      mode: payload.videoMode,
       prompt: payload.prompt,
       duration: payload.duration,
       resolution: payload.resolution,
@@ -1137,6 +1188,15 @@ export function saveResourceBinding(payload: ResourceBindingSavePayload): Resour
   const model = findModel(connection, payload.binding.modelName);
   if (model.type !== payload.capability) {
     throw createError(VT_STATUS.INVALID_PARAMS, '模型类型和能力不匹配');
+  }
+  const modelId = `${connection.id}:${model.modelName}`;
+  const hasReadyOperation = buildCapabilityMatrixForConnections(getStoredConnections()).some((item) => (
+    item.modelId === modelId
+    && item.modelType === payload.capability
+    && isReadyModelOperation(item)
+  ));
+  if (!hasReadyOperation) {
+    throw createError(VT_STATUS.MODEL_NOT_CONFIGURED, '当前模型没有可用操作，请先检查模型能力和连接状态');
   }
 
   bindings[payload.capability] = payload.binding;

@@ -211,3 +211,16 @@ html.dark[data-theme-preset='work'] {
   --vt-td-brand-9: #bddcff;
   --vt-td-brand-10: #e0f0ff;
 }
+
+:root {
+  --vt-border-subtle: color-mix(in srgb, var(--vt-line-soft) 78%, transparent);
+  --vt-fill-subtle: color-mix(in srgb, var(--vt-surface-raised) 78%, var(--vt-surface-app));
+  --vt-fill-hover: color-mix(in srgb, var(--vt-brand) 8%, var(--vt-surface-raised));
+  --vt-text-tertiary: color-mix(in srgb, var(--vt-text-muted) 82%, transparent);
+  --vt-focus-ring: 0 0 0 2px color-mix(in srgb, var(--vt-brand) 28%, transparent);
+  --vt-glow-brand: 0 0 0 1px color-mix(in srgb, var(--vt-brand) 18%, transparent), 0 12px 34px color-mix(in srgb, var(--vt-brand) 12%, transparent);
+  --vt-motion-fast: 150ms;
+  --vt-motion-base: 220ms;
+  --vt-motion-slow: 300ms;
+  --vt-ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+}

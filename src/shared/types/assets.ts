@@ -196,7 +196,7 @@ export interface AssetGenerateAcceptedResult {
 export interface AssetImagePayload extends AssetProjectPayload {
   assetId: number;
   model: string;
-  resolution: ProjectImageQuality;
+  resolution: ProjectImageQuality | null;
   prompt?: string | null;
   referenceImageDataUrl?: string | null;
 }
@@ -204,7 +204,7 @@ export interface AssetImagePayload extends AssetProjectPayload {
 export interface AssetBatchImagePayload extends AssetProjectPayload {
   assetIds: number[];
   model: string;
-  resolution: ProjectImageQuality;
+  resolution: ProjectImageQuality | null;
   concurrentCount?: number | null;
 }
 

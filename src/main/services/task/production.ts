@@ -6,6 +6,7 @@ export type ProductionTaskCategory =
   | '生成资源图'
   | '生成导演计划'
   | '生成分镜表'
+  | '智能拆分分镜'
   | '生成分镜图'
   | '生成视频提示词'
   | '生成视频'

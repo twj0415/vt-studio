@@ -40,6 +40,7 @@ export interface ProjectModelOption {
   displayName: string;
   type: 'image' | 'video';
   modes?: ProjectVideoModeOption[];
+  imageQualityOptions?: ProjectImageQuality[];
 }
 
 export interface ProjectManualTab {
@@ -96,6 +97,8 @@ export interface ProjectPageStateResult {
   directorManuals: ProjectManualSummary[];
   imageQualityOptions: ProjectImageQuality[];
   videoRatioOptions: ProjectVideoRatio[];
+  defaultImageModelId: string;
+  defaultVideoModelId: string;
 }
 
 export interface ProjectSavePayload {
@@ -108,7 +111,7 @@ export interface ProjectSavePayload {
   imageModelId: string;
   imageQuality: ProjectImageQuality;
   videoModelId: string;
-  videoMode: string;
+  videoMode?: string;
   videoRatio: ProjectVideoRatio;
   visualManualId: number;
   directorManualId: number;

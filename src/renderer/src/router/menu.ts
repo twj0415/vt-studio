@@ -12,15 +12,6 @@ export const globalMenus: MenuModule[] = [
     status: 'planned',
   },
   {
-    id: 'M-014',
-    titleKey: 'route.aiToolLibrary',
-    shortTitleKey: 'routeShort.aiToolLibrary',
-    routeName: 'ai-tool-library',
-    scope: 'global',
-    descriptionKey: 'routeDescription.aiToolLibrary',
-    status: 'planned',
-  },
-  {
     id: 'M-013',
     titleKey: 'route.resourceLibrary',
     shortTitleKey: 'routeShort.resourceLibrary',
@@ -36,6 +27,15 @@ export const globalMenus: MenuModule[] = [
     routeName: 'tasks',
     scope: 'global',
     descriptionKey: 'routeDescription.tasks',
+    status: 'planned',
+  },
+  {
+    id: 'M-014',
+    titleKey: 'route.aiToolLibrary',
+    shortTitleKey: 'routeShort.aiToolLibrary',
+    routeName: 'ai-tool-library',
+    scope: 'global',
+    descriptionKey: 'routeDescription.aiToolLibrary',
     status: 'planned',
   },
   {
@@ -58,62 +58,4 @@ export const projectWorkspaceRouteNames: readonly ProjectRouteName[] = [
   'export',
 ];
 
-const projectMenuItems: MenuModule[] = [
-  {
-    id: 'M-015',
-    titleKey: 'route.projectOverview',
-    shortTitleKey: 'routeShort.projectOverview',
-    routeName: 'project-overview',
-    scope: 'project',
-    descriptionKey: 'routeDescription.projectOverview',
-    status: 'planned',
-  },
-  {
-    id: 'M-004',
-    titleKey: 'route.novel',
-    shortTitleKey: 'routeShort.novel',
-    routeName: 'novel',
-    scope: 'project',
-    descriptionKey: 'routeDescription.novel',
-    status: 'planned',
-    novelOnly: true,
-  },
-  {
-    id: 'M-006',
-    titleKey: 'route.assets',
-    shortTitleKey: 'routeShort.assets',
-    routeName: 'assets',
-    scope: 'project',
-    descriptionKey: 'routeDescription.assets',
-    status: 'planned',
-  },
-  {
-    id: 'M-007',
-    titleKey: 'route.corner-scape',
-    shortTitleKey: 'routeShort.corner-scape',
-    routeName: 'corner-scape',
-    scope: 'project',
-    descriptionKey: 'routeDescription.corner-scape',
-    status: 'planned',
-  },
-  {
-    id: 'M-008',
-    titleKey: 'route.production',
-    shortTitleKey: 'routeShort.production',
-    routeName: 'production',
-    scope: 'project',
-    descriptionKey: 'routeDescription.production',
-    status: 'planned',
-  },
-  {
-    id: 'M-010',
-    titleKey: 'route.export',
-    shortTitleKey: 'routeShort.export',
-    routeName: 'export',
-    scope: 'project',
-    descriptionKey: 'routeDescription.export',
-    status: 'planned',
-  },
-];
-
-export const projectMenus: MenuModule[] = projectMenuItems;
+export const projectMenus: MenuModule[] = [];

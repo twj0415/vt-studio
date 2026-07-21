@@ -6,6 +6,8 @@ import {
   PROJECT_TEMPLATE_TYPES,
   PROJECT_VIDEO_RATIOS,
 } from '@shared/constants/dictionaries';
+import VtDialog from '@renderer/components/VtDialog.vue';
+import VtStatusTip from '@renderer/components/VtStatusTip.vue';
 import type {
   ProjectImageQuality,
   ProjectManualSummary,
@@ -28,6 +30,8 @@ const props = defineProps<{
   directorManuals: ProjectManualSummary[];
   imageQualityOptions: ProjectImageQuality[];
   videoRatioOptions: ProjectVideoRatio[];
+  defaultImageModelId: string;
+  defaultVideoModelId: string;
 }>();
 
 const emit = defineEmits<{
@@ -48,7 +52,6 @@ interface ProjectFormState {
   imageModelId: string;
   imageQuality: ProjectSavePayload['imageQuality'];
   videoModelId: string;
-  videoMode: string;
   videoRatio: ProjectSavePayload['videoRatio'];
   visualManualId: number;
   directorManualId: number;
@@ -62,7 +65,6 @@ const form = reactive<ProjectFormState>({
   imageModelId: '',
   imageQuality: PROJECT_IMAGE_QUALITIES.ONE_K,
   videoModelId: '',
-  videoMode: '',
   videoRatio: PROJECT_VIDEO_RATIOS.LANDSCAPE,
   visualManualId: 0,
   directorManualId: 0,
@@ -72,8 +74,25 @@ const templateTypeOptions = computed<Array<{ label: string; value: ProjectTempla
   { label: t('project.templateType.aiShortDrama'), value: PROJECT_TEMPLATE_TYPES.AI_SHORT_DRAMA },
 ]);
 
-const selectedVideoModel = computed(() => props.videoModels.find((item) => item.modelId === form.videoModelId) ?? null);
-const videoModeOptions = computed(() => selectedVideoModel.value?.modes ?? []);
+const selectedImageModel = computed(() => props.imageModels.find((item) => item.modelId === form.imageModelId) ?? null);
+const availableImageQualityOptions = computed(() => selectedImageModel.value?.imageQualityOptions ?? []);
+const hasImageQualityOptions = computed(() => availableImageQualityOptions.value.length > 0);
+const imageModelNeedsReselection = computed(() => Boolean(
+  props.mode === 'edit'
+  && props.project?.imageModelId
+  && !props.imageModels.some((item) => item.modelId === props.project?.imageModelId)
+  && !form.imageModelId,
+));
+const videoModelNeedsReselection = computed(() => Boolean(
+  props.mode === 'edit'
+  && props.project?.videoModelId
+  && !props.videoModels.some((item) => item.modelId === props.project?.videoModelId)
+  && !form.videoModelId,
+));
+
+function resolveDefaultModelId(models: ProjectModelOption[], configuredId: string): string {
+  return models.some((model) => model.modelId === configuredId) ? configuredId : '';
+}
 
 function resetForm(): void {
   form.id = undefined;
@@ -81,17 +100,26 @@ function resetForm(): void {
   form.name = '';
   form.genre = '';
   form.description = '';
-  form.imageModelId = props.imageModels[0]?.modelId ?? '';
-  form.imageQuality = PROJECT_IMAGE_QUALITIES.ONE_K;
-  form.videoModelId = props.videoModels[0]?.modelId ?? '';
-  form.videoMode = props.videoModels[0]?.modes?.[0]?.value ?? '';
+  form.imageModelId = resolveDefaultModelId(props.imageModels, props.defaultImageModelId);
+  form.imageQuality = props.imageModels.find((item) => item.modelId === form.imageModelId)?.imageQualityOptions?.[0]
+    ?? PROJECT_IMAGE_QUALITIES.ONE_K;
+  form.videoModelId = resolveDefaultModelId(props.videoModels, props.defaultVideoModelId);
   form.videoRatio = PROJECT_VIDEO_RATIOS.LANDSCAPE;
   form.visualManualId = props.visualManuals[0]?.id ?? 0;
   form.directorManualId = props.directorManuals[0]?.id ?? 0;
 }
 
 watch(
-  () => [props.visible, props.project, props.imageModels.length, props.videoModels.length, props.visualManuals.length, props.directorManuals.length] as const,
+  () => [
+    props.visible,
+    props.project,
+    props.imageModels.length,
+    props.videoModels.length,
+    props.visualManuals.length,
+    props.directorManuals.length,
+    props.defaultImageModelId,
+    props.defaultVideoModelId,
+  ] as const,
   () => {
     if (!props.visible) {
       return;
@@ -103,10 +131,9 @@ watch(
       form.name = props.project.name;
       form.genre = props.project.genre;
       form.description = props.project.description;
-      form.imageModelId = props.project.imageModelId;
+      form.imageModelId = resolveDefaultModelId(props.imageModels, props.project.imageModelId);
       form.imageQuality = props.project.imageQuality;
-      form.videoModelId = props.project.videoModelId;
-      form.videoMode = props.project.videoMode;
+      form.videoModelId = resolveDefaultModelId(props.videoModels, props.project.videoModelId);
       form.videoRatio = props.project.videoRatio;
       form.visualManualId = props.project.visualManualId;
       form.directorManualId = props.project.directorManualId;
@@ -118,27 +145,18 @@ watch(
   { immediate: true },
 );
 
-watch(
-  () => form.videoModelId,
-  (nextValue, previousValue) => {
-    if (!nextValue || nextValue === previousValue) {
-      return;
-    }
-
-    const nextModel = props.videoModels.find((item) => item.modelId === nextValue);
-    const nextMode = nextModel?.modes?.[0]?.value ?? '';
-    if (!videoModeOptions.value.some((item) => item.value === form.videoMode)) {
-      form.videoMode = nextMode;
-    }
-  },
-);
+watch(() => form.imageModelId, () => {
+  if (!availableImageQualityOptions.value.includes(form.imageQuality)) {
+    form.imageQuality = availableImageQualityOptions.value[0] ?? PROJECT_IMAGE_QUALITIES.ONE_K;
+  }
+});
 
 function submit(): void {
   if (!form.name.trim() || !form.genre.trim() || !form.description.trim()) {
     MessagePlugin.warning(t('project.form.validation.baseInfo'));
     return;
   }
-  if (!form.imageModelId || !form.videoModelId || !form.videoMode) {
+  if (!form.imageModelId || !form.videoModelId) {
     MessagePlugin.warning(t('project.form.validation.models'));
     return;
   }
@@ -152,11 +170,12 @@ function submit(): void {
 </script>
 
 <template>
-  <t-dialog
+  <VtDialog
     :visible="visible"
-    :header="mode === 'edit' ? t('project.form.editTitle') : t('project.form.createTitle')"
+    :title="mode === 'edit' ? t('project.form.editTitle') : t('project.form.createTitle')"
     width="860px"
-    :confirm-btn="t('project.form.save')"
+    :confirm-text="t('project.form.save')"
+    :cancel-text="t('project.cancel')"
     :confirm-loading="saving"
     @update:visible="(value) => emit('update:visible', value)"
     @confirm="submit"
@@ -177,27 +196,33 @@ function submit(): void {
           <t-input v-model="form.genre" :placeholder="t('project.form.genrePlaceholder')" />
         </t-form-item>
 
-        <t-form-item :label="t('project.form.imageQuality')">
-          <t-radio-group v-model="form.imageQuality" variant="default-filled">
-            <t-radio-button v-for="item in imageQualityOptions" :key="item" :value="item">{{ item }}</t-radio-button>
-          </t-radio-group>
-        </t-form-item>
-
-        <t-form-item :label="t('project.form.imageModel')">
+        <t-form-item>
+          <template #label>
+            <span class="inline-flex items-center gap-1">
+              <span>{{ t('project.form.imageModel') }}</span>
+              <VtStatusTip v-if="imageModelNeedsReselection" tone="danger" :content="t('project.form.invalidImageModel')" />
+            </span>
+          </template>
           <t-select v-model="form.imageModelId" :placeholder="t('project.form.imageModelPlaceholder')">
             <t-option v-for="item in imageModels" :key="item.modelId" :value="item.modelId" :label="`${item.connectionName} / ${item.displayName}`" />
           </t-select>
         </t-form-item>
 
-        <t-form-item :label="t('project.form.videoModel')">
-          <t-select v-model="form.videoModelId" :placeholder="t('project.form.videoModelPlaceholder')">
-            <t-option v-for="item in videoModels" :key="item.modelId" :value="item.modelId" :label="`${item.connectionName} / ${item.displayName}`" />
-          </t-select>
+        <t-form-item v-if="hasImageQualityOptions" :label="t('project.form.imageQuality')">
+          <t-radio-group v-model="form.imageQuality" variant="default-filled">
+            <t-radio-button v-for="item in availableImageQualityOptions" :key="item" :value="item">{{ item }}</t-radio-button>
+          </t-radio-group>
         </t-form-item>
 
-        <t-form-item :label="t('project.form.videoMode')">
-          <t-select v-model="form.videoMode" :placeholder="t('project.form.videoModePlaceholder')">
-            <t-option v-for="item in videoModeOptions" :key="item.value" :value="item.value" :label="item.label" />
+        <t-form-item>
+          <template #label>
+            <span class="inline-flex items-center gap-1">
+              <span>{{ t('project.form.videoModel') }}</span>
+              <VtStatusTip v-if="videoModelNeedsReselection" tone="danger" :content="t('project.form.invalidVideoModel')" />
+            </span>
+          </template>
+          <t-select v-model="form.videoModelId" :placeholder="t('project.form.videoModelPlaceholder')">
+            <t-option v-for="item in videoModels" :key="item.modelId" :value="item.modelId" :label="`${item.connectionName} / ${item.displayName}`" />
           </t-select>
         </t-form-item>
 
@@ -224,5 +249,5 @@ function submit(): void {
         <t-textarea v-model="form.description" :autosize="{ minRows: 4, maxRows: 8 }" :placeholder="t('project.form.descriptionPlaceholder')" />
       </t-form-item>
     </t-form>
-  </t-dialog>
+  </VtDialog>
 </template>

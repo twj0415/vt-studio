@@ -16,10 +16,16 @@ export default {
         line: {
           soft: 'var(--vt-line-soft)',
           strong: 'var(--vt-line-strong)',
+          subtle: 'var(--vt-border-subtle)',
+        },
+        fill: {
+          subtle: 'var(--vt-fill-subtle)',
+          hover: 'var(--vt-fill-hover)',
         },
         text: {
           primary: 'var(--vt-text-primary)',
           secondary: 'var(--vt-text-secondary)',
+          tertiary: 'var(--vt-text-tertiary)',
           muted: 'var(--vt-text-muted)',
         },
         brand: {
@@ -34,6 +40,16 @@ export default {
       },
       boxShadow: {
         panel: 'var(--vt-shadow-panel)',
+        glow: 'var(--vt-glow-brand)',
+        focus: 'var(--vt-focus-ring)',
+      },
+      transitionDuration: {
+        fast: 'var(--vt-motion-fast)',
+        base: 'var(--vt-motion-base)',
+        slow: 'var(--vt-motion-slow)',
+      },
+      transitionTimingFunction: {
+        standard: 'var(--vt-ease-standard)',
       },
       keyframes: {
         'model-test-image-reveal': {

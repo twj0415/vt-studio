@@ -3,8 +3,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { AddIcon, DeleteIcon, EditIcon, PlayCircleIcon, RefreshIcon, SwapIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
-import type { ModelAudioSupport, ReasoningEffort, TextReasoningCapability } from '@shared/constants/model-capabilities';
-import type { ImageGenerationMode, ProjectImageQuality, ProjectVideoRatio, VideoGenerationMode } from '@shared/constants/dictionaries';
+import type { ReasoningEffort, TextReasoningCapability } from '@shared/constants/model-capabilities';
+import type { ImageGenerationMode, ProjectImageQuality, ProjectVideoRatio } from '@shared/constants/dictionaries';
+import { isReadyModelOperation } from '@shared/model-capability-options';
+import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
 import type { ApiConnection, ApiConnectionDraft, ApiConnectionTestResult, ApiServiceType, CapabilitySummary, ModelCapability, RegisteredModel } from '@shared/types/model-config';
 import ModelTestDialog from './ModelTestDialog.vue';
 
@@ -14,12 +16,7 @@ interface ModelTestDialogModel {
   type: ModelCapability;
   think?: boolean;
   reasoning?: TextReasoningCapability;
-  imageModes?: ImageGenerationMode[];
-  videoModes?: VideoGenerationMode[];
-  durationOptions?: number[];
-  resolutionOptions?: string[];
-  aspectRatioOptions?: string[];
-  audioSupport?: ModelAudioSupport;
+  operations: ModelCapabilityMatrixItem[];
 }
 
 interface ModelTestSubmitPayload {
@@ -63,6 +60,7 @@ const loading = ref(false);
 const saving = ref(false);
 const connections = ref<ApiConnection[]>([]);
 const capabilities = ref<CapabilitySummary[]>([]);
+const capabilityMatrix = ref<ModelCapabilityMatrixItem[]>([]);
 const templates = ref<ServiceTemplate[]>([]);
 const serviceDialogVisible = ref(false);
 const bindingDialogVisible = ref(false);
@@ -115,9 +113,9 @@ const selectableModels = computed(() => {
 });
 const selectedModels = computed(() => selectableModels.value.filter((model) => serviceForm.selectedModelNames.includes(model.modelName)));
 const activeSummary = computed(() => capabilities.value.find((item) => item.capability === activeCapability.value) ?? null);
-const availableConnections = computed(() => connections.value.filter((connection) => connection.models.some((model) => model.type === activeCapability.value)));
+const availableConnections = computed(() => connections.value.filter((connection) => getReadyModelsForConnection(connection, activeCapability.value).length > 0));
 const selectedBindingConnection = computed(() => availableConnections.value.find((connection) => connection.id === bindingForm.connectionId) ?? null);
-const availableModels = computed(() => selectedBindingConnection.value?.models.filter((model) => model.type === activeCapability.value) ?? []);
+const availableModels = computed(() => selectedBindingConnection.value ? getReadyModelsForConnection(selectedBindingConnection.value, activeCapability.value) : []);
 
 function isOk(response: { code: number; msg: string }): boolean {
   return response.code === 200;
@@ -192,23 +190,37 @@ function getModelsByType(type: ModelCapability): RegisteredModel[] {
   return selectableModels.value.filter((model) => model.type === type);
 }
 
-function getConnectionTestModels(connection: ApiConnection): RegisteredModel[] {
-  return connection.models.filter((model) => ['text', 'image', 'video'].includes(model.type));
+function getReadyOperationsForModel(connectionId: string, modelName: string, type?: ModelCapability): ModelCapabilityMatrixItem[] {
+  return capabilityMatrix.value.filter((item) => (
+    item.connectionId === connectionId
+    && item.modelName === modelName
+    && (!type || item.modelType === type)
+    && isReadyModelOperation(item)
+  ));
 }
 
-function toModelTestDialogModel(model: RegisteredModel): ModelTestDialogModel {
+function getReadyModelsForConnection(connection: ApiConnection, type: ModelCapability): RegisteredModel[] {
+  return connection.models.filter((model) => (
+    model.type === type
+    && getReadyOperationsForModel(connection.id, model.modelName, type).length > 0
+  ));
+}
+
+function getConnectionTestModels(connection: ApiConnection): ModelTestDialogModel[] {
+  return connection.models
+    .filter((model) => ['text', 'image', 'video'].includes(model.type))
+    .map((model) => toModelTestDialogModel(model, getReadyOperationsForModel(connection.id, model.modelName, model.type)))
+    .filter((model) => model.operations.length > 0);
+}
+
+function toModelTestDialogModel(model: RegisteredModel, operations: ModelCapabilityMatrixItem[]): ModelTestDialogModel {
   return {
     label: `${model.displayName} (${model.modelName})`,
     modelName: model.modelName,
     type: model.type,
     think: model.think,
     reasoning: model.reasoning,
-    imageModes: model.imageModes ? [...model.imageModes] : undefined,
-    videoModes: cloneVideoModes(model.videoModes),
-    durationOptions: model.durationOptions ? [...model.durationOptions] : undefined,
-    resolutionOptions: model.resolutionOptions ? [...model.resolutionOptions] : undefined,
-    aspectRatioOptions: model.aspectRatioOptions ? [...model.aspectRatioOptions] : undefined,
-    audioSupport: model.audioSupport,
+    operations,
   };
 }
 
@@ -387,6 +399,7 @@ async function loadModelService(): Promise<void> {
     templates.value = templateResponse.data.services as ServiceTemplate[];
     connections.value = listResponse.data.connections;
     capabilities.value = resourceResponse.data.capabilities;
+    capabilityMatrix.value = resourceResponse.data.capabilityMatrix;
   } finally {
     loading.value = false;
   }
@@ -418,9 +431,14 @@ function openEditServiceDialog(connection: ApiConnection): void {
 
 function openBindingDialog(summary: CapabilitySummary): void {
   activeCapability.value = summary.capability;
-  bindingForm.connectionId = summary.binding?.connectionId ?? availableConnections.value[0]?.id ?? '';
+  bindingForm.connectionId = summary.binding && availableConnections.value.some((connection) => connection.id === summary.binding?.connectionId)
+    ? summary.binding.connectionId
+    : availableConnections.value[0]?.id ?? '';
   const connection = availableConnections.value.find((item) => item.id === bindingForm.connectionId);
-  bindingForm.modelName = summary.binding?.modelName ?? connection?.models.find((model) => model.type === summary.capability)?.modelName ?? '';
+  const models = connection ? getReadyModelsForConnection(connection, summary.capability) : [];
+  bindingForm.modelName = summary.binding && models.some((model) => model.modelName === summary.binding?.modelName)
+    ? summary.binding.modelName
+    : models[0]?.modelName ?? '';
   bindingDialogVisible.value = true;
 }
 
@@ -502,6 +520,10 @@ async function saveBinding(): Promise<void> {
     MessagePlugin.warning(t('settings.modelService.validation.bindingRequired'));
     return;
   }
+  if (!availableModels.value.some((model) => model.modelName === bindingForm.modelName)) {
+    MessagePlugin.warning(t('settings.modelService.validation.noTestableModel'));
+    return;
+  }
 
   const response = await window.vtStudio.settings.resource.saveBinding({
     capability: activeCapability.value,
@@ -531,7 +553,7 @@ function openConnectionTestDialog(connection: ApiConnection): void {
 
   const model = models[0];
   modelTestContext.value = { type: 'connection', connection };
-  modelTestModels.value = models.map(toModelTestDialogModel);
+  modelTestModels.value = models;
   modelTestInitialModelName.value = model.modelName;
   modelTestTitle.value = t('settings.modelTestDialog.title');
   modelTestDefaultPrompt.value = getCapabilityTestPrompt(model.type);
@@ -546,13 +568,16 @@ function openCapabilityTestDialog(summary: CapabilitySummary): void {
 
   const connection = connections.value.find((item) => item.id === summary.binding?.connectionId);
   const model = connection?.models.find((item) => item.modelName === summary.binding?.modelName);
-  if (!model) {
+  const operations = model && connection
+    ? getReadyOperationsForModel(connection.id, model.modelName, summary.capability)
+    : [];
+  if (!model || operations.length === 0) {
     MessagePlugin.warning(t('settings.modelService.validation.noTestableModel'));
     return;
   }
 
   modelTestContext.value = { type: 'capability', summary };
-  modelTestModels.value = [toModelTestDialogModel(model)];
+  modelTestModels.value = [toModelTestDialogModel(model, operations)];
   modelTestInitialModelName.value = model.modelName;
   modelTestTitle.value = t('settings.modelTestDialog.title');
   modelTestDefaultPrompt.value = getCapabilityTestPrompt(summary.capability);

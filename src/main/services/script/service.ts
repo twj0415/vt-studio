@@ -1,7 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { dialog } from 'electron';
-import { jsonSchema, tool } from 'ai';
 import { DEPENDENCY_STATUSES } from '@shared/constants/dictionaries';
 import { VT_STATUS } from '@shared/constants/status';
 import { normalizeUnknownError } from '@shared/errors';
@@ -36,7 +35,7 @@ import {
 } from '@shared/types/script';
 import type { ProductionExtractResourcesResult } from '@shared/types/production';
 import { getDatabase, withTransaction } from '../database';
-import { createModelRequestId, invokeText } from '../model';
+import { createModelRequestId, invokeStructuredResult, invokeText, type StructuredResultDiagnostics } from '../model';
 import { createError } from '../result';
 import { getBusinessSettings } from '../settings/business-settings';
 import { getEffectivePromptByType } from '../settings/prompt';
@@ -122,17 +121,14 @@ interface ExtractAssetsToolResult {
 
 type ContentResourceWriteMode = 'assets' | 'drafts';
 
-interface ToolResultRecord {
-  toolName?: string;
-  toolCallId?: string;
-  output?: unknown;
-  result?: unknown;
-}
-
 interface ExtractAssetsModelDiagnostics {
   requestId: string;
   modelKey: 'universalAi';
   status: 'running' | 'returned' | 'parse_failed' | 'normalized' | 'failed';
+  fallbackRequestId?: string;
+  source?: unknown;
+  usedJsonFallback?: boolean;
+  attempts?: unknown;
   rawText?: string;
   finishReason?: unknown;
   usage?: unknown;
@@ -539,24 +535,28 @@ function countAssetTypes(assets: ExtractedAsset[]): Partial<Record<ScriptAssetTy
 }
 
 function buildExtractAssetsModelDiagnostics(
-  requestId: string,
-  result: unknown,
+  diagnostics: StructuredResultDiagnostics,
   output: ExtractAssetsToolResult | null,
 ): ExtractAssetsModelDiagnostics {
-  const record = isRecord(result) ? result : {};
+  const firstAttempt = diagnostics.attempts[0];
+  const finalAttempt = diagnostics.attempts[diagnostics.attempts.length - 1] ?? firstAttempt;
 
   return {
-    requestId,
+    requestId: diagnostics.requestId,
+    fallbackRequestId: diagnostics.fallbackRequestId,
     modelKey: 'universalAi',
     status: output ? 'returned' : 'parse_failed',
-    rawText: clampDiagnosticText(String(record.text ?? '')),
-    finishReason: sanitizeDiagnosticValue(record.finishReason),
-    usage: sanitizeDiagnosticValue(record.usage),
-    warnings: sanitizeDiagnosticValue(record.warnings),
-    response: sanitizeDiagnosticValue(record.response),
-    toolCalls: sanitizeDiagnosticValue(record.toolCalls),
-    toolResults: sanitizeDiagnosticValue(record.toolResults),
-    steps: sanitizeDiagnosticValue(record.steps),
+    source: diagnostics.source,
+    usedJsonFallback: diagnostics.usedJsonFallback,
+    attempts: sanitizeDiagnosticValue(diagnostics.attempts),
+    rawText: clampDiagnosticText(String(finalAttempt?.rawText ?? firstAttempt?.rawText ?? '')),
+    finishReason: sanitizeDiagnosticValue(finalAttempt?.finishReason ?? firstAttempt?.finishReason),
+    usage: sanitizeDiagnosticValue(finalAttempt?.usage ?? firstAttempt?.usage),
+    warnings: sanitizeDiagnosticValue(finalAttempt?.warnings ?? firstAttempt?.warnings),
+    response: sanitizeDiagnosticValue(finalAttempt?.response ?? firstAttempt?.response),
+    toolCalls: sanitizeDiagnosticValue(firstAttempt?.toolCalls),
+    toolResults: sanitizeDiagnosticValue(firstAttempt?.toolResults),
+    steps: sanitizeDiagnosticValue(finalAttempt?.steps ?? firstAttempt?.steps),
     parsed: summarizeExtractAssetsOutput(output),
     recordedAt: Date.now(),
   };
@@ -611,44 +611,6 @@ function parseRegexFromText(text: string): string {
   return normalized.split(/\r?\n/).map((line) => line.trim()).find((line) => line.startsWith('/') && line.lastIndexOf('/') > 0) ?? '';
 }
 
-function tryParseJson(value: string): unknown | null {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-function collectJsonCandidates(text: string): string[] {
-  const normalized = stripThink(text).trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const candidates = new Set<string>();
-  for (const match of normalized.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
-    const content = match[1]?.trim();
-    if (content) {
-      candidates.add(content);
-    }
-  }
-  candidates.add(normalized);
-
-  const objectStart = normalized.indexOf('{');
-  const objectEnd = normalized.lastIndexOf('}');
-  if (objectStart >= 0 && objectEnd > objectStart) {
-    candidates.add(normalized.slice(objectStart, objectEnd + 1));
-  }
-
-  const arrayStart = normalized.indexOf('[');
-  const arrayEnd = normalized.lastIndexOf(']');
-  if (arrayStart >= 0 && arrayEnd > arrayStart) {
-    candidates.add(normalized.slice(arrayStart, arrayEnd + 1));
-  }
-
-  return [...candidates];
-}
-
 function toAssetInputList(value: unknown): ExtractedAssetInput[] {
   if (!Array.isArray(value)) {
     return [];
@@ -673,28 +635,6 @@ function coerceExtractAssetsToolResult(value: unknown): ExtractAssetsToolResult 
   }
 
   return { assetsList, newAssets, existingAssetRefs };
-}
-
-function parseExtractAssetsTextResult(text: string): ExtractAssetsToolResult | null {
-  for (const candidate of collectJsonCandidates(text)) {
-    const parsed = tryParseJson(candidate);
-    const output = coerceExtractAssetsToolResult(parsed);
-    if (output) {
-      return output;
-    }
-  }
-
-  return null;
-}
-
-function getResultToolOutput(result: { toolResults?: ToolResultRecord[]; text?: string | null }): ExtractAssetsToolResult | null {
-  const toolResult = result.toolResults?.find((item) => item.toolName === 'resultTool');
-  const toolOutput = coerceExtractAssetsToolResult(toolResult?.output ?? toolResult?.result);
-  if (toolOutput) {
-    return toolOutput;
-  }
-
-  return parseExtractAssetsTextResult(result.text ?? '');
 }
 
 function buildRegexPrompt(content: string): string {
@@ -895,7 +835,7 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
       '请在每个资产对象里返回 scriptIds，表示该资产属于哪些剧本；如果是已有资产，优先返回 existingAssetRefs 的 id 和 scriptIds。',
       '优先调用 resultTool 返回结果；如果当前模型或供应商无法调用工具，则只输出一个 JSON 对象，不要解释，格式为 {"assetsList":[{"name":"","desc":"","prompt":"","type":"role|scene|tool","scriptIds":[剧本ID]}]}。',
     ].join('\n');
-    const result = await invokeText({
+    const structured = await invokeStructuredResult<ExtractAssetsToolResult>({
       requestId,
       modelKey: 'universalAi',
       system: prompt,
@@ -905,88 +845,64 @@ async function runAssetExtraction(projectId: number, scriptIds: number[], taskId
           content: userContent,
         },
       ],
-      tools: {
-        resultTool: tool<ExtractAssetsToolResult, ExtractAssetsToolResult>({
-          description: '返回剧本中提取到的角色、场景和道具资产列表。',
-          inputSchema: jsonSchema<ExtractAssetsToolResult>({
-            type: 'object',
-            properties: {
-              assetsList: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    name: { type: 'string' },
-                    desc: { type: 'string' },
-                    prompt: { type: 'string' },
-                    type: { type: 'string', enum: ['role', 'scene', 'tool'] },
-                    scriptIds: { type: 'array', items: { type: 'number' } },
-                  },
-                  required: ['name', 'desc', 'type', 'scriptIds'],
-                  additionalProperties: false,
-                },
+      toolDescription: '返回剧本中提取到的角色、场景和道具资产列表。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          assetsList: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                desc: { type: 'string' },
+                prompt: { type: 'string' },
+                type: { type: 'string', enum: ['role', 'scene', 'tool'] },
+                scriptIds: { type: 'array', items: { type: 'number' } },
               },
-              newAssets: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    name: { type: 'string' },
-                    desc: { type: 'string' },
-                    prompt: { type: 'string' },
-                    type: { type: 'string', enum: ['role', 'scene', 'tool'] },
-                    scriptIds: { type: 'array', items: { type: 'number' } },
-                  },
-                  required: ['name', 'desc', 'type', 'scriptIds'],
-                  additionalProperties: false,
-                },
-              },
-              existingAssetRefs: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    id: { type: 'number' },
-                    name: { type: 'string' },
-                    type: { type: 'string', enum: ['role', 'scene', 'tool'] },
-                    scriptIds: { type: 'array', items: { type: 'number' } },
-                  },
-                  required: ['scriptIds'],
-                  additionalProperties: false,
-                },
-              },
+              required: ['name', 'desc', 'type', 'scriptIds'],
+              additionalProperties: false,
             },
-            additionalProperties: false,
-          }),
-          execute: (input) => input,
-        }),
+          },
+          newAssets: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                desc: { type: 'string' },
+                prompt: { type: 'string' },
+                type: { type: 'string', enum: ['role', 'scene', 'tool'] },
+                scriptIds: { type: 'array', items: { type: 'number' } },
+              },
+              required: ['name', 'desc', 'type', 'scriptIds'],
+              additionalProperties: false,
+            },
+          },
+          existingAssetRefs: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'number' },
+                name: { type: 'string' },
+                type: { type: 'string', enum: ['role', 'scene', 'tool'] },
+                scriptIds: { type: 'array', items: { type: 'number' } },
+              },
+              required: ['scriptIds'],
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
       },
+      jsonFallbackExample: '{"assetsList":[{"name":"","desc":"","prompt":"","type":"role","scriptIds":[1]}]}',
+      coerce: coerceExtractAssetsToolResult,
+      diagnosticSummary: summarizeExtractAssetsOutput,
     });
-    let output = getResultToolOutput(result);
-    modelDiagnostics = buildExtractAssetsModelDiagnostics(requestId, result, output);
+    const output = structured.output;
+    modelDiagnostics = buildExtractAssetsModelDiagnostics(structured.diagnostics, structured.toolOutput);
     updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
-    if (!output) {
-      const fallbackRequestId = createModelRequestId();
-      const fallbackResult = await invokeText({
-        requestId: fallbackRequestId,
-        modelKey: 'universalAi',
-        system: [
-          prompt,
-          '当前模型未返回可用工具结果。请只输出纯 JSON，不要解释，不要 Markdown，不要代码块。',
-          '{"assetsList":[{"name":"","desc":"","prompt":"","type":"role","scriptIds":[1]}]}',
-        ].join('\n\n'),
-        messages: [{ role: 'user', content: userContent }],
-      });
-      output = parseExtractAssetsTextResult(fallbackResult.text ?? '');
-      modelDiagnostics = {
-        ...buildExtractAssetsModelDiagnostics(requestId, fallbackResult, output),
-        warnings: sanitizeDiagnosticValue({
-          fallback: 'tools_result_missing_json_retry',
-          fallbackRequestId,
-        }),
-      };
-      updateAssetExtractionTaskDiagnostics(taskId, scriptIds, modelDiagnostics);
-    }
     if (!output) {
       throw createError(VT_STATUS.MODEL_ERROR, '模型没有返回可解析资源，已尝试结构化输出和 JSON 兜底。');
     }

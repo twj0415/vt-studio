@@ -282,6 +282,8 @@ import type {
   ProductionGenerateAcceptedResult,
   ProductionGenerateDerivedAssetsPayload,
   ProductionGenerateStoryboardsPayload,
+  ProductionSmartSplitStoryboardsPayload,
+  ProductionSmartSplitStoryboardsResult,
   ProductionGenerateVideoPayload,
   ProductionGenerateVideoPromptPayload,
   ProductionImageFlowApplyPayload,
@@ -505,6 +507,7 @@ export interface VtStudioApi {
     };
     storyboard: {
       save: (payload: ProductionStoryboardSavePayload) => Promise<VtResponse<ProductionStoryboardSaveResult>>;
+      smartSplit: (payload: ProductionSmartSplitStoryboardsPayload) => Promise<VtResponse<ProductionSmartSplitStoryboardsResult>>;
       delete: (payload: ProductionStoryboardDeletePayload) => Promise<VtResponse<ProductionDeleteResult>>;
       batchDelete: (payload: ProductionBatchDeleteStoryboardsPayload) => Promise<VtResponse<ProductionDeleteResult>>;
       generateImages: (payload: ProductionGenerateStoryboardsPayload) => Promise<VtResponse<ProductionGenerateAcceptedResult>>;

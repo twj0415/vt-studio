@@ -63,6 +63,7 @@ const AI_SHORT_DRAMA_SKILL_PATHS = [
   'production_execution_generate_assets.md',
   'production_execution_storyboard_gen.md',
   'production_execution_storyboard_panel.md',
+  'production_execution_storyboard_split.md',
   'production_execution_storyboard_table.md',
   'references/derive_assets_extraction.md',
   'references/storyboard_generation.md',

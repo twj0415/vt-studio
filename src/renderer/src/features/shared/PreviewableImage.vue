@@ -9,6 +9,8 @@ const props = withDefaults(
     alt?: string;
     heading?: string;
     frameClass?: string;
+    viewportClass?: string;
+    aspectRatio?: string;
     imageClass?: string;
     previewClass?: string;
     disabled?: boolean;
@@ -17,6 +19,8 @@ const props = withDefaults(
     alt: '',
     heading: '',
     frameClass: '',
+    viewportClass: '',
+    aspectRatio: '',
     imageClass: '',
     previewClass: '',
     disabled: false,
@@ -42,7 +46,10 @@ function openPreview(): void {
 
 <template>
   <figure :class="['grid min-w-0 overflow-hidden rounded-lg border border-line-soft bg-surface-raised', frameClass]">
-    <div class="group relative grid min-h-[180px] place-items-center overflow-hidden bg-[#111316]">
+    <div
+      :class="['group relative grid min-h-[180px] place-items-center overflow-hidden bg-[#111316]', viewportClass]"
+      :style="aspectRatio ? { aspectRatio } : undefined"
+    >
       <img :class="['block max-h-[320px] w-full object-contain', imageClass]" :src="src" :alt="alt" />
       <button
         type="button"
@@ -66,9 +73,44 @@ function openPreview(): void {
     </figcaption>
   </figure>
 
-  <t-dialog v-model:visible="previewVisible" :header="previewTitle" width="min(96vw, 1280px)" :footer="false">
-    <div :class="['grid min-h-[70vh] place-items-center overflow-hidden rounded-lg bg-[#08090a] p-3', previewClass]">
-      <img class="block max-h-[82vh] max-w-full object-contain" :src="src" :alt="alt" />
+  <t-dialog
+    v-model:visible="previewVisible"
+    :header="previewTitle"
+    width="min(96vw, 1280px)"
+    top="16px"
+    dialog-class-name="previewable-image-dialog"
+    :footer="false"
+  >
+    <div :class="['previewable-image-dialog-body', previewClass]">
+      <img class="previewable-image-dialog-media" :src="src" :alt="alt" />
     </div>
   </t-dialog>
 </template>
+
+<style scoped>
+.previewable-image-dialog-body {
+  display: grid;
+  height: min(72dvh, calc(100dvh - 124px));
+  min-height: 240px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #08090a;
+  padding: 12px;
+}
+
+.previewable-image-dialog-media {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+@media (max-height: 640px) {
+  .previewable-image-dialog-body {
+    height: calc(100dvh - 108px);
+    min-height: 180px;
+    padding: 8px;
+  }
+}
+</style>

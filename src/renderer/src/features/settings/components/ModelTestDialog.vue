@@ -6,30 +6,22 @@ import { CloseIcon, DownloadIcon, FolderOpenIcon, FullscreenIcon, ImageIcon } fr
 import VtFilePicker from '@renderer/components/VtFilePicker.vue';
 import PreviewableImage from '@renderer/features/shared/PreviewableImage.vue';
 import {
-  COMMON_VIDEO_DURATIONS,
-  COMMON_VIDEO_RESOLUTIONS,
-  DEFAULT_IMAGE_FLOW_RATIOS,
-  IMAGE_GENERATION_MODE_VALUES,
   PROJECT_IMAGE_QUALITY_VALUES,
-  PROJECT_VIDEO_RATIO_VALUES,
-  VIDEO_SIMPLE_MODES,
   type ImageGenerationMode,
   type ProjectImageQuality,
   type ProjectVideoRatio,
-  type VideoGenerationMode,
 } from '@shared/constants/dictionaries';
 import {
-  getImageModeReferenceLimits,
   getTextReasoningCapability,
-  getVideoModeReferenceLimits,
   MODEL_AUDIO_SUPPORTS,
   serializeVideoMode,
   REASONING_EFFORTS,
   resolveSupportedReasoningEffort,
-  type ModelAudioSupport,
   type ReasoningEffort,
   type TextReasoningCapability,
 } from '@shared/constants/model-capabilities';
+import { resolveModelOperationOptions } from '@shared/model-capability-options';
+import type { ModelCapabilityMatrixItem } from '@shared/types/model-capability';
 import type { ApiConnectionTestResult, ModelCapability } from '@shared/types/model-config';
 
 interface ModelTestDialogModel {
@@ -38,12 +30,7 @@ interface ModelTestDialogModel {
   type: ModelCapability;
   think?: boolean;
   reasoning?: TextReasoningCapability;
-  imageModes?: ImageGenerationMode[];
-  videoModes?: VideoGenerationMode[];
-  durationOptions?: number[];
-  resolutionOptions?: string[];
-  aspectRatioOptions?: string[];
-  audioSupport?: ModelAudioSupport;
+  operations?: ModelCapabilityMatrixItem[];
 }
 
 interface ModelTestSubmitPayload {
@@ -120,13 +107,13 @@ const savingFile = ref(false);
 const openingFile = ref(false);
 const readingReferences = ref(false);
 const imageMode = ref<ImageGenerationMode>('text');
-const imageSize = ref<ProjectImageQuality>('1K');
+const imageSize = ref<ProjectImageQuality | ''>('');
 const imageAspectRatio = ref<string>('16:9');
 const imageReferences = ref<ReferencePreviewItem[]>([]);
-const videoMode = ref<string>(VIDEO_SIMPLE_MODES.TEXT);
-const videoDuration = ref<number>(5);
-const videoResolution = ref<string>('720p');
-const videoAspectRatio = ref<ProjectVideoRatio>('16:9');
+const videoMode = ref<string>('text');
+const videoDuration = ref<number>(0);
+const videoResolution = ref<string>('');
+const videoAspectRatio = ref<ProjectVideoRatio | ''>('');
 const videoAudio = ref(false);
 const videoReferences = ref<ReferencePreviewItem[]>([]);
 const videoPreviewVisible = ref(false);
@@ -144,6 +131,9 @@ const modelOptions = computed(() =>
 );
 
 const currentModel = computed(() => props.models.find((model) => model.modelName === selectedModelName.value) ?? props.models[0] ?? null);
+const currentOperations = computed(() => currentModel.value?.operations ?? []);
+const currentImageOperation = computed(() => currentOperations.value.find((operation) => operation.modeKey === imageMode.value) ?? null);
+const currentVideoOperation = computed(() => currentOperations.value.find((operation) => operation.modeKey === videoMode.value) ?? null);
 
 const reasoningCapability = computed(() => {
   const model = currentModel.value;
@@ -167,25 +157,49 @@ const reasoningEffortOptions = computed(() =>
     })),
 );
 
-const imageModeOptions = computed(() => uniqueValues(currentModel.value?.imageModes ?? IMAGE_GENERATION_MODE_VALUES).map((mode) => ({ label: getImageModeLabel(mode), value: mode })));
-const imageSizeOptions = computed(() => PROJECT_IMAGE_QUALITY_VALUES.map((size) => ({ label: size, value: size })));
-const imageAspectRatioOptions = computed(() => uniqueValues(currentModel.value?.type === 'image' ? currentModel.value.aspectRatioOptions ?? DEFAULT_IMAGE_FLOW_RATIOS : DEFAULT_IMAGE_FLOW_RATIOS).map((ratio) => ({ label: ratio, value: ratio })));
-const videoModeOptions = computed(() => uniqueValues(currentModel.value?.videoModes ?? [VIDEO_SIMPLE_MODES.TEXT]).map((mode) => {
-  const value = serializeVideoMode(mode);
-  return { label: getVideoModeLabel(value), value };
-}));
-const videoDurationOptions = computed(() => uniqueValues(currentModel.value?.durationOptions ?? COMMON_VIDEO_DURATIONS).map((duration) => ({ label: t('settings.modelTestDialog.duration.seconds', { seconds: duration }), value: duration })));
-const videoResolutionOptions = computed(() => uniqueValues(currentModel.value?.resolutionOptions ?? COMMON_VIDEO_RESOLUTIONS).map((resolution) => ({ label: resolution, value: resolution })));
-const videoAspectRatioOptions = computed(() => uniqueValues((currentModel.value?.type === 'video' ? currentModel.value.aspectRatioOptions : undefined) ?? PROJECT_VIDEO_RATIO_VALUES)
-  .filter((ratio): ratio is ProjectVideoRatio => PROJECT_VIDEO_RATIO_VALUES.includes(ratio as ProjectVideoRatio))
+const imageModeOptions = computed(() => currentOperations.value
+  .filter((operation) => operation.modelType === 'image')
+  .map((operation) => ({ label: getImageModeLabel(operation.modeKey), value: operation.modeKey as ImageGenerationMode })));
+const imageSizeValues = computed(() => currentImageOperation.value ? resolveModelOperationOptions(currentImageOperation.value).sizes : []);
+const imageAspectRatioValues = computed(() => currentImageOperation.value ? resolveModelOperationOptions(currentImageOperation.value).aspectRatios : []);
+const imageSizeOptions = computed(() => imageSizeValues.value
+  .filter((size): size is ProjectImageQuality => PROJECT_IMAGE_QUALITY_VALUES.includes(size as ProjectImageQuality))
+  .map((size) => ({ label: size, value: size })));
+const imageAspectRatioOptions = computed(() => imageAspectRatioValues.value.map((ratio) => ({ label: ratio, value: ratio })));
+const videoModeOptions = computed(() => currentOperations.value
+  .filter((operation) => operation.modelType === 'video')
+  .map((operation) => {
+    const value = serializeVideoMode(operation.modeKey);
+    return { label: getVideoModeLabel(value), value };
+  }));
+const videoDurationValues = computed(() => currentVideoOperation.value ? resolveModelOperationOptions(currentVideoOperation.value).durations : []);
+const videoResolutionValues = computed(() => currentVideoOperation.value
+  ? resolveModelOperationOptions(currentVideoOperation.value, { duration: videoDuration.value }).resolutions
+  : []);
+const videoAspectRatioValues = computed(() => currentVideoOperation.value ? resolveModelOperationOptions(currentVideoOperation.value).aspectRatios : []);
+const videoDurationOptions = computed(() => videoDurationValues.value.map((duration) => ({ label: t('settings.modelTestDialog.duration.seconds', { seconds: duration }), value: duration })));
+const videoResolutionOptions = computed(() => videoResolutionValues.value.map((resolution) => ({ label: resolution, value: resolution })));
+const videoAspectRatioOptions = computed(() => videoAspectRatioValues.value
+  .filter((ratio): ratio is ProjectVideoRatio => ratio === '16:9' || ratio === '9:16')
   .map((ratio) => ({ label: ratio, value: ratio })));
-const imageReferenceLimit = computed(() => getImageModeReferenceLimits(imageMode.value).image);
-const videoReferenceLimits = computed(() => getVideoModeReferenceLimits(videoMode.value));
-const videoReferenceLimit = computed(() => videoReferenceLimits.value.image);
-const videoHasUnsupportedReferences = computed(() => videoReferenceLimits.value.video > 0 || videoReferenceLimits.value.audio > 0 || videoReferenceLimits.value.text > 0);
-const audioSupport = computed(() => currentModel.value?.audioSupport ?? MODEL_AUDIO_SUPPORTS.OPTIONAL);
+const imageReferenceMinimum = computed(() => currentImageOperation.value?.referenceLimits.image ?? 0);
+const imageReferenceLimit = computed(() => currentImageOperation.value?.referenceLimits.maximum.image ?? 0);
+const videoReferenceLimits = computed(() => currentVideoOperation.value?.referenceLimits ?? null);
+const videoReferenceMinimum = computed(() => videoReferenceLimits.value?.image ?? 0);
+const videoReferenceLimit = computed(() => videoReferenceLimits.value?.maximum.image ?? 0);
+const videoHasUnsupportedReferences = computed(() => Boolean(videoReferenceLimits.value && (
+  videoReferenceLimits.value.maximum.video > 0
+  || videoReferenceLimits.value.maximum.audio > 0
+  || videoReferenceLimits.value.maximum.text > 0
+)));
+const audioSupport = computed(() => currentVideoOperation.value?.audioSupport ?? MODEL_AUDIO_SUPPORTS.NONE);
 const canToggleVideoAudio = computed(() => audioSupport.value === MODEL_AUDIO_SUPPORTS.OPTIONAL);
-const canSubmit = computed(() => Boolean(currentModel.value && prompt.value.trim() && !readingReferences.value));
+const hasSelectedOperation = computed(() => {
+  if (currentModel.value?.type === 'image') return Boolean(currentImageOperation.value);
+  if (currentModel.value?.type === 'video') return Boolean(currentVideoOperation.value);
+  return Boolean(currentModel.value);
+});
+const canSubmit = computed(() => Boolean(currentModel.value && hasSelectedOperation.value && prompt.value.trim() && !readingReferences.value));
 const isImageTest = computed(() => currentModel.value?.type === 'image');
 const isVideoTest = computed(() => currentModel.value?.type === 'video');
 const dialogHeader = computed(() => props.header || t('settings.modelTestDialog.title'));
@@ -279,10 +293,6 @@ function getModelTypeLabel(type: ModelCapability): string {
   return t(`settings.modelTestDialog.type.${type}`);
 }
 
-function uniqueValues<T>(values: readonly T[]): T[] {
-  return [...new Set(values)];
-}
-
 function getImageModeLabel(value: string): string {
   const key = IMAGE_MODE_LABEL_KEYS[value];
   return key ? t(key) : value;
@@ -291,10 +301,6 @@ function getImageModeLabel(value: string): string {
 function getVideoModeLabel(value: string): string {
   const key = VIDEO_MODE_LABEL_KEYS[value];
   return key ? t(key) : value;
-}
-
-function getImageReferenceMinimum(mode: ImageGenerationMode): number {
-  return mode === 'singleImage' || mode === 'multiReference' ? 1 : 0;
 }
 
 function getReferenceLimit(target: ReferenceTarget): number {
@@ -333,33 +339,64 @@ function getReferencePayload(target: ReferenceTarget): string[] {
   return getReferences(target).slice(0, limit).map((item) => item.dataUrl);
 }
 
-function getFirstValue<T>(values: readonly T[], fallback: T): T {
-  return values[0] ?? fallback;
+function isProjectImageQuality(value: string): value is ProjectImageQuality {
+  return PROJECT_IMAGE_QUALITY_VALUES.includes(value as ProjectImageQuality);
+}
+
+function syncImageSelection(): void {
+  if (!currentImageOperation.value) {
+    imageMode.value = imageModeOptions.value[0]?.value ?? 'text';
+  }
+  if (!imageSizeOptions.value.some((option) => option.value === imageSize.value)) {
+    imageSize.value = imageSizeOptions.value[0]?.value ?? '';
+  }
+  if (!imageAspectRatioValues.value.includes(imageAspectRatio.value)) {
+    imageAspectRatio.value = imageAspectRatioValues.value[0] ?? '';
+  }
+  trimReferences('image');
+}
+
+function syncVideoSelection(): void {
+  if (!currentVideoOperation.value) {
+    videoMode.value = videoModeOptions.value[0]?.value ?? '';
+  }
+  if (!videoDurationValues.value.includes(videoDuration.value)) {
+    videoDuration.value = videoDurationValues.value[0] ?? 0;
+  }
+  if (!videoResolutionValues.value.includes(videoResolution.value)) {
+    videoResolution.value = videoResolutionValues.value[0] ?? '';
+  }
+  if (!videoAspectRatioOptions.value.some((option) => option.value === videoAspectRatio.value)) {
+    videoAspectRatio.value = videoAspectRatioOptions.value[0]?.value ?? '';
+  }
+  if (audioSupport.value === MODEL_AUDIO_SUPPORTS.NONE) {
+    videoAudio.value = false;
+  } else if (audioSupport.value === MODEL_AUDIO_SUPPORTS.REQUIRED) {
+    videoAudio.value = true;
+  }
+  trimReferences('video');
 }
 
 function syncMediaDefaultsByModel(): void {
   const model = currentModel.value;
 
   if (model?.type === 'image') {
-    imageMode.value = getFirstValue(model.imageModes ?? IMAGE_GENERATION_MODE_VALUES, 'text');
-    imageSize.value = '1K';
-    imageAspectRatio.value = getFirstValue(model.aspectRatioOptions ?? DEFAULT_IMAGE_FLOW_RATIOS, '16:9');
+    imageMode.value = imageModeOptions.value[0]?.value ?? 'text';
+    imageSize.value = '';
+    imageAspectRatio.value = '';
     imageReferences.value = [];
+    syncImageSelection();
     return;
   }
 
   if (model?.type === 'video') {
-    const modeValues = model.videoModes ?? [VIDEO_SIMPLE_MODES.TEXT];
-    const serializedModes = modeValues.map(serializeVideoMode).filter(Boolean);
-    videoMode.value = serializedModes.includes(VIDEO_SIMPLE_MODES.TEXT) ? VIDEO_SIMPLE_MODES.TEXT : getFirstValue(serializedModes, VIDEO_SIMPLE_MODES.TEXT);
-    videoDuration.value = getFirstValue(model.durationOptions ?? COMMON_VIDEO_DURATIONS, 5);
-    videoResolution.value = getFirstValue(model.resolutionOptions ?? COMMON_VIDEO_RESOLUTIONS, '720p');
-    videoAspectRatio.value = getFirstValue(
-      (model.aspectRatioOptions ?? PROJECT_VIDEO_RATIO_VALUES).filter((ratio): ratio is ProjectVideoRatio => PROJECT_VIDEO_RATIO_VALUES.includes(ratio as ProjectVideoRatio)),
-      '16:9',
-    );
-    videoAudio.value = model.audioSupport === MODEL_AUDIO_SUPPORTS.REQUIRED || model.audioSupport === MODEL_AUDIO_SUPPORTS.OPTIONAL;
+    videoMode.value = videoModeOptions.value[0]?.value ?? '';
+    videoDuration.value = 0;
+    videoResolution.value = '';
+    videoAspectRatio.value = '';
+    videoAudio.value = false;
     videoReferences.value = [];
+    syncVideoSelection();
     return;
   }
 
@@ -436,21 +473,28 @@ async function handleReferenceFiles(target: ReferenceTarget, rawFiles: File[]): 
 
 function validateMediaSettings(model: ModelTestDialogModel): boolean {
   if (model.type === 'image') {
-    const required = getImageReferenceMinimum(imageMode.value);
-    if (required > 0 && imageReferences.value.length < required) {
-      MessagePlugin.warning(t('settings.modelTestDialog.reference.required', { count: required }));
+    if (!currentImageOperation.value) {
+      MessagePlugin.warning(t('production.workbench.capabilityUnavailable'));
+      return false;
+    }
+    if (imageReferenceMinimum.value > 0 && imageReferences.value.length < imageReferenceMinimum.value) {
+      MessagePlugin.warning(t('settings.modelTestDialog.reference.required', { count: imageReferenceMinimum.value }));
       return false;
     }
   }
 
   if (model.type === 'video') {
+    if (!currentVideoOperation.value) {
+      MessagePlugin.warning(t('production.workbench.capabilityUnavailable'));
+      return false;
+    }
     if (videoHasUnsupportedReferences.value) {
       MessagePlugin.warning(t('settings.modelTestDialog.reference.unsupportedMode'));
       return false;
     }
 
-    if (videoReferenceLimit.value > 0 && videoReferences.value.length < videoReferenceLimit.value) {
-      MessagePlugin.warning(t('settings.modelTestDialog.reference.required', { count: videoReferenceLimit.value }));
+    if (videoReferenceMinimum.value > 0 && videoReferences.value.length < videoReferenceMinimum.value) {
+      MessagePlugin.warning(t('settings.modelTestDialog.reference.required', { count: videoReferenceMinimum.value }));
       return false;
     }
   }
@@ -536,8 +580,8 @@ function handleSubmit(): void {
     emit('submit', {
       ...basePayload,
       imageMode: imageMode.value,
-      imageSize: imageSize.value,
-      aspectRatio: imageAspectRatio.value,
+      imageSize: imageSize.value && isProjectImageQuality(imageSize.value) ? imageSize.value : undefined,
+      aspectRatio: imageAspectRatio.value || undefined,
       referenceImages: getReferencePayload('image'),
     });
     return;
@@ -549,7 +593,7 @@ function handleSubmit(): void {
       videoMode: videoMode.value,
       duration: videoDuration.value,
       resolution: videoResolution.value,
-      videoAspectRatio: videoAspectRatio.value,
+      videoAspectRatio: videoAspectRatio.value || undefined,
       audio: videoAudio.value,
       referenceImages: getReferencePayload('video'),
     });
@@ -625,9 +669,11 @@ watch(currentModel, () => {
   syncMediaDefaultsByModel();
 });
 
-watch(imageMode, () => trimReferences('image'));
+watch(imageMode, () => syncImageSelection());
 
-watch(videoMode, () => trimReferences('video'));
+watch(videoMode, () => syncVideoSelection());
+
+watch(videoDuration, () => syncVideoSelection());
 
 watch(audioSupport, (support) => {
   if (support === MODEL_AUDIO_SUPPORTS.NONE) {
@@ -665,11 +711,11 @@ watch(audioSupport, (support) => {
             <span class="text-xs font-semibold leading-snug text-text-muted">{{ t('settings.modelTestDialog.form.mode') }}</span>
             <t-select v-model="imageMode" :options="imageModeOptions" />
           </label>
-          <label class="grid min-w-0 gap-1">
+          <label v-if="imageSizeOptions.length" class="grid min-w-0 gap-1">
             <span class="text-xs font-semibold leading-snug text-text-muted">{{ t('settings.modelTestDialog.form.size') }}</span>
             <t-select v-model="imageSize" :options="imageSizeOptions" />
           </label>
-          <label class="grid min-w-0 gap-1">
+          <label v-if="imageAspectRatioOptions.length" class="grid min-w-0 gap-1">
             <span class="text-xs font-semibold leading-snug text-text-muted">{{ t('settings.modelTestDialog.form.aspectRatio') }}</span>
             <t-select v-model="imageAspectRatio" :options="imageAspectRatioOptions" />
           </label>
@@ -710,11 +756,11 @@ watch(audioSupport, (support) => {
             <span class="text-xs font-semibold leading-snug text-text-muted">{{ t('settings.modelTestDialog.form.resolution') }}</span>
             <t-select v-model="videoResolution" :options="videoResolutionOptions" />
           </label>
-          <label class="grid min-w-0 gap-1">
+          <label v-if="videoAspectRatioOptions.length" class="grid min-w-0 gap-1">
             <span class="text-xs font-semibold leading-snug text-text-muted">{{ t('settings.modelTestDialog.form.aspectRatio') }}</span>
             <t-select v-model="videoAspectRatio" :options="videoAspectRatioOptions" />
           </label>
-          <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-line-soft bg-surface-raised px-3 py-2">
+          <div v-if="audioSupport !== MODEL_AUDIO_SUPPORTS.NONE" class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-line-soft bg-surface-raised px-3 py-2">
             <span class="text-xs font-semibold leading-snug text-text-muted">{{ t('settings.modelTestDialog.form.audio') }}</span>
             <t-switch v-model="videoAudio" :disabled="!canToggleVideoAudio" />
           </div>

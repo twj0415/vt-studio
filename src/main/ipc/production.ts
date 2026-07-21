@@ -32,6 +32,7 @@ import type {
   ProductionSaveWorkspacePayload,
   ProductionStoryboardDeletePayload,
   ProductionStoryboardSavePayload,
+  ProductionSmartSplitStoryboardsPayload,
   ProductionToolRunPayload,
   ProductionVideoDeletePayload,
   ProductionVideoTrackDeletePayload,
@@ -81,6 +82,7 @@ import {
   saveProductionResourceDraft,
   saveProductionStoryboardTable,
   saveProductionStoryboard,
+  smartSplitProductionStoryboards,
   saveProductionVideoTrack,
   saveProductionWorkspace,
   selectProductionVideo,
@@ -131,6 +133,7 @@ export function registerProductionIpc(): void {
   handleIpc('production:agent:derived-asset:generate-images', (_event, payload) => generateProductionAgentDerivedAssetImages(readObjectArg<ProductionGenerateDerivedAssetsPayload>(payload)));
 
   handleIpc('production:storyboard:save', (_event, payload) => saveProductionStoryboard(readObjectArg<ProductionStoryboardSavePayload>(payload)));
+  handleIpc('production:storyboard:smart-split', (_event, payload) => smartSplitProductionStoryboards(readObjectArg<ProductionSmartSplitStoryboardsPayload>(payload)));
   handleIpc('production:storyboard:delete', (_event, payload) => deleteProductionStoryboard(readObjectArg<ProductionStoryboardDeletePayload>(payload)));
   handleIpc('production:storyboard:batch-delete', (_event, payload) => deleteProductionStoryboards(readObjectArg<ProductionBatchDeleteStoryboardsPayload>(payload)));
   handleIpc('production:storyboard:generate-images', (_event, payload) => generateProductionStoryboardImages(readObjectArg<ProductionGenerateStoryboardsPayload>(payload)));

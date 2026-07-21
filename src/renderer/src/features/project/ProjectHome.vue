@@ -2,7 +2,7 @@
 import { computed, h, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
-import { AddIcon, DeleteIcon, DownloadIcon, EditIcon, FolderOpenIcon, MoreIcon, RefreshIcon, UploadIcon } from 'tdesign-icons-vue-next';
+import { AddIcon, DeleteIcon, DownloadIcon, EditIcon, FolderOpenIcon, ImageIcon, MoreIcon, RefreshIcon, UploadIcon } from 'tdesign-icons-vue-next';
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import type { DropdownOption } from 'tdesign-vue-next/es/dropdown';
 import VtButton from '@renderer/components/VtButton.vue';
@@ -13,19 +13,19 @@ import { useAppStore } from '@renderer/stores/app';
 import { PROJECT_IMAGE_QUALITY_VALUES, PROJECT_VIDEO_RATIO_VALUES } from '@shared/constants/dictionaries';
 import type {
   ProjectDeleteImpact,
-  ProjectFlowStatsResult,
   ProjectPageStateResult,
   ProjectSavePayload,
   ProjectSummary,
 } from '@shared/types/project';
 
 type ProjectCardAction = 'edit' | 'duplicate' | 'import' | 'export' | 'delete';
+type ProjectEntryRouteName = 'production' | 'production-canvas';
 
 const legacyProjectKindKey = ['source', 'Type'].join('');
 const legacyProjectKindValue = ['scr', 'ipt'].join('');
 
 const router = useRouter();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const appStore = useAppStore();
 const loading = ref(false);
 const savingProject = ref(false);
@@ -37,6 +37,8 @@ const pageState = ref<ProjectPageStateResult>({
   directorManuals: [],
   imageQualityOptions: [...PROJECT_IMAGE_QUALITY_VALUES],
   videoRatioOptions: [...PROJECT_VIDEO_RATIO_VALUES],
+  defaultImageModelId: '',
+  defaultVideoModelId: '',
 });
 
 const projectDialogVisible = ref(false);
@@ -50,7 +52,6 @@ const exportingPackageId = ref<number | null>(null);
 const importDialogVisible = ref(false);
 const importPackagePath = ref('');
 const importingPackage = ref(false);
-const projectStats = ref<Record<number, ProjectFlowStatsResult | null>>({});
 
 const currentProjectId = computed(() => Number(appStore.currentProject?.id ?? 0));
 
@@ -68,24 +69,9 @@ async function loadPageState(): Promise<void> {
     }
 
     pageState.value = response.data;
-    await loadProjectFlowStats(response.data.projects);
   } finally {
     loading.value = false;
   }
-}
-
-async function loadProjectFlowStats(projects: ProjectSummary[]): Promise<void> {
-  const entries = await Promise.all(
-    projects.map(async (project) => {
-      try {
-        const response = await window.vtStudio.project.getFlowStats({ projectId: project.id });
-        return [project.id, isOk(response) ? response.data : null] as const;
-      } catch {
-        return [project.id, null] as const;
-      }
-    })
-  );
-  projectStats.value = Object.fromEntries(entries) as Record<number, ProjectFlowStatsResult | null>;
 }
 
 function openCreateDialog(): void {
@@ -115,7 +101,6 @@ async function saveProject(payload: ProjectSavePayload): Promise<void> {
       MessagePlugin.error(response.msg);
       return;
     }
-
     MessagePlugin.success(t(projectDialogMode.value === 'create' ? 'project.message.created' : 'project.message.updated'));
     projectDialogVisible.value = false;
     if (currentProjectId.value && currentProjectId.value === response.data.project.id) {
@@ -156,16 +141,23 @@ async function duplicateProject(project: ProjectSummary): Promise<void> {
   await loadPageState();
 }
 
-async function openProject(project: ProjectSummary): Promise<void> {
+async function openProjectRoute(project: ProjectSummary, routeName: ProjectEntryRouteName): Promise<void> {
   const response = await window.vtStudio.project.open({ projectId: project.id });
   if (!isOk(response)) {
     MessagePlugin.error(response.msg);
-    openEditDialog(project);
     return;
   }
 
   appStore.setCurrentProject(response.data.project);
-  await router.push({ name: response.data.targetRoute });
+  await router.push({ name: routeName });
+}
+
+async function openWorkbench(project: ProjectSummary): Promise<void> {
+  await openProjectRoute(project, 'production');
+}
+
+async function openCanvas(project: ProjectSummary): Promise<void> {
+  await openProjectRoute(project, 'production-canvas');
 }
 
 function formatLockText(impact: ProjectDeleteImpact): string {
@@ -361,99 +353,6 @@ async function runDeleteProject(): Promise<void> {
 onMounted(() => {
   void loadPageState();
 });
-
-function formatUpdatedAt(updatedAt: number): string {
-  return new Date(updatedAt).toLocaleString(locale.value, { hour12: false });
-}
-
-function getStats(project: ProjectSummary): ProjectFlowStatsResult | null {
-  return projectStats.value[project.id] ?? null;
-}
-
-function getStageKey(project: ProjectSummary): string {
-  const stats = getStats(project);
-  if (!stats || stats.contentCount === 0) {
-    return 'content';
-  }
-  if (stats.selectedVideoTrackCount > 0 && stats.videoTrackCount > 0 && stats.selectedVideoTrackCount === stats.videoTrackCount) {
-    return 'export';
-  }
-  if (stats.videoTrackCount > 0) {
-    return 'video';
-  }
-  if (stats.storyboardImageReadyCount > 0) {
-    return 'storyboardImage';
-  }
-  if (stats.storyboardCount > 0) {
-    return 'storyboardTable';
-  }
-  if (stats.assetCount > 0) {
-    return 'assets';
-  }
-  return 'directorPlan';
-}
-
-function getStatusKey(project: ProjectSummary): string {
-  const stats = getStats(project);
-  if (!stats) {
-    return 'missing';
-  }
-  if (stats.runningTaskCount > 0 || stats.assetImageRunningCount > 0 || stats.storyboardImageRunningCount > 0 || stats.videoRunningCount > 0) {
-    return 'running';
-  }
-  if (stats.failedTaskCount > 0 || stats.assetImageFailedCount > 0 || stats.storyboardImageFailedCount > 0 || stats.videoFailedCount > 0) {
-    return 'failed';
-  }
-  if (stats.contentCount === 0 || stats.storyboardCount === 0 || stats.videoTrackCount === 0) {
-    return 'missing';
-  }
-  return 'normal';
-}
-
-function getStatusTheme(project: ProjectSummary): 'default' | 'primary' | 'success' | 'warning' | 'danger' {
-  const status = getStatusKey(project);
-  if (status === 'running') {
-    return 'primary';
-  }
-  if (status === 'failed') {
-    return 'danger';
-  }
-  if (status === 'missing') {
-    return 'warning';
-  }
-  return 'success';
-}
-
-function getCompletion(project: ProjectSummary): number {
-  const stats = getStats(project);
-  if (!stats) {
-    return 0;
-  }
-
-  const checks = [
-    stats.contentCount > 0,
-    stats.assetCount > 0,
-    stats.storyboardCount > 0,
-    stats.storyboardCount > 0 && stats.storyboardImageReadyCount >= stats.storyboardCount,
-    stats.videoTrackCount > 0,
-    stats.videoTrackCount > 0 && stats.selectedVideoTrackCount >= stats.videoTrackCount,
-  ];
-  return Math.round((checks.filter(Boolean).length / checks.length) * 100);
-}
-
-function getCompletionText(project: ProjectSummary): string {
-  const stats = getStats(project);
-  if (!stats) {
-    return t('project.card.statsLoading');
-  }
-
-  return t('project.card.completionValue', {
-    assets: stats.assetCount,
-    storyboards: stats.storyboardCount,
-    images: stats.storyboardImageReadyCount,
-    videos: stats.selectedVideoTrackCount,
-  });
-}
 </script>
 
 <template>
@@ -461,7 +360,6 @@ function getCompletionText(project: ProjectSummary): string {
     <section class="project-page-head">
       <div>
         <h3>{{ t('project.title') }}</h3>
-        <p>{{ t('project.summary') }}</p>
       </div>
       <div class="project-page-actions">
         <VtButton variant="outline" @click="openImportPackageDialog">
@@ -480,53 +378,47 @@ function getCompletionText(project: ProjectSummary): string {
     </section>
 
     <section v-if="pageState.projects.length > 0" class="project-card-grid">
-      <article v-for="project in pageState.projects" :key="project.id" class="project-card" @click="openProject(project)">
-        <div class="project-card-cover">
+      <article v-for="project in pageState.projects" :key="project.id" class="project-card">
+        <div class="project-card-cover" :aria-label="project.name">
           <VtEmptyState size="small" />
-          <t-tag class="project-card-ratio" size="small" variant="light">{{ project.videoRatio }}</t-tag>
-          <t-tag class="project-card-status" size="small" :theme="getStatusTheme(project)" variant="light">
-            {{ t(`project.card.status.${getStatusKey(project)}`) }}
-          </t-tag>
         </div>
         <div class="project-card-head">
           <div class="project-card-title">
             <strong>{{ project.name }}</strong>
-            <small>{{ t(`project.templateType.${project.templateType}`) }} · {{ project.genre }}</small>
-          </div>
-          <div class="project-card-actions" @click.stop>
-            <t-dropdown
-              trigger="click"
-              placement="bottom-right"
-              :options="getProjectActionOptions(project)"
-              @click="(dropdownItem, context) => handleProjectCardAction(project, dropdownItem, context.e)"
-            >
-              <VtButton shape="square" size="small" variant="text" icon-only :aria-label="t('project.moreActions')">
-                <template #icon><MoreIcon /></template>
-              </VtButton>
-            </t-dropdown>
           </div>
         </div>
-        <p>{{ project.description }}</p>
-        <div class="project-card-progress">
-          <div>
-            <span>{{ t(`project.card.stage.${getStageKey(project)}`) }}</span>
-            <strong>{{ getCompletion(project) }}%</strong>
-          </div>
-          <t-progress :percentage="getCompletion(project)" :show-info="false" size="small" />
-          <small>{{ getCompletionText(project) }}</small>
-        </div>
-        <div class="project-card-meta">
-          <span>{{ t('project.card.imageMeta', { model: project.imageModelLabel, quality: project.imageQuality }) }}</span>
-          <span>{{ t('project.card.videoMeta', { model: project.videoModelLabel, mode: project.videoModeLabel, ratio: project.videoRatio }) }}</span>
-          <span>{{ t('project.card.visualManualMeta', { name: project.visualManualName }) }}</span>
-          <span>{{ t('project.card.directorManualMeta', { name: project.directorManualName }) }}</span>
-        </div>
-        <div class="project-card-foot">
-          <small>{{ formatUpdatedAt(project.updatedAt) }}</small>
-          <VtButton size="small" theme="primary" variant="text" @click.stop="openProject(project)">
-            <template #icon><FolderOpenIcon /></template>
-            {{ t('project.open') }}
+        <div class="project-card-entry-actions">
+          <VtButton size="small" variant="outline" @click="openEditDialog(project)">
+            <template #icon><EditIcon /></template>
+            {{ t('project.edit') }}
           </VtButton>
+          <VtButton size="small" theme="primary" variant="base" @click="openWorkbench(project)">
+            <template #icon><FolderOpenIcon /></template>
+            {{ t('project.workbench') }}
+          </VtButton>
+          <VtButton size="small" variant="outline" @click="openCanvas(project)">
+            <template #icon><ImageIcon /></template>
+            {{ t('project.canvas') }}
+          </VtButton>
+          <t-dropdown
+            class="project-card-more-dropdown"
+            trigger="click"
+            placement="bottom-right"
+            :options="getProjectActionOptions(project)"
+            @click="(dropdownItem, context) => handleProjectCardAction(project, dropdownItem, context.e)"
+          >
+            <VtButton
+              class="project-card-more-action"
+              shape="square"
+              size="small"
+              variant="outline"
+              icon-only
+              :min-width="0"
+              :aria-label="t('project.moreActions')"
+            >
+              <template #icon><MoreIcon /></template>
+            </VtButton>
+          </t-dropdown>
         </div>
       </article>
     </section>
@@ -543,6 +435,8 @@ function getCompletionText(project: ProjectSummary): string {
       :director-manuals="pageState.directorManuals"
       :image-quality-options="pageState.imageQualityOptions"
       :video-ratio-options="pageState.videoRatioOptions"
+      :default-image-model-id="pageState.defaultImageModelId"
+      :default-video-model-id="pageState.defaultVideoModelId"
       @submit="saveProject"
     />
 

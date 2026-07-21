@@ -492,6 +492,15 @@ export interface ProductionGenerateStoryboardsPayload extends ProductionContentS
   compulsory?: boolean;
 }
 
+export interface ProductionSmartSplitStoryboardsPayload extends ProductionContentScopedPayload {
+  replaceExisting?: boolean;
+}
+
+export interface ProductionSmartSplitStoryboardsResult {
+  generatedCount: number;
+  storyboards: ProductionStoryboardItem[];
+}
+
 export interface ProductionGenerateAcceptedResult {
   accepted: boolean;
   taskId: number;
@@ -545,6 +554,8 @@ export interface ProductionVideoTrackDeletePayload extends ProductionContentScop
 
 export interface ProductionGenerateVideoPromptPayload extends ProductionContentScopedPayload {
   trackIds: number[];
+  model?: string | null;
+  mode?: ProductionVideoModeValue | null;
 }
 
 export interface ProductionGenerateVideoPayload extends ProductionContentScopedPayload {
@@ -614,7 +625,6 @@ export interface ProductionToolRunResult {
 export type ProductionWorkflowStep =
   | 'content'
   | 'resources'
-  | 'directorPlan'
   | 'storyboardTable'
   | 'storyboardImages'
   | 'videoWorkbench'
@@ -681,6 +691,20 @@ export interface ProductionAgentManualContext {
   content: string;
 }
 
+export interface ProductionStepRuleReference {
+  key: string;
+  source: 'manual' | 'prompt' | 'skill';
+  name: string;
+  content: string;
+  description?: string;
+  manualKind?: 'visual' | 'director';
+  manualKeys?: string[];
+  promptType?: string;
+  modelId?: string;
+}
+
+export type ProductionStepRuleReferences = Record<ProductionWorkflowStep, ProductionStepRuleReference[]>;
+
 export interface ProductionAgentContextResult extends ProductionAgentToolsResult {
   projectId: number;
   contentId: number;
@@ -692,6 +716,7 @@ export interface ProductionAgentContextResult extends ProductionAgentToolsResult
     visual: ProductionAgentManualContext;
     director: ProductionAgentManualContext;
   };
+  stepRules: ProductionStepRuleReferences;
 }
 
 export interface ProductionAgentWorkspacePatch {

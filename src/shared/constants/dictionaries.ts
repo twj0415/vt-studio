@@ -16,6 +16,7 @@ export type ProjectTemplateType = (typeof PROJECT_TEMPLATE_TYPE_VALUES)[number];
 export const PROJECT_IMAGE_QUALITIES = {
   ONE_K: '1K',
   TWO_K: '2K',
+  THREE_K: '3K',
   FOUR_K: '4K',
 } as const;
 

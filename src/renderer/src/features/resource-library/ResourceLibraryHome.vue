@@ -27,6 +27,8 @@ const pageState = ref<ProjectPageStateResult>({
   directorManuals: [],
   imageQualityOptions: [...PROJECT_IMAGE_QUALITY_VALUES],
   videoRatioOptions: [...PROJECT_VIDEO_RATIO_VALUES],
+  defaultImageModelId: '',
+  defaultVideoModelId: '',
 });
 
 const activeManualKind = computed<ProjectManualKind | null>(() => (activeLibrary.value === 'visual' || activeLibrary.value === 'director' ? activeLibrary.value : null));

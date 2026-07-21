@@ -53,7 +53,8 @@ import type { ProjectImageQuality } from '@shared/types/project';
 import { getDatabase, withTransaction } from '../database';
 import { deleteManagedFile, getRuntimeDirectories, writeManagedFile } from '../file-system';
 import { createMediaUrl, createThumbnailMediaUrl } from '../media/url';
-import { createModelRequestId, generateImageByModel, invokeText } from '../model';
+import { createModelRequestId, generateImageByModel, invokeText, splitModelId } from '../model';
+import { resolveImageGenerationRequestOptions } from '../model-runtime';
 import { createError } from '../result';
 import { getBusinessSettings } from '../settings/business-settings';
 import { getEffectivePromptByType } from '../settings/prompt';
@@ -335,6 +336,79 @@ function parseDataUrl(dataUrl: string): { mime: string; buffer: Buffer } {
   };
 }
 
+const GENERATED_IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+  'image/bmp': 'bmp',
+  'image/tiff': 'tiff',
+};
+
+function detectGeneratedImageMime(buffer: Buffer): string | null {
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png';
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  if (buffer.length >= 6 && ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'))) {
+    return 'image/gif';
+  }
+  if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp' && ['avif', 'avis'].includes(buffer.subarray(8, 12).toString('ascii'))) {
+    return 'image/avif';
+  }
+  if (buffer.length >= 2 && buffer.subarray(0, 2).toString('ascii') === 'BM') {
+    return 'image/bmp';
+  }
+  if (
+    buffer.length >= 4
+    && (buffer.subarray(0, 4).equals(Buffer.from([0x49, 0x49, 0x2a, 0x00]))
+      || buffer.subarray(0, 4).equals(Buffer.from([0x4d, 0x4d, 0x00, 0x2a])))
+  ) {
+    return 'image/tiff';
+  }
+
+  return null;
+}
+
+function parseGeneratedImage(content: string): { mime: string; buffer: Buffer } {
+  const normalized = content.trim();
+  const dataUrlMatch = /^data:([^;,]+)(?:;[^,;]+)*;base64,([\s\S]+)$/i.exec(normalized);
+  if (normalized.startsWith('data:') && (!dataUrlMatch?.[1] || !dataUrlMatch[2])) {
+    throw createError(VT_STATUS.MODEL_ERROR, '模型返回的图片数据 URL 无效');
+  }
+
+  const payload = (dataUrlMatch?.[2] ?? normalized).replace(/\s/g, '');
+  if (!payload || payload.length % 4 === 1 || !/^[a-z0-9+/]+={0,2}$/i.test(payload)) {
+    throw createError(VT_STATUS.MODEL_ERROR, '模型返回的图片不是有效 base64');
+  }
+
+  const buffer = Buffer.from(payload, 'base64');
+  if (buffer.byteLength < 32) {
+    throw createError(VT_STATUS.MODEL_ERROR, '模型返回的图片内容为空或过小');
+  }
+
+  const declaredMime = dataUrlMatch?.[1]?.toLowerCase() ?? null;
+  if (declaredMime && !declaredMime.startsWith('image/')) {
+    throw createError(VT_STATUS.MODEL_ERROR, '模型返回的媒体类型不是图片');
+  }
+
+  const detectedMime = detectGeneratedImageMime(buffer);
+  if (!detectedMime && !declaredMime) {
+    throw createError(VT_STATUS.MODEL_ERROR, '无法识别模型返回的图片格式');
+  }
+
+  return {
+    mime: detectedMime ?? declaredMime!,
+    buffer,
+  };
+}
+
 function inferMediaKind(fileName: string, mime?: string): AssetMediaKind {
   const lowerMime = mime?.toLowerCase() ?? '';
   if (lowerMime.startsWith('image/')) {
@@ -437,14 +511,14 @@ function resolveAssetImageRule(asset: AssetRow): AssetImageRule {
   };
 }
 
-function buildAssetImagePrompt(project: ProjectRow, asset: AssetRow, prompt: string, rule: AssetImageRule, resolution: ProjectImageQuality, visualManual: ManualPromptBundle): string {
+function buildAssetImagePrompt(project: ProjectRow, asset: AssetRow, prompt: string, rule: AssetImageRule, resolution: ProjectImageQuality | null, visualManual: ManualPromptBundle): string {
   return [
     `请根据以下参数生成${rule.promptTitle}：`,
     '',
     '**基础参数：**',
     `- 项目名称: ${project.name}`,
     `- 项目简介: ${project.description || '未指定'}`,
-    `- 图片规格: ${resolution}`,
+    ...(resolution ? [`- 图片规格: ${resolution}`] : []),
     '',
     `**${rule.label}设定：**`,
     `- 名称: ${asset.name}`,
@@ -462,7 +536,7 @@ function createGenerationMetadata(
   asset: AssetRow,
   rule: AssetImageRule,
   sourcePrompt: string,
-  resolution: ProjectImageQuality,
+  resolution: ProjectImageQuality | null,
   model: string,
   taskId: number,
   requestId: string,
@@ -923,10 +997,12 @@ function isMediaGenerationCancelled(projectId: number, mediaId: number | null, t
   return row?.status === ASSET_TASK_STATUS.CANCELLED;
 }
 
-function saveGeneratedImage(projectId: number, dataUrl: string, assetName: string): string {
-  const storedFileName = createStoredFileName(`${createFileStem(assetName, 'asset')}.jpg`, 'jpg');
+function saveGeneratedImage(projectId: number, content: string, assetName: string): string {
+  const parsed = parseGeneratedImage(content);
+  const extension = GENERATED_IMAGE_EXTENSIONS[parsed.mime] ?? 'png';
+  const storedFileName = createStoredFileName(`${createFileStem(assetName, 'asset')}.${extension}`, extension);
   const relativePath = mediaRootRelativePath(projectId, 'images', storedFileName);
-  writeManagedFile(getRuntimeDirectories().projects, relativePath, parseDataUrl(dataUrl).buffer);
+  writeManagedFile(getRuntimeDirectories().projects, relativePath, parsed.buffer);
   return relativePath;
 }
 
@@ -1079,7 +1155,7 @@ async function runPromptGeneration(projectId: number, assetIds: number[], taskId
   }
 }
 
-async function generateImageForAsset(projectId: number, assetId: number, model: string, resolution: ProjectImageQuality, taskId: number, promptOverride?: string | null, referenceImageDataUrl?: string | null): Promise<boolean> {
+async function generateImageForAsset(projectId: number, assetId: number, model: string, resolution: ProjectImageQuality | null, taskId: number, promptOverride?: string | null, referenceImageDataUrl?: string | null): Promise<boolean> {
   let mediaId: number | null = null;
   try {
     const project = assertProject(projectId);
@@ -1087,17 +1163,24 @@ async function generateImageForAsset(projectId: number, assetId: number, model: 
     const type = assertGeneratableType(asset.type);
     const rule = resolveAssetImageRule(asset);
     const visualManual = readAssetVisualManual(project, type, Boolean(asset.parent_id));
+    const imageOptions = resolveImageGenerationRequestOptions({
+      model,
+      referenceImageCount: referenceImageDataUrl ? 1 : 0,
+      size: resolution,
+      rejectUnsupportedSize: true,
+      aspectRatio: rule.aspectRatio,
+    });
     const sourcePrompt = normalizeRequiredText(promptOverride ?? asset.prompt, '图片提示词');
-    const prompt = buildAssetImagePrompt(project, asset, sourcePrompt, rule, resolution, visualManual);
+    const prompt = buildAssetImagePrompt(project, asset, sourcePrompt, rule, imageOptions.size ?? null, visualManual);
     const requestId = createModelRequestId();
     mediaId = withTransaction((database) => {
-      const insertedMediaId = insertMedia(projectId, assetId, 'image', null, 'generated', ASSET_TASK_STATUS.RUNNING, model, resolution, null, {
+      const insertedMediaId = insertMedia(projectId, assetId, 'image', null, 'generated', ASSET_TASK_STATUS.RUNNING, model, imageOptions.size ?? null, null, {
         usage: rule.usage,
         viewMode: rule.viewMode,
         prompt,
         taskId,
         metadata: {
-          ...createGenerationMetadata(asset, rule, sourcePrompt, resolution, model, taskId, requestId, visualManual, prompt, referenceImageDataUrl),
+          ...createGenerationMetadata(asset, rule, sourcePrompt, imageOptions.size ?? null, model, taskId, requestId, visualManual, prompt, referenceImageDataUrl),
         },
       });
       database
@@ -1115,8 +1198,8 @@ async function generateImageForAsset(projectId: number, assetId: number, model: 
     const result = await generateImageByModel(model, {
       requestId,
       prompt,
-      size: resolution,
-      aspectRatio: rule.aspectRatio,
+      size: imageOptions.size,
+      aspectRatio: imageOptions.aspectRatio,
       referenceList: referenceImageDataUrl ? [{ type: 'image', sourceType: 'base64', base64: referenceImageDataUrl }] : undefined,
       task: {
         taskId,
@@ -1192,15 +1275,28 @@ async function generateImageForAsset(projectId: number, assetId: number, model: 
   }
 }
 
-async function runImageGeneration(projectId: number, assetIds: number[], model: string, resolution: ProjectImageQuality, taskId: number, concurrentCount?: number | null): Promise<void> {
+function createAssetImageGenerationError(projectId: number, assetIds: number[]): Error {
+  const reasons = [...new Set(assetIds
+    .map((assetId) => getAssetRow(projectId, assetId).image_error_reason?.trim() ?? '')
+    .filter(Boolean))];
+
+  if (reasons.length === 1 && assetIds.length === 1) {
+    return new Error(reasons[0]);
+  }
+
+  const summary = `${assetIds.length} 个资产图片生成失败`;
+  return new Error(reasons.length > 0 ? `${summary}：${reasons.slice(0, 3).join('；')}` : summary);
+}
+
+async function runImageGeneration(projectId: number, assetIds: number[], model: string, resolution: ProjectImageQuality | null, taskId: number, concurrentCount?: number | null): Promise<void> {
   try {
     const results = await runWithConcurrency(assetIds, normalizeConcurrentCount(concurrentCount), (assetId) => generateImageForAsset(projectId, assetId, model, resolution, taskId));
-    const failedCount = results.filter((result) => !result).length;
-    if (failedCount > 0) {
+    const failedAssetIds = assetIds.filter((_, index) => !results[index]);
+    if (failedAssetIds.length > 0) {
       if (isTaskCancelled(taskId)) {
         return;
       }
-      safeFailTask(taskId, new Error(`${failedCount} 个资产图片生成失败`));
+      safeFailTask(taskId, createAssetImageGenerationError(projectId, failedAssetIds));
       return;
     }
 
@@ -1214,7 +1310,7 @@ async function runImageGeneration(projectId: number, assetIds: number[], model: 
   }
 }
 
-async function runSingleImageGeneration(projectId: number, assetId: number, model: string, resolution: ProjectImageQuality, taskId: number, prompt?: string | null, referenceImageDataUrl?: string | null): Promise<void> {
+async function runSingleImageGeneration(projectId: number, assetId: number, model: string, resolution: ProjectImageQuality | null, taskId: number, prompt?: string | null, referenceImageDataUrl?: string | null): Promise<void> {
   try {
     const succeeded = await generateImageForAsset(projectId, assetId, model, resolution, taskId, prompt, referenceImageDataUrl);
     if (succeeded) {
@@ -1223,7 +1319,7 @@ async function runSingleImageGeneration(projectId: number, assetId: number, mode
     }
 
     if (!isTaskCancelled(taskId)) {
-      safeFailTask(taskId, new Error('资产图片生成失败'));
+      safeFailTask(taskId, createAssetImageGenerationError(projectId, [assetId]));
     }
   } catch (error) {
     updateAssetImageStatus(projectId, assetId, ASSET_TASK_STATUS.FAILED, normalizeErrorReason(error));
@@ -1639,26 +1735,30 @@ export function batchGenerateAssetPrompts(payload: AssetBatchPromptPayload): Ass
 export function generateAssetImage(payload: AssetImagePayload): AssetGenerateAcceptedResult {
   const projectId = normalizeProjectId(payload.projectId);
   const project = assertProject(projectId);
+  const model = normalizeRequiredText(payload.model || project.image_model_id, '图片模型');
+  splitModelId(model);
   const asset = getAssetRow(projectId, payload.assetId);
   assertGeneratableType(asset.type);
   assertNotRunningAsset(asset, '生成图片');
-  const resolution = assertImageQuality(payload.resolution);
+  const resolution = payload.resolution ? assertImageQuality(payload.resolution) : null;
   const manuals = buildAssetManualTaskRefs(project, [asset]);
   const task = createTask({
     projectId,
     category: IMAGE_TASK_CATEGORY,
     relatedObjects: { assetIds: [asset.id], manuals },
-    modelName: payload.model,
+    modelName: model,
     description: `生成资产图片：${asset.name}`,
   });
   updateAssetImageStatus(projectId, asset.id, ASSET_TASK_STATUS.RUNNING, null);
-  void runSingleImageGeneration(projectId, asset.id, payload.model, resolution, task.taskId, payload.prompt, payload.referenceImageDataUrl);
+  void runSingleImageGeneration(projectId, asset.id, model, resolution, task.taskId, payload.prompt, payload.referenceImageDataUrl);
   return { accepted: true, taskId: task.taskId, assetIds: [asset.id] };
 }
 
 export function batchGenerateAssetImages(payload: AssetBatchImagePayload): AssetGenerateAcceptedResult {
   const projectId = normalizeProjectId(payload.projectId);
   const project = assertProject(projectId);
+  const model = normalizeRequiredText(payload.model || project.image_model_id, '图片模型');
+  splitModelId(model);
   const assetIds = normalizeIds(payload.assetIds, '资产 ID');
   const rows = getAssetRowsByIds(projectId, assetIds);
   rows.forEach((row) => {
@@ -1666,17 +1766,17 @@ export function batchGenerateAssetImages(payload: AssetBatchImagePayload): Asset
     assertNotRunningAsset(row, '生成图片');
     normalizeRequiredText(row.prompt, '图片提示词');
   });
-  const resolution = assertImageQuality(payload.resolution);
+  const resolution = payload.resolution ? assertImageQuality(payload.resolution) : null;
   const manuals = buildAssetManualTaskRefs(project, rows);
   const task = createTask({
     projectId,
     category: IMAGE_TASK_CATEGORY,
     relatedObjects: { assetIds, manuals },
-    modelName: payload.model,
+    modelName: model,
     description: `批量生成 ${project.name} 的 ${assetIds.length} 个资产图片`,
   });
   assetIds.forEach((assetId) => updateAssetImageStatus(projectId, assetId, ASSET_TASK_STATUS.RUNNING, null));
-  void runImageGeneration(projectId, assetIds, payload.model, resolution, task.taskId, payload.concurrentCount);
+  void runImageGeneration(projectId, assetIds, model, resolution, task.taskId, payload.concurrentCount);
   return { accepted: true, taskId: task.taskId, assetIds };
 }
 

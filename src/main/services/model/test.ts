@@ -1,5 +1,4 @@
 import sharp from 'sharp';
-import { PROJECT_IMAGE_QUALITY_VALUES, PROJECT_VIDEO_RATIO_VALUES } from '@shared/constants/dictionaries';
 import { getVideoModeReferenceLimits } from '@shared/constants/model-capabilities';
 import { VT_STATUS } from '@shared/constants/status';
 import { isVtError, normalizeUnknownError } from '@shared/errors';
@@ -71,25 +70,22 @@ function isAspectRatio(value: string | undefined): value is `${number}:${number}
 }
 
 function resolveImageSize(value: ModelTestImageInput['imageSize']): ImageGenerateInput['size'] {
-  return PROJECT_IMAGE_QUALITY_VALUES.includes(value as ImageGenerateInput['size']) ? (value as ImageGenerateInput['size']) : '1K';
+  if (value === undefined) return undefined;
+  if (['1K', '2K', '3K', '4K'].includes(value)) return value as ImageGenerateInput['size'];
+  throw createError(VT_STATUS.INVALID_PARAMS, `图片规格无效：${value}`);
 }
 
-function resolveImageAspectRatio(value: ModelTestImageInput['aspectRatio']): ImageGenerateInput['aspectRatio'] {
+function resolveImageAspectRatio(value: ModelTestImageInput['aspectRatio']): ImageGenerateInput['aspectRatio'] | undefined {
   const normalized = value?.trim();
-  return isAspectRatio(normalized) ? normalized : '16:9';
+  if (!normalized) return undefined;
+  if (!isAspectRatio(normalized)) throw createError(VT_STATUS.INVALID_PARAMS, `图片比例无效：${normalized}`);
+  return normalized;
 }
 
-function resolveVideoAspectRatio(value: ModelTestVideoInput['aspectRatio']): VideoGenerateInput['aspectRatio'] {
-  return PROJECT_VIDEO_RATIO_VALUES.includes(value as VideoGenerateInput['aspectRatio']) ? (value as VideoGenerateInput['aspectRatio']) : '16:9';
-}
-
-function resolvePositiveNumber(value: number | undefined, fallback: number): number {
-  return Number.isFinite(value) && Number(value) > 0 ? Number(value) : fallback;
-}
-
-function resolveText(value: string | undefined, fallback: string): string {
-  const normalized = value?.trim();
-  return normalized || fallback;
+function resolveVideoAspectRatio(value: ModelTestVideoInput['aspectRatio']): VideoGenerateInput['aspectRatio'] | undefined {
+  if (value === undefined) return undefined;
+  if (value === '16:9' || value === '9:16') return value;
+  throw createError(VT_STATUS.INVALID_PARAMS, `视频比例无效：${value}`);
 }
 
 function createImageReferences(values: Array<string | undefined>): Extract<ReferenceItem, { type: 'image' }>[] {
@@ -185,21 +181,21 @@ export async function testImageModel(input: ModelTestImageInput): Promise<{ file
 
 export async function testVideoModel(input: ModelTestVideoInput): Promise<{ filePath: string; content: string }> {
   try {
-    const model = getModelDetail(`${input.vendorId}:${input.modelName}`) as VideoModelConfig;
-    const firstDurationResolution = model.durationResolutionMap[0];
-    const duration = resolvePositiveNumber(input.duration, firstDurationResolution?.duration[0] ?? 5);
-    const resolution = resolveText(input.resolution, firstDurationResolution?.resolution[0] ?? '720p');
+    getModelDetail(`${input.vendorId}:${input.modelName}`) as VideoModelConfig;
+    if (!Number.isFinite(input.duration) || Number(input.duration) <= 0) throw createError(VT_STATUS.INVALID_PARAMS, '请选择视频时长');
+    const resolution = input.resolution?.trim();
+    if (!resolution) throw createError(VT_STATUS.INVALID_PARAMS, '请选择视频分辨率');
     const referenceImages = createImageReferences(input.referenceImages ?? []);
     const referenceList = [...referenceImages, ...input.images, ...input.videos, ...input.audios];
     const limits = getVideoModeReferenceLimits(normalizeVideoModeForLimits(input.mode));
     assertReferenceCount('视频测试', limits.image, referenceImages.length + input.images.length);
     const content = await generateVideoByModel(`${input.vendorId}:${input.modelName}`, {
-      duration,
+      duration: Number(input.duration),
       resolution,
       aspectRatio: resolveVideoAspectRatio(input.aspectRatio),
       prompt: input.prompt,
       referenceList,
-      audio: typeof input.audio === 'boolean' ? input.audio : typeof model.audio === 'boolean' ? model.audio : true,
+      audio: input.audio,
       mode: input.mode,
     });
 

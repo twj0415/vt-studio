@@ -61,13 +61,12 @@ import type {
   ProjectUpdateRecentRoutePayload,
   ProjectUpdateRecentRouteResult,
   ProjectSummary,
-  ProjectVideoModeOption,
   ProjectVideoRatio,
 } from '@shared/types/project';
-import type { VendorVideoModel } from '@shared/types/vendor';
 import { createMediaUrl } from './media/url';
+import { buildCapabilityMatrixForConnections } from './model/capability-matrix';
 import { ensureDefaultProductionContent } from './production';
-import { getApiConnectionList } from './settings/model-config';
+import { getApiConnectionList, getCapabilityBindings } from './settings/model-config';
 import { getDatabase, withTransaction } from './database';
 import {
   deleteManagedDirectory,
@@ -79,7 +78,6 @@ import {
   safeJoin,
   writeManagedFile,
 } from './file-system';
-import { getVendorRow, parseModelList } from './model/storage';
 import { createError } from './result';
 import { assertNoBusinessLocks, countRunningTaskRecords, listBusinessLocks } from './task/locks';
 
@@ -657,14 +655,13 @@ function createUniqueManualPath(kind: ProjectManualKind, basePath: string): stri
   return candidate;
 }
 
-function resolveImportedProjectModels(projectRow: JsonRow, warnings: string[]): { imageModelId: string; videoModelId: string; videoMode: string } {
+function resolveImportedProjectModels(projectRow: JsonRow): { imageModelId: string; videoModelId: string; videoMode: string } {
   const imageModels = getDetailedModels('image');
   const videoModels = getDetailedModels('video');
   const originalImageModelId = String(projectRow.image_model_id ?? '');
   const originalVideoModelId = String(projectRow.video_model_id ?? '');
-  const originalVideoMode = normalizeStoredVideoMode(String(projectRow.video_mode ?? ''));
-  const imageModel = imageModels.find((item) => item.modelId === originalImageModelId) ?? imageModels[0];
-  const videoModel = videoModels.find((item) => item.modelId === originalVideoModelId) ?? videoModels[0];
+  const imageModel = imageModels.find((item) => item.modelId === originalImageModelId);
+  const videoModel = videoModels.find((item) => item.modelId === originalVideoModelId);
 
   if (!imageModel) {
     throw createError(VT_STATUS.MODEL_NOT_FOUND, '导入项目包前请先配置可用图片模型');
@@ -673,27 +670,10 @@ function resolveImportedProjectModels(projectRow: JsonRow, warnings: string[]): 
     throw createError(VT_STATUS.MODEL_NOT_FOUND, '导入项目包前请先配置可用视频模型');
   }
 
-  if (imageModel.modelId !== originalImageModelId) {
-    warnings.push('原项目图片模型在当前环境不可用，已映射到当前默认图片模型');
-  }
-  if (videoModel.modelId !== originalVideoModelId) {
-    warnings.push('原项目视频模型在当前环境不可用，已映射到当前默认视频模型');
-  }
-
-  const videoMode = videoModel.modes?.some((item) => item.value === originalVideoMode)
-    ? originalVideoMode
-    : videoModel.modes?.[0]?.value ?? '';
-  if (!videoMode) {
-    throw createError(VT_STATUS.INVALID_PARAMS, '当前视频模型没有可用视频模式');
-  }
-  if (videoMode !== originalVideoMode) {
-    warnings.push('原项目视频模式在当前环境不可用，已映射到当前模型的默认视频模式');
-  }
-
   return {
     imageModelId: imageModel.modelId,
     videoModelId: videoModel.modelId,
-    videoMode,
+    videoMode: '',
   };
 }
 
@@ -1130,12 +1110,6 @@ function ensureProjectWorkspaceReady(project: ProjectRow): void {
 
 function assertProjectRestorable(projectId: number): ProjectRow {
   const project = getProjectRowById(projectId);
-  resolveProjectModelOption(project.image_model_id, 'image');
-  const videoOption = resolveProjectModelOption(project.video_model_id, 'video');
-  if (!videoOption.modes?.some((mode) => mode.value === normalizeStoredVideoMode(project.video_mode))) {
-    throw createError(VT_STATUS.CONFLICT, '当前项目的视频模式已失效，请重新编辑项目');
-  }
-
   getManualById('visual', project.visual_manual_id);
   getManualById('director', project.director_manual_id);
   ensureProjectWorkspaceReady(project);
@@ -1265,29 +1239,46 @@ function getProjectConnections() {
 }
 
 function getDetailedModels(type: 'image' | 'video'): ProjectModelOption[] {
-  const options: ProjectModelOption[] = [];
+  const options = new Map<string, ProjectModelOption>();
+  const matrix = buildCapabilityMatrixForConnections(getProjectConnections());
 
-  for (const connection of getProjectConnections()) {
-    const row = getVendorRow(connection.id);
-    const models = parseModelList(row.models);
-    for (const model of models) {
-      if (model.type !== type) {
-        continue;
-      }
+  for (const item of matrix) {
+    if (
+      item.modelType !== type
+      || item.status !== 'ready'
+      || item.source.status === 'unverified'
+      || item.source.adapterStatus !== 'supported'
+    ) continue;
 
-      options.push({
-        modelId: `${connection.id}:${model.modelName}`,
-        connectionId: connection.id,
-        connectionName: connection.name,
-        modelName: model.modelName,
-        displayName: model.name,
-        type,
-        modes: model.type === 'video' ? toVideoModeOptions(model) : undefined,
-      });
+    const option = options.get(item.modelId) ?? {
+      modelId: item.modelId,
+      connectionId: item.connectionId,
+      connectionName: item.connectionName,
+      modelName: item.modelName,
+      displayName: item.modelDisplayName,
+      type,
+      ...(type === 'video' ? { modes: [] } : { imageQualityOptions: [] }),
+    } satisfies ProjectModelOption;
+
+    if (type === 'video' && item.modeKey && !option.modes?.some((mode) => mode.value === item.modeKey)) {
+      option.modes?.push({ value: item.modeKey, label: formatModeLabel(item.mode) });
     }
+
+    if (type === 'image') {
+      const qualities = item.parameterCombinations
+        .flatMap((combination) => combination.sizeOptions ?? [])
+        .filter((value): value is ProjectImageQuality => PROJECT_IMAGE_QUALITY_VALUES.includes(value as ProjectImageQuality));
+      option.imageQualityOptions = [...new Set([...(option.imageQualityOptions ?? []), ...qualities])];
+    }
+
+    options.set(item.modelId, option);
   }
 
-  return options;
+  return [...options.values()].filter((option) => (
+    option.type === 'image'
+      ? true
+      : Boolean(option.modes?.length)
+  ));
 }
 
 function formatModeLabel(mode: string | string[]): string {
@@ -1320,16 +1311,6 @@ function normalizeStoredVideoMode(value: string): string {
   return serializeVideoMode(raw);
 }
 
-function toVideoModeOptions(model: VendorVideoModel): ProjectVideoModeOption[] {
-  return model.mode.map((mode) => {
-    const value = serializeVideoMode(mode);
-    return {
-      value,
-      label: formatModeLabel(mode),
-    };
-  });
-}
-
 function resolveProjectModelOption(modelId: string, type: 'image' | 'video'): ProjectModelOption {
   const option = getDetailedModels(type).find((item) => item.modelId === modelId);
   if (!option) {
@@ -1339,7 +1320,7 @@ function resolveProjectModelOption(modelId: string, type: 'image' | 'video'): Pr
   return option;
 }
 
-function validateProjectPayload(payload: ProjectSavePayload): Omit<ProjectSavePayload, 'id'> {
+function validateProjectPayload(payload: ProjectSavePayload): Omit<ProjectSavePayload, 'id' | 'videoMode'> & { videoMode: string } {
   const templateType = assertProjectTemplateType(payload.templateType ?? DEFAULT_PROJECT_TEMPLATE_TYPE);
   const sourceType: ProjectSourceType = 'script';
   const name = assertNonEmpty(payload.name, '项目名称');
@@ -1349,12 +1330,9 @@ function validateProjectPayload(payload: ProjectSavePayload): Omit<ProjectSavePa
   const videoRatio = assertVideoRatio(payload.videoRatio);
   const imageModel = resolveProjectModelOption(payload.imageModelId, 'image');
   const videoModel = resolveProjectModelOption(payload.videoModelId, 'video');
-  const videoMode = normalizeStoredVideoMode(payload.videoMode);
-  const validVideoMode = videoModel.modes?.find((item) => item.value === videoMode);
-  if (!validVideoMode) {
-    throw createError(VT_STATUS.INVALID_PARAMS, '视频模式无效');
+  if (imageModel.imageQualityOptions?.length && !imageModel.imageQualityOptions.includes(imageQuality)) {
+    throw createError(VT_STATUS.INVALID_PARAMS, `图片模型不支持 ${imageQuality} 规格`);
   }
-
   getManualById('visual', payload.visualManualId);
   getManualById('director', payload.directorManualId);
 
@@ -1367,7 +1345,7 @@ function validateProjectPayload(payload: ProjectSavePayload): Omit<ProjectSavePa
     imageModelId: imageModel.modelId,
     imageQuality,
     videoModelId: videoModel.modelId,
-    videoMode: validVideoMode.value,
+    videoMode: '',
     videoRatio,
     visualManualId: payload.visualManualId,
     directorManualId: payload.directorManualId,
@@ -1560,7 +1538,7 @@ export function importProjectPackage(payload: ProjectImportPackagePayload): Proj
 
   try {
     withTransaction(() => {
-      const modelConfig = resolveImportedProjectModels(projectRow, warnings);
+      const modelConfig = resolveImportedProjectModels(projectRow);
       const visualManualId = importManualSnapshot({
         packagePath,
         packageDatabase,
@@ -1641,14 +1619,25 @@ export async function openProjectPackageDirectory(payload: ProjectOpenPackagePay
 }
 
 export function getProjectPageState(): ProjectPageStateResult {
+  const imageModels = getDetailedModels('image');
+  const videoModels = getDetailedModels('video');
+  const bindings = getCapabilityBindings();
+  const configuredImageModelId = bindings.image ? `${bindings.image.connectionId}:${bindings.image.modelName}` : '';
+  const configuredVideoModelId = bindings.video ? `${bindings.video.connectionId}:${bindings.video.modelName}` : '';
   return {
     projects: listProjects(),
-    imageModels: getDetailedModels('image'),
-    videoModels: getDetailedModels('video'),
+    imageModels,
+    videoModels,
     visualManuals: getManualRows('visual').map((row) => mapManualSummary('visual', row)),
     directorManuals: getManualRows('director').map((row) => mapManualSummary('director', row)),
     imageQualityOptions: IMAGE_QUALITY_OPTIONS,
     videoRatioOptions: VIDEO_RATIO_OPTIONS,
+    defaultImageModelId: imageModels.some((model) => model.modelId === configuredImageModelId)
+      ? configuredImageModelId
+      : '',
+    defaultVideoModelId: videoModels.some((model) => model.modelId === configuredVideoModelId)
+      ? configuredVideoModelId
+      : '',
   };
 }
 
@@ -1959,7 +1948,7 @@ export function getProjectFlowStats(payload: ProjectFlowStatsPayload): ProjectFl
     sourceEventRunningCount: countRows('source_chapters', 'project_id = ? AND event_status = ?', [projectId, SOURCE_EVENT_STATUSES.RUNNING]),
     sourceEventStaleCount: countRows('source_chapters', 'project_id = ? AND event_status = ?', [projectId, SOURCE_EVENT_STATUSES.STALE]),
     agentWorkspaceCount: countRows('agent_work_data', 'project_id = ?', [projectId]),
-    contentCount: countRows('production_contents', 'project_id = ?', [projectId]) || countRows('scripts', 'project_id = ?', [projectId]),
+    contentCount: countRows('production_contents', "project_id = ? AND TRIM(body) <> ''", [projectId]) || countRows('scripts', "project_id = ? AND TRIM(content) <> ''", [projectId]),
     resourceExtractSucceededCount: countRows('production_contents', 'project_id = ? AND resource_status = ?', [projectId, GENERATION_TASK_STATUSES.SUCCEEDED]) || countRows('scripts', 'project_id = ? AND extract_status = ?', [projectId, SCRIPT_EXTRACT_STATUSES.SUCCEEDED]),
     resourceExtractFailedCount: countRows('production_contents', 'project_id = ? AND resource_status = ?', [projectId, GENERATION_TASK_STATUSES.FAILED]) || countRows('scripts', 'project_id = ? AND extract_status = ?', [projectId, SCRIPT_EXTRACT_STATUSES.FAILED]),
     resourceExtractRunningCount: countRows('production_contents', 'project_id = ? AND resource_status = ?', [projectId, GENERATION_TASK_STATUSES.RUNNING]) || countRows('scripts', 'project_id = ? AND extract_status IN (?, ?)', [

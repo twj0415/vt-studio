@@ -160,6 +160,7 @@ const api: VtStudioApi = {
     },
     storyboard: {
       save: (payload) => ipcRenderer.invoke('production:storyboard:save', payload),
+      smartSplit: (payload) => ipcRenderer.invoke('production:storyboard:smart-split', payload),
       delete: (payload) => ipcRenderer.invoke('production:storyboard:delete', payload),
       batchDelete: (payload) => ipcRenderer.invoke('production:storyboard:batch-delete', payload),
       generateImages: (payload) => ipcRenderer.invoke('production:storyboard:generate-images', payload),

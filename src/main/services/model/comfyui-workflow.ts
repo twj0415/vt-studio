@@ -296,13 +296,14 @@ function roundToMultipleOfEight(value: number): number {
 }
 
 function getComfyUiDimensions(input: ImageGenerateInput): { width: number; height: number } {
-  const longEdgeMap: Record<ImageGenerateInput['size'], number> = {
+  const longEdgeMap = {
     '1K': 1024,
     '2K': 2048,
+    '3K': 3072,
     '4K': 4096,
-  };
-  const longEdge = longEdgeMap[input.size] ?? 1024;
-  const ratio = parseAspectRatio(input.aspectRatio);
+  } satisfies Record<NonNullable<ImageGenerateInput['size']>, number>;
+  const longEdge = input.size ? longEdgeMap[input.size] : 1024;
+  const ratio = parseAspectRatio(input.aspectRatio ?? '16:9');
 
   if (ratio.width >= ratio.height) {
     return {

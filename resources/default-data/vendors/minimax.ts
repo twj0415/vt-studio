@@ -171,7 +171,7 @@ const vendor: VendorConfig = {
       name: "海螺2.3极速版",
       modelName: "MiniMax-Hailuo-2.3-Fast",
       type: "video",
-      mode: ["text", "singleImage"],
+      mode: ["singleImage"],
       audio: false,
       durationResolutionMap: [
         { duration: [6], resolution: ["768P", "1080P"] },

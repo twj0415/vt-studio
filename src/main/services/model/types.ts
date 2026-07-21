@@ -10,6 +10,7 @@ import type {
   VideoSimpleMode,
 } from '@shared/constants/dictionaries';
 import type { ReasoningEffort, TextReasoningCapability } from '@shared/constants/model-capabilities';
+import type { ModelOperationCapability } from '@shared/types/model-capability';
 
 export type ImageMode = ImageGenerationMode;
 export type VideoMode = VideoGenerationMode;
@@ -29,6 +30,7 @@ export interface TextModelConfig {
   type: 'text';
   think: boolean;
   reasoning?: TextReasoningCapability;
+  operations?: ModelOperationCapability[];
 }
 
 export interface ImageModelConfig {
@@ -37,6 +39,7 @@ export interface ImageModelConfig {
   type: 'image';
   mode: ImageMode[];
   associationSkills?: string;
+  operations?: ModelOperationCapability[];
 }
 
 export interface VideoModelConfig {
@@ -50,6 +53,7 @@ export interface VideoModelConfig {
     duration: number[];
     resolution: string[];
   }>;
+  operations?: ModelOperationCapability[];
 }
 
 export interface TtsModelConfig {
@@ -60,6 +64,7 @@ export interface TtsModelConfig {
     title: string;
     voice: string;
   }>;
+  operations?: ModelOperationCapability[];
 }
 
 export type VendorModelConfig = TextModelConfig | ImageModelConfig | VideoModelConfig | TtsModelConfig;
@@ -132,8 +137,8 @@ export interface ImageGenerateInput {
   requestId?: string;
   prompt: string;
   referenceList?: Extract<ReferenceItem, { type: 'image' }>[];
-  size: '1K' | '2K' | '4K';
-  aspectRatio: `${number}:${number}`;
+  size?: '1K' | '2K' | '3K' | '4K';
+  aspectRatio?: `${number}:${number}`;
   task?: ModelTaskOptions;
 }
 
@@ -141,7 +146,7 @@ export interface VideoGenerateInput {
   requestId?: string;
   duration: number;
   resolution: string;
-  aspectRatio: '16:9' | '9:16';
+  aspectRatio?: '16:9' | '9:16';
   prompt: string;
   referenceList?: ReferenceItem[];
   audio?: boolean;
