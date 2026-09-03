@@ -352,7 +352,7 @@ function toAssetResourceReference(asset: ProductionAssetSummary): VtResourceRefe
     kind: getAssetResourceKind(asset),
     name: asset.name || t('production.emptyText'),
     description: asset.description || asset.prompt || '',
-    thumbnailUrl: asset.imageUrl ?? undefined,
+    thumbnailUrl: asset.thumbnailUrl ?? asset.imageUrl ?? undefined,
     status: getResourceStatus(asset.imageStatus),
     statusLabel: t(`production.status.${asset.imageStatus}`),
     meta: t(`production.assetType.${asset.type}`),
@@ -366,7 +366,7 @@ function toStoryboardResourceReference(storyboard: ProductionStoryboardItem): Vt
     kind: 'storyboard',
     name: formatStoryboardCode(storyboard),
     description: storyboard.videoDesc || storyboard.prompt || '',
-    thumbnailUrl: storyboard.imageUrl ?? undefined,
+    thumbnailUrl: storyboard.thumbnailUrl ?? storyboard.imageUrl ?? undefined,
     status: getResourceStatus(storyboard.imageStatus),
     statusLabel: storyboard.shouldGenerateImage ? t(`production.status.${storyboard.imageStatus}`) : t('production.node.storyboard.shouldGenerateOff'),
     meta: t('production.flow.step.storyboardTable.label'),
@@ -1069,7 +1069,7 @@ onUnmounted(clearStatusPoll);
                   class="production-storyboard-list-tile"
                   :title="formatStoryboardCode(storyboard)"
                   :description="storyboard.videoDesc || t('production.emptyText')"
-                  :media-url="storyboard.imageUrl"
+                  :media-url="storyboard.thumbnailUrl || storyboard.imageUrl"
                   media-kind="image"
                   :status="storyboard.shouldGenerateImage ? getMediaStatus(storyboard.imageStatus) : 'warning'"
                   :status-label="storyboard.shouldGenerateImage ? t(`production.status.${storyboard.imageStatus}`) : t('production.node.storyboard.shouldGenerateOff')"
@@ -1128,7 +1128,7 @@ onUnmounted(clearStatusPoll);
                   <VtMediaTile
                     :title="formatStoryboardCode(activeStoryboardImage)"
                     :subtitle="activeStoryboardImage.imageUrl ? t('production.assetExtract.imageReady') : t('production.resourceWorkbench.imageNotReady')"
-                    :media-url="activeStoryboardImage.imageUrl"
+                    :media-url="activeStoryboardImage.thumbnailUrl || activeStoryboardImage.imageUrl"
                     media-kind="image"
                     :status="activeStoryboardImage.shouldGenerateImage ? getMediaStatus(activeStoryboardImage.imageStatus) : 'warning'"
                     :status-label="activeStoryboardImage.shouldGenerateImage ? t(`production.status.${activeStoryboardImage.imageStatus}`) : t('production.node.storyboard.shouldGenerateOff')"
@@ -1199,7 +1199,7 @@ onUnmounted(clearStatusPoll);
                   class="production-image-list-tile"
                   :title="formatStoryboardCode(storyboard)"
                   :description="storyboard.videoDesc || t('production.emptyText')"
-                  :media-url="storyboard.imageUrl"
+                  :media-url="storyboard.thumbnailUrl || storyboard.imageUrl"
                   media-kind="image"
                   :status="storyboard.shouldGenerateImage ? getMediaStatus(storyboard.imageStatus) : 'warning'"
                   :status-label="storyboard.shouldGenerateImage ? t(`production.status.${storyboard.imageStatus}`) : t('production.node.storyboard.shouldGenerateOff')"

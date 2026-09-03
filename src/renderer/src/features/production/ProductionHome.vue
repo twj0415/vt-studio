@@ -1823,7 +1823,7 @@ onUnmounted(() => {
     <VtDialog :visible="storyboardPreviewVisible" :title="t('production.node.storyboard.previewTitle')" width="980px" :footer="false" @update:visible="(value) => (storyboardPreviewVisible = value)">
       <div v-if="previewStoryboards.length > 0" class="production-storyboard-preview-grid">
         <article v-for="storyboard in previewStoryboards" :key="storyboard.id">
-          <img :src="storyboard.imageUrl || ''" :alt="storyboard.videoDesc" />
+          <img :src="storyboard.thumbnailUrl || storyboard.imageUrl || ''" :alt="storyboard.videoDesc" />
           <span>S{{ String(storyboard.index + 1).padStart(2, '0') }}</span>
         </article>
       </div>

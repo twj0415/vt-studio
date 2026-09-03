@@ -50,6 +50,7 @@ type ResourceItem =
       description: string;
       prompt: string;
       imageUrl: string | null;
+      thumbnailUrl: string | null;
       imageStatus: AssetTaskStatus;
       imageErrorReason: string | null;
       asset: ProductionAssetSummary;
@@ -63,6 +64,7 @@ type ResourceItem =
       description: string;
       prompt: string;
       imageUrl: string | null;
+      thumbnailUrl: string | null;
       imageStatus: 'idle';
       imageErrorReason: string | null;
       draft: ProductionResourceDraft;
@@ -124,6 +126,7 @@ const formalItems = computed<ResourceItem[]>(() => formalAssets.value.map((asset
   description: asset.description,
   prompt: asset.prompt,
   imageUrl: asset.imageUrl,
+  thumbnailUrl: asset.thumbnailUrl,
   imageStatus: asset.imageStatus,
   imageErrorReason: asset.imageErrorReason,
   asset,
@@ -137,6 +140,7 @@ const draftItems = computed<ResourceItem[]>(() => drafts.value.map((draft) => ({
   description: draft.description,
   prompt: draft.prompt,
   imageUrl: getMatchedAssetImage(draft.matchedAssetId),
+  thumbnailUrl: getMatchedAssetThumbnail(draft.matchedAssetId),
   imageStatus: 'idle',
   imageErrorReason: draft.errorReason,
   draft,
@@ -248,6 +252,14 @@ function getMatchedAssetImage(assetId: number | null): string | null {
     return null;
   }
   return existingAssets.value.find((asset) => asset.id === assetId)?.imageUrl ?? null;
+}
+
+function getMatchedAssetThumbnail(assetId: number | null): string | null {
+  if (!assetId) {
+    return null;
+  }
+  const asset = existingAssets.value.find((item) => item.id === assetId);
+  return asset?.thumbnailUrl ?? asset?.imageUrl ?? null;
 }
 
 function getStatusTheme(status: string): 'primary' | 'success' | 'danger' | 'warning' | 'default' {
@@ -870,7 +882,7 @@ onUnmounted(() => {
           <div v-if="activeItems.length > 0" class="resource-workbench-grid">
             <button v-for="item in activeItems" :key="item.key" type="button" class="resource-card" :aria-label="item.name" @click="openEditor(item)">
               <div class="resource-card-image">
-                <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.name" />
+                <img v-if="item.imageUrl" :src="item.thumbnailUrl || item.imageUrl" :alt="item.name" />
                 <ImageIcon v-else />
                 <div class="resource-card-title">
                   <span>{{ t(`production.assetType.${item.type}`) }}</span>

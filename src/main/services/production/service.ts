@@ -2069,7 +2069,8 @@ function listProductionAssets(projectId: number, scriptId: number): ProductionAs
       name: row.name,
       description: row.description,
       prompt: row.prompt,
-      imageUrl: urls.thumbnailUrl ?? urls.url,
+      imageUrl: urls.url,
+      thumbnailUrl: urls.thumbnailUrl ?? urls.url,
       imageStatus: assertAssetStatus(row.image_status),
       imageErrorReason: row.image_error_reason,
       dependencyStatus: assertDependencyStatus(row.dependency_status),
@@ -2226,7 +2227,8 @@ function listProductionResourceExistingAssets(projectId: number): ProductionReso
       name: row.name,
       description: row.description,
       prompt: row.prompt,
-      imageUrl: urls.thumbnailUrl ?? urls.url,
+      imageUrl: urls.url,
+      thumbnailUrl: urls.thumbnailUrl ?? urls.url,
     };
   });
 }
@@ -2518,7 +2520,8 @@ function mapStoryboardRow(row: StoryboardRow, associatedAssetIds: number[] = [])
     imageErrorReason: row.image_error_reason,
     dependencyStatus: assertDependencyStatus(row.dependency_status),
     dependencyReason: row.dependency_reason,
-    imageUrl: urls.thumbnailUrl ?? urls.url,
+    imageUrl: urls.url,
+    thumbnailUrl: urls.thumbnailUrl ?? urls.url,
     associatedAssetIds,
     generationMetadata: parseMetadata(row.generation_metadata),
     createdAt: row.created_at,

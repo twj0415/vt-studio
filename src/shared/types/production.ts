@@ -191,6 +191,7 @@ export interface ProductionResourceExistingAsset {
   description: string;
   prompt: string;
   imageUrl: string | null;
+  thumbnailUrl: string | null;
 }
 
 export interface ProductionResourceDraft {
@@ -272,6 +273,7 @@ export interface ProductionAssetSummary {
   description: string;
   prompt: string;
   imageUrl: string | null;
+  thumbnailUrl: string | null;
   imageStatus: AssetTaskStatus;
   imageErrorReason: string | null;
   dependencyStatus: ProductionDependencyStatus;
@@ -296,6 +298,7 @@ export interface ProductionStoryboardItem {
   dependencyStatus: ProductionDependencyStatus;
   dependencyReason: string | null;
   imageUrl: string | null;
+  thumbnailUrl: string | null;
   associatedAssetIds: number[];
   generationMetadata: Record<string, unknown>;
   createdAt: number;

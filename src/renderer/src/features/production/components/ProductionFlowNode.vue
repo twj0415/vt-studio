@@ -114,7 +114,7 @@ function getAssetTypeLabel(type: ProductionAssetSummary['type']): string {
 }
 
 function getStoryboardThumb(storyboard: ProductionStoryboardItem): string | null {
-  return storyboard.imageUrl;
+  return storyboard.thumbnailUrl ?? storyboard.imageUrl;
 }
 
 function getTrackSelectedVideo(track: ProductionVideoTrackItem) {
@@ -252,7 +252,7 @@ function showStoryboardPrompt(storyboard: ProductionStoryboardItem): void {
       <div class="production-asset-list">
         <article v-for="asset in topAssets" :key="asset.id" class="production-asset-row">
           <div class="production-asset-main">
-            <img v-if="asset.imageUrl" :src="asset.imageUrl" :alt="asset.name" />
+            <img v-if="asset.imageUrl" :src="asset.thumbnailUrl || asset.imageUrl" :alt="asset.name" />
             <span v-else>{{ getAssetTypeLabel(asset.type).slice(0, 1) }}</span>
             <div>
               <strong>{{ asset.name }}</strong>

@@ -472,7 +472,7 @@ function getTrackThumb(track: ProductionVideoTrackItem): string | null {
     return selectedVideo.videoUrl;
   }
   const storyboard = storyboards.value.find((item) => track.storyboardIds.includes(item.id) && item.imageUrl);
-  return storyboard?.imageUrl ?? null;
+  return storyboard?.thumbnailUrl ?? storyboard?.imageUrl ?? null;
 }
 
 function getTrackSelectedVideo(track: ProductionVideoTrackItem): ProductionVideoItem | null {
@@ -1572,7 +1572,7 @@ onUnmounted(() => {
                   </t-tag>
                 </t-tooltip>
                 <button type="button" @click="setPreviewStoryboard(storyboard.id)">
-                  <img v-if="storyboard.imageUrl" :src="storyboard.imageUrl" :alt="storyboard.videoDesc" />
+                  <img v-if="storyboard.imageUrl" :src="storyboard.thumbnailUrl || storyboard.imageUrl" :alt="storyboard.videoDesc" />
                   <span v-else>{{ t('production.workbench.noPreviewImage') }}</span>
                 </button>
                 <div>
@@ -1817,7 +1817,7 @@ onUnmounted(() => {
                   <strong>{{ t('production.workbench.storyboardMedia') }}</strong>
                   <div class="production-workbench-media-grid">
                     <article v-for="storyboard in editorStoryboardMedia" :key="`storyboard-${storyboard.id}`" class="production-workbench-media-card">
-                      <img :src="storyboard.imageUrl || ''" :alt="storyboard.videoDesc" />
+                      <img :src="storyboard.thumbnailUrl || storyboard.imageUrl || ''" :alt="storyboard.videoDesc" />
                       <span>{{ storyboardLabel(storyboard) }}</span>
                     </article>
                   </div>
@@ -1828,7 +1828,7 @@ onUnmounted(() => {
                   <strong>{{ t('production.workbench.assetMedia') }}</strong>
                   <div class="production-workbench-media-grid">
                     <article v-for="asset in editorAssetMedia" :key="`asset-${asset.id}`" class="production-workbench-media-card">
-                      <img v-if="asset.imageUrl" :src="asset.imageUrl" :alt="asset.name" />
+                      <img v-if="asset.imageUrl" :src="asset.thumbnailUrl || asset.imageUrl" :alt="asset.name" />
                       <span v-else>{{ t(`production.assetType.${asset.type}`) }}</span>
                       <span>{{ asset.name }}</span>
                     </article>
