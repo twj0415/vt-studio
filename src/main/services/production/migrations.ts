@@ -235,7 +235,7 @@ export const productionMigrations: Migration[] = [
     id: '0020_add_production_agent_audit_task_id',
     name: 'add production agent audit task id',
     statements: [
-      'ALTER TABLE production_agent_audits ADD COLUMN task_id INTEGER',
+      // 0019 已创建 task_id，此迁移仅保留索引和迁移历史。
       'CREATE INDEX IF NOT EXISTS idx_production_agent_audits_task ON production_agent_audits(task_id)',
     ],
   },
